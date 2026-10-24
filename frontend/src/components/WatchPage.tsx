@@ -511,7 +511,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
           if (hls) {
             const singleSource: Source = {
-              label: 'Server VIP (4K TikTok CDN)',
+              label: 'Server VIP (4K Siêu Nhanh)',
               hlsUrl: hls,
               proxyStreamUrl: `/api/proxy/stream?url=${encodeURIComponent(hls)}&keep_cdn=1`,
             };
@@ -880,7 +880,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <span />
           </div>
           <div style={{ color: 'var(--muted)', textAlign: 'center', marginTop: '24px' }}>
-            Đang nạp luồng phát TikTok CDN...
+            Đang nạp luồng phát 4K tốc độ cao...
           </div>
         </div>
       </div>
@@ -1003,7 +1003,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               }}
             >
               <Activity size={13} />
-              <span>TikTok CDN ({streamStats.speedMbps})</span>
+              <span>CDN Tốc độ cao ({streamStats.speedMbps})</span>
             </div>
           </div>
         </div>
@@ -1902,7 +1902,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               })
             ) : (
               <button type="button" className="chip on">
-                Server VIP (4K TikTok CDN)
+                Server VIP (4K Siêu Nhanh)
               </button>
             )}
           </div>
