@@ -24,18 +24,6 @@ export const App: React.FC = () => {
   const [selectedResolution, setSelectedResolution] = useState('all');
   const [selectedMovieSlug, setSelectedMovieSlug] = useState<string | null>(null);
 
-  // Community announcement dialog
-  const [showCommunityDialog, setShowCommunityDialog] = useState(() => {
-    return !localStorage.getItem('film4k_community_dismissed');
-  });
-
-  const handleDismissCommunity = (skipToday = false) => {
-    setShowCommunityDialog(false);
-    if (skipToday) {
-      localStorage.setItem('film4k_community_dismissed', 'true');
-    }
-  };
-
   // Fetch movies from API
   const fetchMovies = () => {
     setLoading(true);
@@ -136,56 +124,6 @@ export const App: React.FC = () => {
 
   return (
     <div className="shell">
-      {/* Community Announcement Dialog */}
-      {showCommunityDialog && (
-        <dialog className="cdlg" open style={{ zIndex: 100 }}>
-          <span className="cdlg-icon" aria-hidden="true">
-            📣
-          </span>
-          <h2>JOIN THE COMMUNITY</h2>
-          <div className="cdlg-body">
-            <p>Chào mừng bạn đến với Film4k Cinema!</p>
-            <p>
-              Theo dõi fanpage Facebook và tham gia nhóm Telegram để nhận thông báo phim 4K mới
-              nhất, yêu cầu phim và hỗ trợ kỹ thuật.
-            </p>
-            <p className="cdlg-links">
-              <a
-                href="https://www.facebook.com/film4knet"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Facebook page
-              </a>
-              <a href="https://t.me/film4knet" target="_blank" rel="noopener noreferrer">
-                Telegram group
-              </a>
-            </p>
-          </div>
-          <label className="cdlg-skip">
-            <input
-              type="checkbox"
-              id="skip-cdlg"
-              onChange={(e) => {
-                if (e.target.checked) {
-                  localStorage.setItem('film4k_community_dismissed', 'true');
-                } else {
-                  localStorage.removeItem('film4k_community_dismissed');
-                }
-              }}
-            />
-            Không hiện lại thông báo hôm nay
-          </label>
-          <button
-            type="button"
-            className="cdlg-ok"
-            onClick={() => handleDismissCommunity()}
-          >
-            ✓ ĐÃ HIỂU
-          </button>
-        </dialog>
-      )}
-
       {/* 1. Left Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
