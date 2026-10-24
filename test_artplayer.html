@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Film4k ArtPlayer Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #0f1015;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        .player-container {
+            width: 100%;
+            max-width: 960px;
+            aspect-ratio: 16 / 9;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body>
+    <div class="player-container" id="artplayer"></div>
+    <script>
+        const PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+        function stripPngHeader(e) {
+            if (!e) return e;
+            let t = new Uint8Array(e);
+            if (t.length < PNG_SIG.length) return e;
+            for (let idx = 0; idx < PNG_SIG.length; idx++) {
+                if (t[idx] !== PNG_SIG[idx]) return e;
+            }
+            let n = new DataView(e), r = PNG_SIG.length;
+            while (r + 12 <= t.length) {
+                let i = n.getUint32(r, false);
+                let a = r + 12 + i;
+                if (a > t.length) return e;
+                if (t[r + 4] === 73 && t[r + 5] === 69 && t[r + 6] === 78 && t[r + 7] === 68) {
+                    return e.slice(a);
+                }
+                r = a;
+            }
+            return e;
+        }
+
+        class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
+            constructor(config) {
+                super(config);
+                const originalLoad = this.load.bind(this);
+                this.load = function (context, config, callbacks) {
+                    const customCallbacks = {
+                        ...callbacks,
+                        onSuccess: function (response, stats, ctx, networkDetails) {
+                            if (response && response.data) {
+                                if (response.data instanceof ArrayBuffer) {
+                                    response.data = stripPngHeader(response.data);
+                                } else if (ArrayBuffer.isView(response.data)) {
+                                    let raw = response.data.buffer.slice(response.data.byteOffset, response.data.byteOffset + response.data.byteLength);
+                                    response.data = stripPngHeader(raw);
+                                }
+                            }
+                            callbacks.onSuccess(response, stats, ctx, networkDetails);
+                        }
+                    };
+                    originalLoad(context, config, customCallbacks);
+                };
+            }
+        }
+
+        const streamUrl = "https://secret.dangducminh.io.vn/?url=" + encodeURIComponent("https://film4k.net/api/hls/24BQ7QxQ3ruqdnZ65oGApWupWAQk4dPebf5bnNjsSY-h9UiRlEgiHX12KUYK1zsgXLcjPHHHqL-hCgyhdcr358NE8YpeVzX1zcQdvpJMwIkpjh3JXnB9jA/master.m3u8") + "&keep_cdn=1";
+
+        let hls = null;
+        const art = new Artplayer({
+            container: '#artplayer',
+            url: streamUrl,
+            type: 'm3u8',
+            setting: true,
+            playbackRate: true,
+            aspectRatio: true,
+            fullscreen: true,
+            pip: true,
+            airplay: true,
+            theme: '#3b82f6',
+            customType: {
+                m3u8: function (video, url, art) {
+                    if (Hls.isSupported()) {
+                        if (hls) hls.destroy();
+                        hls = new Hls({
+                            loader: Film4kFragmentLoader,
+                            enableWorker: false
+                        });
+                        hls.loadSource(url);
+                        hls.attachMedia(video);
+
+                        hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
+                            console.log("Audio tracks:", hls.audioTracks);
+                            if (hls.audioTracks && hls.audioTracks.length > 0) {
+                                const audioOptions = hls.audioTracks.map((track, index) => {
+                                    let label = track.name || track.lang || `Track ${index + 1}`;
+                                    if (label.toLowerCase().includes("vi") || label.toLowerCase().includes("vie")) {
+                                        label = "VIE (Stereo)";
+                                    } else if (label.toLowerCase().includes("en") || index === 0) {
+                                        label = index === 0 ? "Surround 5.1" : "Surround 5.1 (Stereo)";
+                                    }
+                                    return {
+                                        default: index === hls.audioTrack,
+                                        html: label,
+                                        index: index
+                                    };
+                                });
+
+                                art.setting.add({
+                                    html: 'Audio',
+                                    name: 'audio',
+                                    width: 220,
+                                    tooltip: audioOptions.find(o => o.default)?.html || 'Audio',
+                                    selector: audioOptions,
+                                    onSelect: function (item) {
+                                        console.log("User selected audio track:", item.index, item.html);
+                                        hls.audioTrack = item.index;
+                                        return item.html;
+                                    }
+                                });
+                            }
+                        });
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        video.src = url;
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
