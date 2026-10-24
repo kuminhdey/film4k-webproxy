@@ -6,3 +6,7 @@ movies.db*
 data/
 storage/
 .DS_Store
+film4k_*
+cloned_*
+*.log
+*.tsbuildinfo

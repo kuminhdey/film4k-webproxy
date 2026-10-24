@@ -72,6 +72,7 @@ pub fn create_app(state: AppState) -> Router {
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
+#[serde(default)]
 pub struct RootQuery {
     pub url: Option<String>,
     pub keep_cdn: Option<String>,

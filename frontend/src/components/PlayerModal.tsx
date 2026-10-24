@@ -12,6 +12,7 @@ import {
   Maximize,
   RotateCcw,
   RotateCw,
+  ArrowLeft,
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
@@ -244,8 +245,11 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
       hlsRef.current = null;
     }
 
-    const rawUrl = currentSource.hlsUrl;
-    // Route master playlist through backend proxy
+    let rawUrl = currentSource.hlsUrl;
+    if (!rawUrl.includes('.m3u8')) {
+      rawUrl = rawUrl.endsWith('/') ? `${rawUrl}master.m3u8` : `${rawUrl}/master.m3u8`;
+    }
+    // Route master playlist through backend proxy with keep_cdn=1
     const proxyStreamUrl = `/api/proxy/stream?url=${encodeURIComponent(rawUrl)}&keep_cdn=1`;
 
     if (Hls.isSupported()) {
@@ -263,9 +267,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
       hls.attachMedia(videoEl);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
-        videoEl.play().catch(() => {
-          // Autoplay was prevented, wait for user click
-        });
+        videoEl.play().catch(() => {});
 
         // Parse quality levels
         const levels = data.levels.map((lvl, index) => ({
@@ -304,7 +306,6 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
         }
       });
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native Safari support
       videoEl.src = proxyStreamUrl;
       videoEl.play().catch(() => {});
     }
@@ -342,41 +343,53 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 50,
-        background: 'rgba(0, 0, 0, 0.92)',
-        backdropFilter: 'blur(20px)',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {/* Top Bar */}
-      <div
+    <div className="cinema-modal">
+      {/* Top Header */}
+      <header
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '14px 28px',
-          background: 'rgba(18, 18, 24, 0.8)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          padding: '12px 24px',
+          background: 'var(--panel, #111622)',
+          borderBottom: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))',
+          zIndex: 40,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span className="badge-4k">4K UHD</span>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <button
+            type="button"
+            className="ghost"
+            onClick={onClose}
+            aria-label="Quay lại"
+            style={{
+              padding: '6px 12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              borderRadius: 'var(--radius-md, 12px)',
+              cursor: 'pointer',
+            }}
+          >
+            <ArrowLeft size={16} />
+            <span style={{ fontSize: '13px', fontWeight: 600 }}>Quay lại</span>
+          </button>
+
+          <span className="card-res" style={{ position: 'static' }}>
+            4K UHD
+          </span>
+
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: 'var(--fg-bright, #fff)' }}>
             {movie?.title_vi || movie?.title_en || 'Xem Phim'}
           </h2>
+
           {currentEpisode && (
             <span
+              className="chip"
               style={{
-                fontSize: '0.85rem',
-                color: '#9494a8',
-                background: 'rgba(255,255,255,0.08)',
-                padding: '2px 8px',
-                borderRadius: '4px',
+                fontSize: '12px',
+                padding: '3px 8px',
+                pointerEvents: 'none',
               }}
             >
               Tập {currentEpisode.episode}
@@ -384,19 +397,20 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
           )}
         </div>
 
-        {/* Live Stream Telemetry */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Live Stream Telemetry & Close */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              fontSize: '0.8rem',
+              fontSize: '12.5px',
               color: '#4ade80',
               background: 'rgba(74, 222, 128, 0.1)',
-              padding: '4px 10px',
-              borderRadius: '20px',
-              border: '1px solid rgba(74, 222, 128, 0.2)',
+              padding: '4px 12px',
+              borderRadius: '9999px',
+              border: '1px solid rgba(74, 222, 128, 0.25)',
+              fontWeight: 600,
             }}
           >
             <Activity size={14} />
@@ -406,31 +420,30 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
           </div>
 
           <button
+            type="button"
+            className="ghost"
             onClick={onClose}
             style={{
-              background: 'rgba(255,255,255,0.1)',
-              border: 'none',
               borderRadius: '50%',
               width: '36px',
               height: '36px',
-              color: '#fff',
-              cursor: 'pointer',
+              padding: 0,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              cursor: 'pointer',
             }}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Main Player Area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Video Canvas */}
         <div
           ref={playerContainerRef}
-          className="video-container"
           style={{
             flex: 1,
             display: 'flex',
@@ -442,8 +455,16 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
             overflow: 'hidden',
           }}
         >
-          {loading && <div style={{ color: '#fff' }}>Đang nạp dữ liệu phim...</div>}
-          {error && <div style={{ color: '#ff4d58' }}>Lỗi: {error}</div>}
+          {loading && (
+            <div style={{ color: 'var(--fg, #fff)', fontSize: '15px' }}>
+              Đang kết nối luồng 4K TikTok CDN...
+            </div>
+          )}
+          {error && (
+            <div className="player-error">
+              <p className="player-error-text">Lỗi: {error}</p>
+            </div>
+          )}
 
           <video
             ref={videoRef}
@@ -452,25 +473,25 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
             style={{
               width: '100%',
               height: '100%',
-              maxHeight: 'calc(100vh - 120px)',
+              maxHeight: 'calc(100vh - 130px)',
               objectFit: 'contain',
               background: '#000',
             }}
           />
 
-          {/* On-Screen Display (OSD) Feedback */}
+          {/* On-Screen Display (OSD) */}
           {osd && (
             <div
-              className="player-osd"
               style={{
                 position: 'absolute',
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
                 zIndex: 30,
-                background: 'rgba(0, 0, 0, 0.85)',
+                background: 'rgba(7, 9, 15, 0.88)',
                 backdropFilter: 'blur(16px)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
+                WebkitBackdropFilter: 'blur(16px)',
+                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.15))',
                 borderRadius: '16px',
                 padding: '18px 24px',
                 display: 'flex',
@@ -478,7 +499,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
                 alignItems: 'center',
                 gap: '8px',
                 color: '#fff',
-                boxShadow: '0 12px 36px rgba(0, 0, 0, 0.8)',
+                boxShadow: 'var(--shadow-lg, 0 20px 40px rgba(0,0,0,0.8))',
                 minWidth: '130px',
               }}
             >
@@ -506,7 +527,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
                     style={{
                       width: `${osd.percent}%`,
                       height: '100%',
-                      background: '#e50914',
+                      background: 'var(--accent, #e11d2e)',
                       borderRadius: '2px',
                     }}
                   />
@@ -517,124 +538,128 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
 
           {/* Keyboard Shortcut Hints */}
           <div
-            className="shortcut-hints"
             style={{
               position: 'absolute',
               bottom: '50px',
               left: '24px',
               zIndex: 10,
-              background: 'rgba(10, 10, 14, 0.7)',
+              background: 'rgba(11, 14, 22, 0.8)',
               backdropFilter: 'blur(8px)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '20px',
-              padding: '6px 14px',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))',
+              borderRadius: '9999px',
+              padding: '6px 16px',
               display: 'flex',
               alignItems: 'center',
               gap: '12px',
-              fontSize: '0.75rem',
-              color: '#a0a0b8',
+              fontSize: '12px',
+              color: 'var(--muted, #8b95ad)',
               userSelect: 'none',
               pointerEvents: 'none',
             }}
           >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>Space</kbd> Phát/Dừng
+            <span>
+              <kbd style={{ background: '#242b3c', padding: '1px 6px', borderRadius: '4px', color: '#fff' }}>Space</kbd> Phát/Dừng
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>M</kbd> Tắt tiếng
+            <span>
+              <kbd style={{ background: '#242b3c', padding: '1px 6px', borderRadius: '4px', color: '#fff' }}>M</kbd> Tắt tiếng
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>F</kbd> Toàn màn hình
+            <span>
+              <kbd style={{ background: '#242b3c', padding: '1px 6px', borderRadius: '4px', color: '#fff' }}>F</kbd> Toàn màn hình
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>← / →</kbd> Tua 10s
+            <span>
+              <kbd style={{ background: '#242b3c', padding: '1px 6px', borderRadius: '4px', color: '#fff' }}>← / →</kbd> Tua 10s
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>↑ / ↓</kbd> Âm lượng
+            <span>
+              <kbd style={{ background: '#242b3c', padding: '1px 6px', borderRadius: '4px', color: '#fff' }}>↑ / ↓</kbd> Âm lượng
             </span>
           </div>
 
-          {/* Quick Audio / Quality selector controls bar */}
+          {/* Quick Quality / Audio Settings Button */}
           <div
             style={{
               position: 'absolute',
               bottom: '50px',
               right: '24px',
               zIndex: 10,
-              display: 'flex',
-              gap: '8px',
             }}
           >
             <button
+              type="button"
+              className="ghost"
               onClick={() => setShowSettings(!showSettings)}
               style={{
-                background: 'rgba(0,0,0,0.7)',
-                color: '#fff',
-                border: '1px solid rgba(255,255,255,0.2)',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                backdropFilter: 'blur(8px)',
+                gap: '8px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 12px)',
+                cursor: 'pointer',
               }}
             >
-              <Settings size={14} />
-              Luồng & Âm thanh
+              <Settings size={15} />
+              <span style={{ fontSize: '13px', fontWeight: 600 }}>Cài đặt luồng</span>
             </button>
           </div>
 
           {/* Settings Popup */}
           {showSettings && (
             <div
-              className="glass-panel"
               style={{
                 position: 'absolute',
                 bottom: '95px',
                 right: '24px',
-                borderRadius: '12px',
+                borderRadius: 'var(--radius-lg, 16px)',
                 padding: '16px',
-                width: '260px',
+                width: '280px',
                 zIndex: 20,
+                background: 'var(--panel, #111622)',
+                border: '1px solid var(--border, #242b3c)',
+                boxShadow: 'var(--shadow-lg, 0 20px 48px rgba(0,0,0,0.8))',
               }}
             >
+              {/* Server selector */}
+              {currentEpisode && currentEpisode.sources && currentEpisode.sources.length > 1 && (
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--muted, #8b95ad)', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase' }}>
+                    Chọn máy chủ phát
+                  </div>
+                  <div className="servers" style={{ padding: 0 }}>
+                    {currentEpisode.sources.map((src, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={`chip ${currentSource === src ? 'on' : ''}`}
+                        onClick={() => setCurrentSource(src)}
+                      >
+                        {src.label || `Server ${i + 1}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Quality Selector */}
               <div style={{ marginBottom: '14px' }}>
-                <div style={{ fontSize: '0.75rem', color: '#9494a8', fontWeight: 700, marginBottom: '6px' }}>
-                  CHẤT LƯỢNG HÌNH ẢNH
+                <div style={{ fontSize: '11px', color: 'var(--muted, #8b95ad)', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase' }}>
+                  Chất lượng hình ảnh
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <button
+                    type="button"
+                    className={`chip ${activeQuality === -1 ? 'on' : ''}`}
                     onClick={() => handleSelectQuality(-1)}
-                    style={{
-                      background: activeQuality === -1 ? '#e50914' : 'rgba(255,255,255,0.06)',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '4px 8px',
-                      fontSize: '0.75rem',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
+                    style={{ justifyContent: 'flex-start' }}
                   >
                     Tự động (Auto)
                   </button>
                   {qualities.map((q) => (
                     <button
                       key={q.id}
+                      type="button"
+                      className={`chip ${activeQuality === q.id ? 'on' : ''}`}
                       onClick={() => handleSelectQuality(q.id)}
-                      style={{
-                        background: activeQuality === q.id ? '#e50914' : 'rgba(255,255,255,0.06)',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '4px',
-                        padding: '4px 8px',
-                        fontSize: '0.75rem',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                      }}
+                      style={{ justifyContent: 'flex-start' }}
                     >
                       {q.height}p ({Math.round(q.bitrate / 1000000)} Mbps)
                     </button>
@@ -645,24 +670,17 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
               {/* Audio Selector */}
               {audioTracks.length > 0 && (
                 <div>
-                  <div style={{ fontSize: '0.75rem', color: '#9494a8', fontWeight: 700, marginBottom: '6px' }}>
-                    TRACK ÂM THANH
+                  <div style={{ fontSize: '11px', color: 'var(--muted, #8b95ad)', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase' }}>
+                    Track âm thanh
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {audioTracks.map((tr) => (
                       <button
                         key={tr.id}
+                        type="button"
+                        className={`chip ${activeAudioTrack === tr.id ? 'on' : ''}`}
                         onClick={() => handleSelectAudio(tr.id)}
-                        style={{
-                          background: activeAudioTrack === tr.id ? '#e50914' : 'rgba(255,255,255,0.06)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '4px',
-                          padding: '4px 8px',
-                          fontSize: '0.75rem',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                        }}
+                        style={{ justifyContent: 'flex-start' }}
                       >
                         {tr.name}
                       </button>
@@ -679,16 +697,16 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
           <div
             style={{
               width: '320px',
-              background: '#0d0d12',
-              borderLeft: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--panel, #111622)',
+              borderLeft: '1px solid var(--border, #242b3c)',
               display: 'flex',
               flexDirection: 'column',
-              padding: '16px',
+              padding: '18px',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-              <Tv size={18} color="#e50914" />
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              <Tv size={18} color="var(--accent, #e11d2e)" />
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#fff', margin: 0 }}>
                 Danh sách tập ({movie.episodes.length})
               </h3>
             </div>
@@ -708,17 +726,14 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
                 return (
                   <button
                     key={ep.episode}
+                    type="button"
                     onClick={() => handleSelectEpisode(ep)}
+                    className={`chip ${isActive ? 'on' : ''}`}
                     style={{
-                      background: isActive ? 'linear-gradient(135deg, #e50914, #b20710)' : 'rgba(255,255,255,0.06)',
-                      color: '#fff',
-                      border: isActive ? '1px solid #ff4d58' : '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '8px',
+                      justifyContent: 'center',
                       padding: '10px 4px',
+                      fontSize: '13px',
                       fontWeight: 700,
-                      fontSize: '0.85rem',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
                     }}
                   >
                     Tập {ep.episode}

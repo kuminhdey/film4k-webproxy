@@ -1,0 +1,215 @@
+import React from 'react';
+
+interface SidebarProps {
+  activeTab: string;
+  onTabChange: (tab: string) => void;
+  onPairDevice?: () => void;
+  onSettings?: () => void;
+  onQuickCode?: () => void;
+  onSignIn?: () => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeTab,
+  onTabChange,
+  onPairDevice,
+  onSettings,
+  onQuickCode,
+  onSignIn,
+}) => {
+  return (
+    <nav className="side" aria-label="Main">
+      <a
+        className="side-brand"
+        href="/"
+        onClick={(e) => {
+          e.preventDefault();
+          onTabChange('all');
+        }}
+      >
+        <img className="side-logo" alt="" width="26" height="26" src="/logo-64.png" />
+        Film4k
+      </a>
+
+      <ul className="side-list">
+        <li>
+          <a
+            className={`side-link ${activeTab === 'all' ? 'on' : ''}`}
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('all');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"></path>
+            </svg>
+            <span className="side-label">Home</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'explore' ? 'on' : ''}`}
+            href="/?browse=1"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('explore');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.5 6.5-2 5-5 2 2-5z"></path>
+            </svg>
+            <span className="side-label">Explore</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'movie' ? 'on' : ''}`}
+            href="/?type=movie"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('movie');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M4 4h16v16H4zM4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4"></path>
+            </svg>
+            <span className="side-label">Movies</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'tv' ? 'on' : ''}`}
+            href="/?type=tv"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('tv');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M8 5h13v11H8zM3 8v11h13"></path>
+            </svg>
+            <span className="side-label">TV Series</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'genres' ? 'on' : ''}`}
+            href="/genres"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('genres');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h10"></path>
+            </svg>
+            <span className="side-label">Genres</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'television' ? 'on' : ''}`}
+            href="/tv"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('television');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M4 8h16v10H4zM9 8 6 4M15 8l3-4M9 21h6"></path>
+            </svg>
+            <span className="side-label">Television</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'sports' ? 'on' : ''}`}
+            href="/sports"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('sports');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 2v20M2.5 9h19M2.5 15h19"></path>
+            </svg>
+            <span className="side-label">Sports</span>
+          </a>
+        </li>
+        <li>
+          <a
+            className={`side-link ${activeTab === 'favourites' ? 'on' : ''}`}
+            href="/favourites"
+            onClick={(e) => {
+              e.preventDefault();
+              onTabChange('favourites');
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+              <path d="M3 6h11M3 12h8M3 18h8M15 15l2.5 2.5L22 13"></path>
+            </svg>
+            <span className="side-label">My List</span>
+          </a>
+        </li>
+      </ul>
+
+      <div className="side-foot">
+        <a
+          className="side-link"
+          href="/pair"
+          onClick={(e) => {
+            e.preventDefault();
+            onPairDevice?.();
+          }}
+        >
+          <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+            <path d="M4 6h16v10H4zM9 8 6 4M15 8l3-4M9 21h6M8 11h8M12 9v4"></path>
+          </svg>
+          <span className="side-label">Pair TV / Device</span>
+        </a>
+        <a
+          className="side-link"
+          href="/settings"
+          onClick={(e) => {
+            e.preventDefault();
+            onSettings?.();
+          }}
+        >
+          <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+            <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 4-2-1 .2-2.2-2-1.2-1.7 1.4-2-.8L13 4h-2l-.5 2.2-2 .8L6.8 5.6l-2 1.2L5 9l-2 1v2l2 1-.2 2.2 2 1.2 1.7-1.4 2 .8L11 20h2l.5-2.2 2-.8 1.7 1.4 2-1.2L19 15l2-1z"></path>
+          </svg>
+          <span className="side-label">Settings</span>
+        </a>
+        <div className="side-account">
+          <div className="auth-btns">
+            <a
+              className="ghost side-pair"
+              title="Quick Code Login"
+              href="/login?mode=code"
+              onClick={(e) => {
+                e.preventDefault();
+                onQuickCode?.();
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path d="M4 6h16v10H4zM9 8 6 4M15 8l3-4M9 21h6M8 11h8M12 9v4"></path>
+              </svg>
+              <span>Quick Code Login</span>
+            </a>
+            <a
+              className="ghost side-signin"
+              href="/login"
+              onClick={(e) => {
+                e.preventDefault();
+                onSignIn?.();
+              }}
+            >
+              Sign in
+            </a>
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
+};
