@@ -1,5 +1,49 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ServerSource {
+    #[serde(default)]
+    pub id: Option<serde_json::Value>,
+    #[serde(default, alias = "name")]
+    pub label: String,
+    #[serde(rename = "hlsUrl", alias = "hls_url", alias = "url", default)]
+    pub hls_url: String,
+    #[serde(rename = "proxyStreamUrl", alias = "proxy_stream_url", default)]
+    pub proxy_stream_url: Option<String>,
+    #[serde(default)]
+    pub quality: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SubtitleTrack {
+    #[serde(default)]
+    pub id: Option<serde_json::Value>,
+    #[serde(default, alias = "name", alias = "title")]
+    pub label: String,
+    #[serde(default, alias = "language")]
+    pub lang: Option<String>,
+    #[serde(default, alias = "src", alias = "file", alias = "vtt_url", alias = "vttUrl")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(rename = "default", alias = "is_default", default)]
+    pub is_default: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AudioTrack {
+    #[serde(default)]
+    pub id: Option<serde_json::Value>,
+    #[serde(default, alias = "name", alias = "title")]
+    pub label: String,
+    #[serde(default, alias = "language")]
+    pub lang: Option<String>,
+    #[serde(default, alias = "src", alias = "url", alias = "hls_url", alias = "hlsUrl")]
+    pub url: Option<String>,
+    #[serde(rename = "default", alias = "is_default", default)]
+    pub is_default: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
     pub label: String,
@@ -26,6 +70,12 @@ pub struct Episode {
     pub still: Option<String>,
     #[serde(default)]
     pub sources: Vec<Source>,
+    #[serde(default)]
+    pub servers: Vec<ServerSource>,
+    #[serde(default)]
+    pub subtitles: Vec<SubtitleTrack>,
+    #[serde(default, alias = "audioTracks")]
+    pub audio_tracks: Vec<AudioTrack>,
 }
 
 fn default_one() -> i32 {
@@ -65,6 +115,12 @@ pub struct Movie {
     pub stream: Option<serde_json::Value>,
     #[serde(default)]
     pub episodes: Vec<Episode>,
+    #[serde(default)]
+    pub servers: Vec<ServerSource>,
+    #[serde(default)]
+    pub subtitles: Vec<SubtitleTrack>,
+    #[serde(default, alias = "audioTracks")]
+    pub audio_tracks: Vec<AudioTrack>,
 }
 
 fn default_movie_type() -> String {

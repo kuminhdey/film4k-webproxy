@@ -34,6 +34,9 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
                 overview TEXT,
                 total_episodes INTEGER,
                 stream TEXT,
+                servers_json TEXT NOT NULL DEFAULT '[]',
+                subtitles_json TEXT NOT NULL DEFAULT '[]',
+                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -48,10 +51,23 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
                 runtime INTEGER,
                 still TEXT,
                 sources_json TEXT NOT NULL DEFAULT '[]',
+                servers_json TEXT NOT NULL DEFAULT '[]',
+                subtitles_json TEXT NOT NULL DEFAULT '[]',
+                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
                 UNIQUE(movie_slug, season, episode),
                 FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
             )
         """)
+        # Auto-migrate columns if table already exists
+        for col in ["servers_json", "subtitles_json", "audio_tracks_json"]:
+            try:
+                conn.execute(f"ALTER TABLE movies ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
+            except Exception:
+                pass
+            try:
+                conn.execute(f"ALTER TABLE episodes ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
+            except Exception:
+                pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug)")
@@ -85,12 +101,18 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
             elif isinstance(stream_val, str):
                 stream_str = stream_val
 
+            servers_json = json.dumps(m.get("servers", []), ensure_ascii=False)
+            subtitles_json = json.dumps(m.get("subtitles", []), ensure_ascii=False)
+            audio_tracks_json = json.dumps(m.get("audio_tracks", m.get("audioTracks", [])), ensure_ascii=False)
+
             conn.execute("""
                 INSERT INTO movies (
                     slug, movie_type, title_vi, title_en, search_text,
                     year, quality, score, genres_json, country,
-                    poster, backdrop, overview, total_episodes, stream, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    poster, backdrop, overview, total_episodes, stream,
+                    servers_json, subtitles_json, audio_tracks_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(slug) DO UPDATE SET
                     movie_type = excluded.movie_type,
                     title_vi = COALESCE(excluded.title_vi, movies.title_vi),
@@ -106,11 +128,15 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
                     overview = COALESCE(excluded.overview, movies.overview),
                     total_episodes = COALESCE(excluded.total_episodes, movies.total_episodes),
                     stream = COALESCE(excluded.stream, movies.stream),
+                    servers_json = CASE WHEN excluded.servers_json != '[]' THEN excluded.servers_json ELSE movies.servers_json END,
+                    subtitles_json = CASE WHEN excluded.subtitles_json != '[]' THEN excluded.subtitles_json ELSE movies.subtitles_json END,
+                    audio_tracks_json = CASE WHEN excluded.audio_tracks_json != '[]' THEN excluded.audio_tracks_json ELSE movies.audio_tracks_json END,
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 slug, movie_type, title_vi, title_en, search_text,
                 year, quality, score, genres_json, country,
-                poster, backdrop, overview, total_episodes, stream_str
+                poster, backdrop, overview, total_episodes, stream_str,
+                servers_json, subtitles_json, audio_tracks_json
             ))
             movie_upsert_count += 1
 
@@ -118,15 +144,22 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
             episodes = m.get("episodes", [])
             for ep in episodes:
                 sources_json = json.dumps(ep.get("sources", []), ensure_ascii=False)
+                ep_servers_json = json.dumps(ep.get("servers", []), ensure_ascii=False)
+                ep_subtitles_json = json.dumps(ep.get("subtitles", []), ensure_ascii=False)
+                ep_audio_tracks_json = json.dumps(ep.get("audio_tracks", ep.get("audioTracks", [])), ensure_ascii=False)
                 conn.execute("""
                     INSERT INTO episodes (
-                        movie_slug, season, episode, title, runtime, still, sources_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        movie_slug, season, episode, title, runtime, still, sources_json,
+                        servers_json, subtitles_json, audio_tracks_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(movie_slug, season, episode) DO UPDATE SET
                         title = excluded.title,
                         runtime = excluded.runtime,
                         still = excluded.still,
-                        sources_json = excluded.sources_json
+                        sources_json = excluded.sources_json,
+                        servers_json = CASE WHEN excluded.servers_json != '[]' THEN excluded.servers_json ELSE episodes.servers_json END,
+                        subtitles_json = CASE WHEN excluded.subtitles_json != '[]' THEN excluded.subtitles_json ELSE episodes.subtitles_json END,
+                        audio_tracks_json = CASE WHEN excluded.audio_tracks_json != '[]' THEN excluded.audio_tracks_json ELSE episodes.audio_tracks_json END
                 """, (
                     slug,
                     ep.get("season", 1),
@@ -134,7 +167,10 @@ def sync_master_json_to_sqlite(json_path: Path, db_path: Path):
                     ep.get("title", f"Tập {ep.get('episode', 1)}"),
                     ep.get("runtime", 45),
                     ep.get("still", ""),
-                    sources_json
+                    sources_json,
+                    ep_servers_json,
+                    ep_subtitles_json,
+                    ep_audio_tracks_json
                 ))
                 episode_upsert_count += 1
 
