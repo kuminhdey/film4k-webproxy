@@ -62,6 +62,31 @@ pub fn resolve_relative_url(base: &Url, rel: &str) -> String {
     }
 }
 
+/// Helper to identify direct CDN segment media URLs that should be loaded directly
+/// by the player client instead of routed through the Axum proxy when keep_cdn is enabled.
+/// Matches .image chunks or domains containing 'cdn.' or 'cdn-'.
+pub fn is_cdn_segment(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    // Playlists (.m3u8) must always be rewritten/proxied so inner streams stay valid
+    if lower.contains(".m3u8") {
+        return false;
+    }
+    // Direct image-encoded video segments (.image)
+    if lower.contains(".image") {
+        return true;
+    }
+    // Direct CDN edge domains containing "cdn." or "cdn-"
+    if let Ok(parsed) = Url::parse(url) {
+        if let Some(host) = parsed.host_str() {
+            let host_lower = host.to_lowercase();
+            if host_lower.contains("cdn.") || host_lower.contains("cdn-") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn: bool) -> String {
     let mut new_lines = Vec::new();
 
@@ -77,7 +102,7 @@ pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn:
                 let rewritten = URI_REGEX.replace_all(line, |caps: &regex::Captures| {
                     let rel_uri = &caps[1];
                     let full = resolve_relative_url(source_url, rel_uri);
-                    if keep_cdn && (full.contains("tiktokcdn.com") || full.contains(".image")) {
+                    if keep_cdn && is_cdn_segment(&full) {
                         format!("URI=\"{}\"", full)
                     } else {
                         let encoded = urlencoding::encode(&full);
@@ -94,7 +119,7 @@ pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn:
             }
         } else {
             let full = resolve_relative_url(source_url, stripped);
-            if keep_cdn && (full.contains("tiktokcdn.com") || full.contains(".image")) {
+            if keep_cdn && is_cdn_segment(&full) {
                 new_lines.push(full);
             } else {
                 let encoded = urlencoding::encode(&full);
@@ -257,7 +282,7 @@ mod tests {
     fn test_valid_remote_urls() {
         assert!(is_valid_remote_url("https://film4k.net/api/hls/master.m3u8").is_ok());
         assert!(is_valid_remote_url("http://fiml4k.fun/api/hls/test/master.m3u8").is_ok());
-        assert!(is_valid_remote_url("https://v16m-default.tiktokcdn.com/test.png").is_ok());
+        assert!(is_valid_remote_url("https://v16m-default.akamaicdn.net/test.png").is_ok());
     }
 
     #[test]
@@ -280,7 +305,7 @@ mod tests {
 #EXT-X-STREAM-INF:BANDWIDTH=15000000,RESOLUTION=3840x2160
 video/4k.m3u8
 #EXTINF:6.000000,
-https://v16m-default.tiktokcdn.com/chunk01.image
+https://v16m-default.akamaicdn.net/chunk01.image
 #EXTINF:6.000000,
 segment02.ts
 "#;
@@ -293,8 +318,8 @@ segment02.ts
         // 2. Child playlist 4k.m3u8 should be proxied
         assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fvideo%2F4k.m3u8&keep_cdn=1"));
 
-        // 3. TikTok CDN segment chunk should be KEPT DIRECT!
-        assert!(rewritten.contains("https://v16m-default.tiktokcdn.com/chunk01.image"));
+        // 3. Direct CDN segment chunk should be KEPT DIRECT!
+        assert!(rewritten.contains("https://v16m-default.akamaicdn.net/chunk01.image"));
 
         // 4. Non-CDN relative segment should be proxied
         assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fsegment02.ts&keep_cdn=1"));
@@ -304,12 +329,12 @@ segment02.ts
     fn test_rewrite_m3u8_force_proxy_all() {
         let sample_m3u8 = r#"#EXTM3U
 #EXTINF:6.0,
-https://v16m-default.tiktokcdn.com/chunk01.image
+https://v16m-default.akamaicdn.net/chunk01.image
 "#;
         let base_url = Url::parse("https://film4k.net/api/hls/master.m3u8").unwrap();
         let rewritten = rewrite_m3u8(sample_m3u8, &base_url, "/api/proxy/stream", false);
 
-        // When keep_cdn=false, even tiktokcdn chunks must go through proxy
-        assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Fv16m-default.tiktokcdn.com%2Fchunk01.image"));
+        // When keep_cdn=false, even CDN chunks must go through proxy
+        assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Fv16m-default.akamaicdn.net%2Fchunk01.image"));
     }
 }
