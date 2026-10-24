@@ -59,19 +59,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         <a
           className="app-soon"
-          title="Download the Film4k app"
+          title="Tải ứng dụng Film4k"
           href="/app"
           onClick={(e) => {
             e.preventDefault();
             onAppClick?.();
           }}
         >
-          Get the app
+          Tải ứng dụng
         </a>
 
         <a
           className="side-pair header-pair-btn"
-          title="Pair TV / Device"
+          title="Ghép nối TV / Thiết bị"
           href="/login?mode=code"
           onClick={(e) => {
             e.preventDefault();
@@ -81,10 +81,10 @@ export const Header: React.FC<HeaderProps> = ({
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
             <path d="M4 6h16v10H4zM9 8 6 4M15 8l3-4M9 21h6M8 11h8M12 9v4"></path>
           </svg>
-          <span>Pair TV / Device</span>
+          <span>Ghép nối TV</span>
         </a>
 
-        <button className="ghost locale" type="button" aria-label="Change language">
+        <button className="ghost locale" type="button" aria-label="Thay đổi ngôn ngữ">
           VI
         </button>
 
@@ -92,7 +92,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="auth-btns">
             <a
               className="ghost side-pair"
-              title="Quick Code Login"
+              title="Đăng nhập bằng mã TV"
               href="/login?mode=code"
               onClick={(e) => {
                 e.preventDefault();
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
                 <path d="M4 6h16v10H4zM9 8 6 4M15 8l3-4M9 21h6M8 11h8M12 9v4"></path>
               </svg>
-              <span>Quick Code Login</span>
+              <span>Mã nhanh TV</span>
             </a>
             <a
               className="ghost side-signin"
@@ -112,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onSignInClick?.();
               }}
             >
-              Sign in
+              Đăng nhập
             </a>
           </div>
         </div>

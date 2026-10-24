@@ -69,7 +69,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ movies, onPlay, onInfo }
           {activeMovie.title_en && activeMovie.title_en !== activeMovie.title_vi
             ? `(${activeMovie.title_en}) `
             : ''}
-          Trải nghiệm phát trực tuyến độ phân giải siêu nét 4K HDR với băng thông cực đại từ TikTok CDN. Âm thanh vòm Dolby 5.1 sống động.
+          Trải nghiệm phát trực tuyến độ phân giải siêu nét 4K HDR với băng thông cực đại từ CDN tốc độ cao. Âm thanh vòm Dolby 5.1 sống động.
         </p>
 
         <div className="hero-cta">

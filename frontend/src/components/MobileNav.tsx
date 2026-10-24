@@ -27,7 +27,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"></path>
           </svg>
-          <span>Home</span>
+          <span>Trang chủ</span>
         </a>
 
         <a
@@ -41,7 +41,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm3.5 6.5-2 5-5 2 2-5z"></path>
           </svg>
-          <span>Explore</span>
+          <span>Khám phá</span>
         </a>
 
         <a
@@ -55,7 +55,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M4 8h16v10H4zM9 8 6 4M15 8l3-4M9 21h6"></path>
           </svg>
-          <span>Television</span>
+          <span>Truyền hình</span>
         </a>
 
         <a
@@ -69,7 +69,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 2v20M2.5 9h19M2.5 15h19"></path>
           </svg>
-          <span>Sports</span>
+          <span>Thể thao</span>
         </a>
 
         <a
@@ -83,7 +83,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M3 6h11M3 12h8M3 18h8M15 15l2.5 2.5L22 13"></path>
           </svg>
-          <span>My List</span>
+          <span>Danh sách</span>
         </a>
 
         <button
@@ -98,7 +98,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
             <path d="M5 12h.01M12 12h.01M19 12h.01"></path>
           </svg>
-          <span>More</span>
+          <span>Thêm</span>
         </button>
       </nav>
 

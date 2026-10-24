@@ -23,8 +23,22 @@ import {
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
-import { getSubtitleForTime, getAvailableSubtitleTracks } from '../utils/subtitles';
+import {
+  getSubtitleForTime,
+  findCueBinarySearch,
+  loadVttTrack,
+  SUBTITLE_TRACKS,
+  SAMPLE_SUBTITLES,
+  SubtitleCue,
+} from '../utils/subtitles';
 import { getQualityDisplayInfo, sortQualitiesDescending, QualityLevel } from '../utils/quality';
+
+export interface SubtitleTrackOption {
+  id: string;
+  label: string;
+  url?: string;
+  hlsTrackId?: number;
+}
 
 interface WatchPageProps {
   slug: string;
@@ -56,20 +70,22 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMenu, setSettingsMenu] = useState<SettingsSubmenu>('main');
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
-  const [selectedCaption, setSelectedCaption] = useState<string>('Film4k.net');
+
+  // Subtitle state (Dynamic from movie.subtitles, episode.subtitles, HLS manifest, or local)
+  const [hlsSubtitleTracks, setHlsSubtitleTracks] = useState<SubtitleTrackOption[]>([]);
+  const [selectedCaption, setSelectedCaption] = useState<string>('Tắt');
+  const [activeCues, setActiveCues] = useState<SubtitleCue[] | null>(null);
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string | null>(null);
 
-  // Audio state
-  const [audioTracks, setAudioTracks] = useState<{ id: number; name: string }[]>([
-    { id: 0, name: 'ENG (Stereo)' },
-    { id: 1, name: 'ENG (Dolby Atmos 5.1)' },
-    { id: 2, name: 'VIE (Thuyết minh)' },
-  ]);
+  // Audio state (Dynamic from movie.audio_tracks & hls.audioTracks)
+  const [audioTracks, setAudioTracks] = useState<{ id: number; name: string }[]>([]);
   const [activeAudioTrack, setActiveAudioTrack] = useState<number>(0);
-  const [activeAudioName, setActiveAudioName] = useState<string>('ENG (Stereo)');
+  const [activeAudioName, setActiveAudioName] = useState<string>('Âm thanh mặc định');
 
-  // Streaming Stats & Bitrate & FPS
+  // Streaming Stats & Bitrate & FPS & Dropped frames & Buffer length (Stats for nerds)
   const [fps, setFps] = useState<number>(24);
+  const [droppedFrames, setDroppedFrames] = useState<number>(0);
+  const [bufferLengthSec, setBufferLengthSec] = useState<number>(0);
   const [activeBitrate, setActiveBitrate] = useState<string>('12.4 Mbps');
   const [streamStats, setStreamStats] = useState({
     speedMbps: '17.94 Mbps',
@@ -97,6 +113,85 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
   const scrubberRef = useRef<HTMLDivElement | null>(null);
+  const savedSeekTimeRef = useRef<number>(0);
+
+  // Flexible servers from currentEpisode sources, movie servers, or current source
+  const availableServers: Source[] = useMemo(() => {
+    if (currentEpisode && currentEpisode.sources && currentEpisode.sources.length > 0) {
+      return currentEpisode.sources;
+    }
+    if (movie?.servers && movie.servers.length > 0) {
+      return movie.servers;
+    }
+    if (currentSource) {
+      return [currentSource];
+    }
+    return [];
+  }, [currentEpisode, movie, currentSource]);
+
+  // Flexible subtitle tracks from movie.subtitles, currentEpisode.subtitles, HLS manifest, or local tracks
+  const availableSubtitleOptions: SubtitleTrackOption[] = useMemo(() => {
+    const list: SubtitleTrackOption[] = [];
+    const seen = new Set<string>();
+
+    // 1. Movie level subtitles from DB
+    if (movie?.subtitles && Array.isArray(movie.subtitles)) {
+      movie.subtitles.forEach((s, idx) => {
+        if (typeof s === 'string') {
+          if (!seen.has(s)) {
+            seen.add(s);
+            list.push({ id: `movie-sub-${idx}`, label: s });
+          }
+        } else if (s && typeof s === 'object') {
+          const label = s.label || s.name || s.lang || s.language || `Phụ đề ${idx + 1}`;
+          const url = s.url || s.file || s.src;
+          if (!seen.has(label)) {
+            seen.add(label);
+            list.push({ id: `movie-sub-${idx}`, label, url });
+          }
+        }
+      });
+    }
+
+    // 2. Episode level subtitles from DB
+    if (currentEpisode?.subtitles && Array.isArray(currentEpisode.subtitles)) {
+      currentEpisode.subtitles.forEach((s, idx) => {
+        if (typeof s === 'string') {
+          if (!seen.has(s)) {
+            seen.add(s);
+            list.push({ id: `ep-sub-${idx}`, label: s });
+          }
+        } else if (s && typeof s === 'object') {
+          const label = s.label || s.name || s.lang || s.language || `Tập ${currentEpisode.episode} Sub ${idx + 1}`;
+          const url = s.url || s.file || s.src;
+          if (!seen.has(label)) {
+            seen.add(label);
+            list.push({ id: `ep-sub-${idx}`, label, url });
+          }
+        }
+      });
+    }
+
+    // 3. Manifest subtitles from HLS
+    hlsSubtitleTracks.forEach((st) => {
+      if (!seen.has(st.label)) {
+        seen.add(st.label);
+        list.push(st);
+      }
+    });
+
+    // 4. Predefined sample/bundled tracks (e.g. spider-man)
+    if (SUBTITLE_TRACKS[slug]) {
+      Object.keys(SUBTITLE_TRACKS[slug]).forEach((k) => {
+        if (!seen.has(k)) {
+          seen.add(k);
+          list.push({ id: `bundled-${k}`, label: k });
+        }
+      });
+    }
+
+    return list;
+  }, [movie, currentEpisode, hlsSubtitleTracks, slug]);
 
   // Format seconds to MM:SS or HH:MM:SS
   const formatTime = (secs: number) => {
@@ -247,15 +342,102 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     };
   }, [isPlaying]);
 
-  // Update subtitles based on current time
+  // Load subtitle cues when selectedCaption changes
   useEffect(() => {
-    if (selectedCaption === 'Tắt') {
+    if (selectedCaption === 'Tắt' || !selectedCaption) {
+      setActiveCues(null);
       setCurrentSubtitleText(null);
+      if (hlsRef.current) {
+        hlsRef.current.subtitleTrack = -1;
+      }
+      return;
+    }
+
+    const track = availableSubtitleOptions.find((t) => t.label === selectedCaption);
+    if (!track) {
+      if (SUBTITLE_TRACKS[slug] && SUBTITLE_TRACKS[slug][selectedCaption]) {
+        setActiveCues(SUBTITLE_TRACKS[slug][selectedCaption]);
+      } else {
+        const fb = SAMPLE_SUBTITLES[slug];
+        setActiveCues(fb || null);
+      }
+      return;
+    }
+
+    if (track.url) {
+      loadVttTrack(track.url).then((cues) => {
+        setActiveCues(cues);
+      });
+    } else if (track.hlsTrackId !== undefined && hlsRef.current) {
+      hlsRef.current.subtitleTrack = track.hlsTrackId;
+      hlsRef.current.subtitleDisplay = false;
+      if (track.url) {
+        loadVttTrack(track.url).then((cues) => setActiveCues(cues));
+      }
+    } else if (SUBTITLE_TRACKS[slug] && SUBTITLE_TRACKS[slug][track.label]) {
+      setActiveCues(SUBTITLE_TRACKS[slug][track.label]);
+    } else {
+      const fb = SAMPLE_SUBTITLES[slug];
+      setActiveCues(fb || null);
+    }
+  }, [selectedCaption, availableSubtitleOptions, slug]);
+
+  // Update subtitles via O(log N) binary search based on current time
+  useEffect(() => {
+    if (selectedCaption === 'Tắt' || !selectedCaption) {
+      setCurrentSubtitleText(null);
+      return;
+    }
+    if (activeCues && activeCues.length > 0) {
+      const cue = findCueBinarySearch(activeCues, currentTime);
+      setCurrentSubtitleText(cue ? cue.text : null);
       return;
     }
     const text = getSubtitleForTime(slug, currentTime, selectedCaption);
     setCurrentSubtitleText(text);
-  }, [slug, currentTime, selectedCaption]);
+  }, [slug, currentTime, selectedCaption, activeCues]);
+
+  // Update dropped frames, buffer length, and live dimensions for Stats for Nerds
+  useEffect(() => {
+    if (!showStats && !isPlaying) return;
+
+    const updateNerdStats = () => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      // 1. Dropped frames
+      if (typeof video.getVideoPlaybackQuality === 'function') {
+        const q = video.getVideoPlaybackQuality();
+        setDroppedFrames(q.droppedVideoFrames || 0);
+      } else if ((video as any).webkitDroppedFrameCount !== undefined) {
+        setDroppedFrames((video as any).webkitDroppedFrameCount || 0);
+      }
+
+      // 2. Buffer length in seconds (forward buffer)
+      if (video.buffered && video.buffered.length > 0) {
+        const cur = video.currentTime;
+        let forwardSec = 0;
+        for (let i = 0; i < video.buffered.length; i++) {
+          const s = video.buffered.start(i);
+          const e = video.buffered.end(i);
+          if (cur >= s - 0.2 && cur <= e + 0.2) {
+            forwardSec = Math.max(0, e - cur);
+            break;
+          }
+        }
+        setBufferLengthSec(forwardSec);
+      }
+
+      // 3. Dynamic resolution from video stream
+      if (video.videoWidth && video.videoHeight) {
+        setActiveResolution(`${video.videoWidth}x${video.videoHeight}`);
+      }
+    };
+
+    updateNerdStats();
+    const interval = setInterval(updateNerdStats, 1000);
+    return () => clearInterval(interval);
+  }, [showStats, isPlaying]);
 
   // Fetch Movie Data
   useEffect(() => {
@@ -277,6 +459,28 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           setActiveResolution('3832x1600');
         }
 
+        // Configure audio tracks if provided by movie
+        if (data.audio_tracks && data.audio_tracks.length > 0) {
+          const customAudios = data.audio_tracks.map((tr, idx) => ({
+            id: typeof tr === 'object' && tr.id !== undefined ? tr.id : idx,
+            name: typeof tr === 'string' ? tr : tr.name || (tr as any).label || `Audio ${idx + 1}`,
+          }));
+          setAudioTracks(customAudios);
+          setActiveAudioTrack(customAudios[0].id);
+          setActiveAudioName(customAudios[0].name);
+        }
+
+        // Configure initial subtitles from DB or fallback
+        let initialCaption = 'Tắt';
+        if (data.subtitles && data.subtitles.length > 0) {
+          const firstSub = data.subtitles[0];
+          initialCaption = typeof firstSub === 'string' ? firstSub : firstSub.label || firstSub.name || 'Phụ đề 1';
+        } else if (SUBTITLE_TRACKS[slug]) {
+          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Film4k.net';
+        }
+        setSelectedCaption(initialCaption);
+
+        // Sources & Server initialization
         if (data.episodes && data.episodes.length > 0) {
           const targetEp = initialEpisode
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
@@ -284,7 +488,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           setCurrentEpisode(targetEp);
           if (targetEp.sources && targetEp.sources.length > 0) {
             setCurrentSource(targetEp.sources[0]);
+          } else if (data.servers && data.servers.length > 0) {
+            setCurrentSource(data.servers[0]);
           }
+        } else if (data.servers && data.servers.length > 0) {
+          const virtualEp: Episode = {
+            movieSlug: data.slug,
+            season: 1,
+            episode: 1,
+            title: data.title_vi || data.title_en || 'Full Movie',
+            sources: data.servers,
+          };
+          setCurrentEpisode(virtualEp);
+          setCurrentSource(data.servers[0]);
         } else if (data.stream) {
           let hls = '';
           if (typeof data.stream === 'string') {
@@ -355,7 +571,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             bitrate: lvl.bitrate,
           }));
           setQualities(qList);
-          const topLvl = data.levels[data.levels.length - 1];
+          const sorted = sortQualitiesDescending(qList);
+          const topLvl = sorted[0];
           if (topLvl && topLvl.height) {
             const info = getQualityDisplayInfo(topLvl.height, topLvl.width);
             setAutoQualityLabel(info.label);
@@ -364,6 +581,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
             }
           }
+        }
+        if (savedSeekTimeRef.current > 0) {
+          video.currentTime = savedSeekTimeRef.current;
+          savedSeekTimeRef.current = 0;
         }
         video.play().catch(() => {});
       });
@@ -382,7 +603,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       });
 
-      // Track Audio Tracks
+      // Track Subtitle Tracks from Manifest
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_, data) => {
+        if (data.subtitleTracks && data.subtitleTracks.length > 0) {
+          const subs: SubtitleTrackOption[] = data.subtitleTracks.map((tr) => ({
+            id: `hls-${tr.id}`,
+            label: tr.name || tr.lang || `Track ${tr.id + 1}`,
+            hlsTrackId: tr.id,
+            url: tr.url,
+          }));
+          setHlsSubtitleTracks(subs);
+        }
+      });
+
+      // Track Audio Tracks from Manifest
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
         if (data.audioTracks && data.audioTracks.length > 0) {
           const tracks = data.audioTracks.map((tr) => ({
@@ -390,9 +624,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             name: tr.name || tr.lang || `Track ${tr.id + 1}`,
           }));
           setAudioTracks(tracks);
-          setActiveAudioTrack(hls.audioTrack);
-          if (tracks[hls.audioTrack]) {
-            setActiveAudioName(tracks[hls.audioTrack].name);
+          const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+          setActiveAudioTrack(curId);
+          if (tracks[curId]) {
+            setActiveAudioName(tracks[curId].name);
           }
         }
       });
@@ -586,15 +821,22 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     setSettingsMenu('main');
   };
 
-  const handleSelectAudio = (id: number) => {
-    if (hlsRef.current) {
+  const handleSelectAudio = (id: number, trackName?: string) => {
+    if (hlsRef.current && hlsRef.current.audioTracks && id < hlsRef.current.audioTracks.length) {
       hlsRef.current.audioTrack = id;
     }
     setActiveAudioTrack(id);
-    if (audioTracks[id]) {
-      setActiveAudioName(audioTracks[id].name);
-    }
+    const targetName = trackName || (audioTracks.find((t) => t.id === id)?.name) || `Track ${id + 1}`;
+    setActiveAudioName(targetName);
     setSettingsMenu('main');
+  };
+
+  const handleSelectServer = (src: Source) => {
+    if (currentSource && (src.hlsUrl === currentSource.hlsUrl && src.label === currentSource.label)) return;
+    if (videoRef.current && videoRef.current.currentTime > 0) {
+      savedSeekTimeRef.current = videoRef.current.currentTime;
+    }
+    setCurrentSource(src);
   };
 
   const handleSelectSpeed = (speed: number) => {
@@ -609,6 +851,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     setCurrentEpisode(ep);
     if (ep.sources && ep.sources.length > 0) {
       setCurrentSource(ep.sources[0]);
+    } else if (movie?.servers && movie.servers.length > 0) {
+      setCurrentSource(movie.servers[0]);
     }
     const newPath = ep.episode > 1 ? `/watch/${slug}/${ep.episode}` : `/watch/${slug}`;
     window.history.pushState({}, '', newPath);
@@ -852,50 +1096,71 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <span>THỐNG KÊ</span>
           </button>
 
-          {/* 3. STATS OVERLAY CARD (Resolution, FPS, Bandwidth, Used, Audio) */}
+          {/* 3. STATS OVERLAY CARD (Stats for nerds: Resolution, FPS, Dropped frames, Buffer length, Network speed, Bitrate) */}
           {showStats && (
             <div
               style={{
                 position: 'absolute',
                 top: '60px',
                 left: '24px',
-                background: 'rgba(11, 14, 22, 0.88)',
+                background: 'rgba(11, 14, 22, 0.92)',
                 backdropFilter: 'blur(16px)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
+                border: '1px solid rgba(255, 255, 255, 0.14)',
                 borderRadius: '12px',
                 padding: '12px 18px',
-                width: '230px',
-                fontFamily: 'monospace, monospace',
-                fontSize: '13px',
+                width: '260px',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontSize: '12.5px',
                 color: '#eef2fa',
                 zIndex: 25,
                 boxShadow: '0 16px 36px rgba(0,0,0,0.85)',
                 lineHeight: 1.85,
               }}
             >
+              <div
+                style={{
+                  fontWeight: 700,
+                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                  paddingBottom: '4px',
+                  marginBottom: '6px',
+                  color: '#ff5a66',
+                  fontSize: '11px',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                STATS FOR NERDS
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Resolution</span>
                 <span style={{ fontWeight: 700 }}>{activeResolution}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Bitrate</span>
-                <span style={{ fontWeight: 600 }}>{activeBitrate}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>FPS</span>
                 <span style={{ fontWeight: 700 }}>{fps}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Bandwidth</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Dropped frames</span>
+                <span style={{ fontWeight: 600, color: droppedFrames > 5 ? '#ff5a66' : '#eef2fa' }}>
+                  {droppedFrames}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Buffer length</span>
+                <span style={{ fontWeight: 600 }}>{bufferLengthSec.toFixed(1)} s</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Network speed</span>
                 <span style={{ fontWeight: 700, color: '#46d369' }}>{streamStats.speedMbps}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Used</span>
-                <span>{streamStats.mb ? `${streamStats.mb.toFixed(1)} MB` : '1479.3 MB'}</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Bitrate</span>
+                <span style={{ fontWeight: 600 }}>{activeBitrate}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Audio</span>
-                <span>{activeAudioName}</span>
+                <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {activeAudioName}
+                </span>
               </div>
             </div>
           )}
@@ -1162,7 +1427,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 </div>
               )}
 
-              {/* Audio Submenu matching Image 2 */}
+              {/* Audio Submenu */}
               {settingsMenu === 'audio' && (
                 <div>
                   <button
@@ -1184,28 +1449,34 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <ChevronLeft size={16} /> Audio
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {audioTracks.map((tr) => (
-                      <button
-                        key={tr.id}
-                        type="button"
-                        onClick={() => handleSelectAudio(tr.id)}
-                        style={{
-                          background: activeAudioTrack === tr.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
-                          border: 'none',
-                          color: activeAudioTrack === tr.id ? '#fff' : 'var(--muted-light)',
-                          padding: '9px 14px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          cursor: 'pointer',
-                          borderRadius: '6px',
-                          fontWeight: activeAudioTrack === tr.id ? 700 : 500,
-                        }}
-                      >
-                        <span>{tr.name}</span>
-                        {activeAudioTrack === tr.id && <Check size={16} color="#fff" />}
-                      </button>
-                    ))}
+                    {audioTracks.length > 0 ? (
+                      audioTracks.map((tr) => (
+                        <button
+                          key={tr.id}
+                          type="button"
+                          onClick={() => handleSelectAudio(tr.id, tr.name)}
+                          style={{
+                            background: activeAudioTrack === tr.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                            border: 'none',
+                            color: activeAudioTrack === tr.id ? '#fff' : 'var(--muted-light)',
+                            padding: '9px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            borderRadius: '6px',
+                            fontWeight: activeAudioTrack === tr.id ? 700 : 500,
+                          }}
+                        >
+                          <span>{tr.name}</span>
+                          {activeAudioTrack === tr.id && <Check size={16} color="#fff" />}
+                        </button>
+                      ))
+                    ) : (
+                      <div style={{ padding: '9px 14px', color: 'var(--muted)', fontSize: '13px' }}>
+                        Âm thanh mặc định
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1280,29 +1551,54 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <ChevronLeft size={16} /> Captions
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {[...getAvailableSubtitleTracks(slug), 'Tắt'].map((cap) => (
+                    {/* Off / Tắt option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCaption('Tắt');
+                        setSettingsMenu('main');
+                      }}
+                      style={{
+                        background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                        border: 'none',
+                        color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light)',
+                        padding: '9px 14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        borderRadius: '6px',
+                        fontWeight: selectedCaption === 'Tắt' ? 700 : 500,
+                      }}
+                    >
+                      <span>Tắt {availableSubtitleOptions.length === 0 ? '(Không có phụ đề)' : ''}</span>
+                      {selectedCaption === 'Tắt' && <Check size={16} color="#fff" />}
+                    </button>
+
+                    {/* Available Subtitle Tracks from DB, Episodes, and Manifest */}
+                    {availableSubtitleOptions.map((opt) => (
                       <button
-                        key={cap}
+                        key={opt.id}
                         type="button"
                         onClick={() => {
-                          setSelectedCaption(cap);
+                          setSelectedCaption(opt.label);
                           setSettingsMenu('main');
                         }}
                         style={{
-                          background: selectedCaption === cap ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                          background: selectedCaption === opt.label ? 'rgba(255, 255, 255, 0.08)' : 'none',
                           border: 'none',
-                          color: selectedCaption === cap ? '#fff' : 'var(--muted-light)',
+                          color: selectedCaption === opt.label ? '#fff' : 'var(--muted-light)',
                           padding: '9px 14px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           cursor: 'pointer',
                           borderRadius: '6px',
-                          fontWeight: selectedCaption === cap ? 700 : 500,
+                          fontWeight: selectedCaption === opt.label ? 700 : 500,
                         }}
                       >
-                        <span>{cap}</span>
-                        {selectedCaption === cap && <Check size={16} color="#fff" />}
+                        <span>{opt.label}</span>
+                        {selectedCaption === opt.label && <Check size={16} color="#fff" />}
                       </button>
                     ))}
                   </div>
@@ -1473,7 +1769,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   type="button"
                   onClick={() => {
                     if (selectedCaption === 'Tắt') {
-                      setSelectedCaption('Film4k.net');
+                      if (availableSubtitleOptions.length > 0) {
+                        setSelectedCaption(availableSubtitleOptions[0].label);
+                      } else {
+                        setSelectedCaption('Film4k.net');
+                      }
                     } else {
                       setSelectedCaption('Tắt');
                     }
@@ -1579,27 +1879,29 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
         {/* Server Selection Chips */}
         <div className="wrap" style={{ maxWidth: '1100px', margin: '16px auto 0' }}>
-          <div className="servers" style={{ padding: 0 }}>
-            {currentEpisode && currentEpisode.sources && currentEpisode.sources.length > 1 ? (
-              currentEpisode.sources.map((src, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={`chip ${currentSource === src ? 'on' : ''}`}
-                  onClick={() => setCurrentSource(src)}
-                >
-                  {src.label || `Server ${i + 1}`}
-                </button>
-              ))
+          <div className="servers" style={{ padding: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted, #8b95ad)', marginRight: '4px' }}>
+              Server:
+            </span>
+            {availableServers.length > 0 ? (
+              availableServers.map((src, i) => {
+                const isSelected = currentSource?.hlsUrl === src.hlsUrl || currentSource?.label === src.label;
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`chip ${isSelected ? 'on' : ''}`}
+                    onClick={() => handleSelectServer(src)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {src.label || `Server ${i + 1}`}
+                  </button>
+                );
+              })
             ) : (
-              <>
-                <button type="button" className="chip on">
-                  Server VIP (4K TikTok CDN)
-                </button>
-                <button type="button" className="chip">
-                  Server Dự Phòng
-                </button>
-              </>
+              <button type="button" className="chip on">
+                Server VIP (4K TikTok CDN)
+              </button>
             )}
           </div>
         </div>
