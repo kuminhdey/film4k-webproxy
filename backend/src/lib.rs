@@ -71,17 +71,44 @@ pub fn create_app(state: AppState) -> Router {
         .layer(cors)
 }
 
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct RootQuery {
+    pub url: Option<String>,
+    pub keep_cdn: Option<String>,
+}
+
 pub async fn health_check() -> &'static str {
     "OK"
 }
 
 pub async fn root_handler(
-    Query(query): Query<proxy::ProxyQuery>,
+    Query(query): Query<RootQuery>,
     headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    if !query.url.trim().is_empty() {
-        return handle_stream_proxy(Query(query), headers).await;
+) -> axum::response::Response {
+    if let Some(ref url) = query.url {
+        if !url.trim().is_empty() {
+            let proxy_query = proxy::ProxyQuery {
+                url: url.clone(),
+                keep_cdn: query.keep_cdn.clone(),
+            };
+            return handle_stream_proxy(Query(proxy_query), headers).await.into_response();
+        }
     }
+
+    let dist_dirs = [
+        PathBuf::from("/app/frontend/dist"),
+        PathBuf::from("../frontend/dist"),
+        PathBuf::from("frontend/dist"),
+        PathBuf::from("dist"),
+        PathBuf::from("/Users/kuminhdey/Downloads/webproxy/frontend/dist"),
+    ];
+    for dir in &dist_dirs {
+        let index = dir.join("index.html");
+        if let Ok(content) = tokio::fs::read_to_string(&index).await {
+            return axum::response::Html(content).into_response();
+        }
+    }
+
     axum::response::Html(
         "<h1>🎬 Film4k Proxy Backend Running</h1><p>Frontend SPA will serve here once built.</p>"
     ).into_response()
