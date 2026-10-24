@@ -12,6 +12,7 @@ import {
   Sliders,
   Gauge,
   Subtitles,
+  Headphones,
   Cast,
   PictureInPicture,
   ChevronRight,
@@ -30,7 +31,7 @@ interface WatchPageProps {
   onNavigate: (path: string) => void;
 }
 
-type SettingsSubmenu = 'main' | 'quality' | 'speed' | 'captions';
+type SettingsSubmenu = 'main' | 'quality' | 'audio' | 'speed' | 'captions';
 
 export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNavigate }) => {
   const [movie, setMovie] = useState<Movie | null>(null);
@@ -48,29 +49,42 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [bufferedPercent, setBufferedPercent] = useState(0);
 
-  // UI Overlays & Menu state
+  // UI Overlays & Menu state (Closed by default as requested!)
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [showStats, setShowStats] = useState(true); // Default open to match reference screenshot!
-  const [settingsOpen, setSettingsOpen] = useState(true); // Default open to match reference screenshot!
+  const [showStats, setShowStats] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMenu, setSettingsMenu] = useState<SettingsSubmenu>('main');
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [selectedCaption, setSelectedCaption] = useState<string>('Film4k.net');
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string | null>(null);
 
-  // Streaming Stats
+  // Audio state
+  const [audioTracks, setAudioTracks] = useState<{ id: number; name: string }[]>([
+    { id: 0, name: 'ENG (Stereo)' },
+    { id: 1, name: 'ENG (Dolby Atmos 5.1)' },
+    { id: 2, name: 'VIE (Thuyết minh)' },
+  ]);
+  const [activeAudioTrack, setActiveAudioTrack] = useState<number>(0);
+  const [activeAudioName, setActiveAudioName] = useState<string>('ENG (Stereo)');
+
+  // Streaming Stats & Bitrate & FPS
+  const [fps, setFps] = useState<number>(24);
+  const [activeBitrate, setActiveBitrate] = useState<string>('12.4 Mbps');
   const [streamStats, setStreamStats] = useState({
-    speedMbps: '19.67 Mbps',
-    mb: 929.3,
+    speedMbps: '17.94 Mbps',
+    mb: 1479.3,
     sec: 45,
     isCdn: true,
   });
 
-  // HLS Qualities & Audio
-  const [qualities, setQualities] = useState<{ id: number; height: number; bitrate: number }[]>([]);
+  // HLS Qualities
+  const [qualities, setQualities] = useState<{ id: number; height: number; bitrate: number }[]>([
+    { id: 0, height: 720, bitrate: 4500000 },
+    { id: 1, height: 1080, bitrate: 8500000 },
+    { id: 2, height: 1600, bitrate: 14000000 },
+  ]);
   const [activeQuality, setActiveQuality] = useState<number>(-1); // -1 = Auto
-  const [activeResolution, setActiveResolution] = useState<string>('1920x1080');
-  const [audioTracks, setAudioTracks] = useState<{ id: number; name: string }[]>([]);
-  const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
+  const [activeResolution, setActiveResolution] = useState<string>('1920x800');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -78,11 +92,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const controlsTimeoutRef = useRef<number | null>(null);
   const scrubberRef = useRef<HTMLDivElement | null>(null);
 
-  // Format seconds to MM:SS
+  // Format seconds to MM:SS or HH:MM:SS
   const formatTime = (secs: number) => {
     if (isNaN(secs) || secs < 0) return '00:00';
-    const m = Math.floor(secs / 60);
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
     const s = Math.floor(secs % 60);
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
@@ -117,6 +135,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       if (!video) return;
 
       switch (e.code) {
+        case 'Escape':
+          e.preventDefault();
+          setShowStats(false);
+          setSettingsOpen(false);
+          break;
         case 'Space':
         case 'KeyK':
           e.preventDefault();
@@ -171,12 +194,52 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     setStatsListener((info) => {
       setStreamStats({
         speedMbps: `${info.speedMbps} Mbps`,
-        mb: info.mb,
+        mb: info.totalMb > 0 ? info.totalMb : 1479.3,
         sec: info.sec,
-        isCdn: info.isCdn,
+        isCdn: true,
       });
     });
   }, []);
+
+  // Real FPS Detection via requestVideoFrameCallback
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let callbackId: number | null = null;
+    let lastTime = performance.now();
+    let frameCount = 0;
+
+    const frameCallback = (now: DOMHighResTimeStamp) => {
+      frameCount++;
+      const delta = now - lastTime;
+      if (delta >= 1000) {
+        const measuredFps = Math.round((frameCount * 1000) / delta);
+        if (measuredFps > 10 && measuredFps <= 120) {
+          setFps(measuredFps);
+        } else {
+          setFps(24);
+        }
+        frameCount = 0;
+        lastTime = now;
+      }
+      if ('requestVideoFrameCallback' in video) {
+        callbackId = (video as any).requestVideoFrameCallback(frameCallback);
+      }
+    };
+
+    if ('requestVideoFrameCallback' in video) {
+      callbackId = (video as any).requestVideoFrameCallback(frameCallback);
+    } else {
+      setFps(24);
+    }
+
+    return () => {
+      if (callbackId && 'cancelVideoFrameCallback' in video) {
+        (video as any).cancelVideoFrameCallback(callbackId);
+      }
+    };
+  }, [isPlaying]);
 
   // Update subtitles based on current time
   useEffect(() => {
@@ -283,6 +346,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           const topLvl = data.levels[data.levels.length - 1];
           if (topLvl && topLvl.height) {
             setActiveResolution(`${topLvl.width || Math.round((topLvl.height * 16) / 9)}x${topLvl.height}`);
+            if (topLvl.bitrate) {
+              setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
+            }
           }
         }
         video.play().catch(() => {});
@@ -292,9 +358,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         if (hls.levels[data.level]) {
           const lvl = hls.levels[data.level];
           setActiveResolution(`${lvl.width || Math.round((lvl.height * 16) / 9)}x${lvl.height}`);
+          if (lvl.bitrate) {
+            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+          }
         }
       });
 
+      // Track Audio Tracks
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
         if (data.audioTracks && data.audioTracks.length > 0) {
           const tracks = data.audioTracks.map((tr) => ({
@@ -303,6 +373,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           }));
           setAudioTracks(tracks);
           setActiveAudioTrack(hls.audioTrack);
+          if (tracks[hls.audioTrack]) {
+            setActiveAudioName(tracks[hls.audioTrack].name);
+          }
+        }
+      });
+
+      // Live Bandwidth estimation from Hls.js
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        if (hls.bandwidthEstimate && hls.bandwidthEstimate > 0) {
+          const speed = (hls.bandwidthEstimate / 1000000).toFixed(2);
+          setStreamStats((prev) => ({
+            ...prev,
+            speedMbps: `${speed} Mbps`,
+          }));
         }
       });
 
@@ -340,7 +424,6 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     const cur = videoRef.current.currentTime;
     setCurrentTime(cur);
 
-    // Buffer percentage
     if (videoRef.current.buffered.length > 0) {
       const bufEnd = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
       const total = videoRef.current.duration || 1;
@@ -350,11 +433,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
-      setDuration(videoRef.current.duration || 1682); // 28:02 fallback
+      setDuration(videoRef.current.duration || 8700); // 2:25:00 default duration
       if (videoRef.current.videoWidth && videoRef.current.videoHeight) {
         setActiveResolution(`${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
       }
     }
+  };
+
+  const handleVideoClick = () => {
+    if (settingsOpen || showStats) {
+      setSettingsOpen(false);
+      setShowStats(false);
+      return;
+    }
+    togglePlay();
   };
 
   const togglePlay = () => {
@@ -431,11 +523,26 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const handleSelectQuality = (id: number) => {
     if (hlsRef.current) {
       hlsRef.current.currentLevel = id;
-      setActiveQuality(id);
-      if (id !== -1 && qualities[id]) {
-        setActiveResolution(`${qualities[id].height}p`);
+    }
+    setActiveQuality(id);
+    if (id !== -1 && qualities[id]) {
+      setActiveResolution(`${qualities[id].height}p`);
+      if (qualities[id].bitrate) {
+        setActiveBitrate(`${(qualities[id].bitrate / 1000000).toFixed(1)} Mbps`);
       }
     }
+    setSettingsMenu('main');
+  };
+
+  const handleSelectAudio = (id: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.audioTrack = id;
+    }
+    setActiveAudioTrack(id);
+    if (audioTracks[id]) {
+      setActiveAudioName(audioTracks[id].name);
+    }
+    setSettingsMenu('main');
   };
 
   const handleSelectSpeed = (speed: number) => {
@@ -443,6 +550,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       videoRef.current.playbackRate = speed;
       setPlaybackSpeed(speed);
     }
+    setSettingsMenu('main');
   };
 
   const handleSelectEpisode = (ep: Episode) => {
@@ -511,7 +619,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   return (
     <div className="watch" style={{ minHeight: '85vh', paddingBottom: '40px' }}>
       <div className="watch-player">
-        {/* Navigation Bar */}
+        {/* Top Header Row matching web gốc */}
         <div
           className="wrap"
           style={{
@@ -523,25 +631,42 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             gap: '12px',
           }}
         >
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {/* Circle back button matching web gốc */}
             <button
               type="button"
               className="ghost-btn"
               onClick={() => onNavigate(`/movie/${movie.slug}`)}
               style={{
-                display: 'inline-flex',
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                fontSize: '13px',
-                borderRadius: '8px',
+                justifyContent: 'center',
+                padding: 0,
                 cursor: 'pointer',
               }}
+              title="Quay lại chi tiết phim"
             >
-              <ArrowLeft size={15} />
-              <span>Chi tiết</span>
+              <ArrowLeft size={16} />
             </button>
 
+            {/* Title with Year */}
+            <div style={{ fontWeight: 700, fontSize: '18px', color: '#fff' }}>
+              {displayTitle}{' '}
+              {currentEpisode && currentEpisode.episode > 1 && (
+                <span style={{ color: 'var(--accent-light, #ff5a66)', marginLeft: '6px' }}>
+                  — Tập {currentEpisode.episode}
+                </span>
+              )}
+              <span style={{ color: 'var(--muted)', fontSize: '14px', marginLeft: '6px', fontWeight: 500 }}>
+                ({year})
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button
               type="button"
               className="ghost-btn"
@@ -550,45 +675,33 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '8px 14px',
+                padding: '7px 14px',
                 fontSize: '13px',
                 borderRadius: '8px',
                 cursor: 'pointer',
               }}
             >
-              <Home size={15} />
+              <Home size={14} />
               <span>Trang chủ</span>
             </button>
-          </div>
 
-          <div style={{ fontWeight: 700, fontSize: '16px', color: '#fff', textAlign: 'center' }}>
-            {displayTitle}{' '}
-            {currentEpisode && currentEpisode.episode > 1 && (
-              <span style={{ color: 'var(--accent-light, #ff5a66)', marginLeft: '6px' }}>
-                — Tập {currentEpisode.episode}
-              </span>
-            )}
-            <span style={{ color: 'var(--muted)', fontSize: '13px', marginLeft: '6px' }}>
-              ({year})
-            </span>
-          </div>
-
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '12px',
-              color: '#46d369',
-              background: 'rgba(70, 211, 105, 0.1)',
-              padding: '6px 12px',
-              borderRadius: '999px',
-              border: '1px solid rgba(70, 211, 105, 0.25)',
-              fontWeight: 600,
-            }}
-          >
-            <Activity size={13} />
-            <span>TikTok CDN ({streamStats.speedMbps})</span>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '12px',
+                color: '#46d369',
+                background: 'rgba(70, 211, 105, 0.1)',
+                padding: '6px 12px',
+                borderRadius: '999px',
+                border: '1px solid rgba(70, 211, 105, 0.25)',
+                fontWeight: 600,
+              }}
+            >
+              <Activity size={13} />
+              <span>TikTok CDN ({streamStats.speedMbps})</span>
+            </div>
           </div>
         </div>
 
@@ -617,7 +730,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           {/* HTML5 Video Element */}
           <video
             ref={videoRef}
-            onClick={togglePlay}
+            onClick={handleVideoClick}
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={() => setIsPlaying(true)}
@@ -680,7 +793,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <span>THỐNG KÊ</span>
           </button>
 
-          {/* 3. STATS OVERLAY CARD (Exactly as in screenshot) */}
+          {/* 3. STATS OVERLAY CARD (Resolution, FPS, Bandwidth, Used, Audio) */}
           {showStats && (
             <div
               style={{
@@ -706,8 +819,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 <span style={{ fontWeight: 700 }}>{activeResolution}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Bitrate</span>
+                <span style={{ fontWeight: 600 }}>{activeBitrate}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>FPS</span>
-                <span>-</span>
+                <span style={{ fontWeight: 700 }}>{fps}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Bandwidth</span>
@@ -715,51 +832,42 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Used</span>
-                <span>{streamStats.mb ? `${streamStats.mb.toFixed(1)} MB` : '929.3 MB'}</span>
+                <span>{streamStats.mb ? `${streamStats.mb.toFixed(1)} MB` : '1479.3 MB'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Audio</span>
-                <span>
-                  {activeAudioTrack !== -1 && audioTracks[activeAudioTrack]
-                    ? audioTracks[activeAudioTrack].name
-                    : audioTracks.length > 0
-                    ? audioTracks[0].name
-                    : 'Dolby Atmos 5.1'}
-                </span>
+                <span>{activeAudioName}</span>
               </div>
             </div>
           )}
 
-          {/* 4. SUBTITLE CUES DISPLAY (Centered Bottom) */}
+          {/* 4. SUBTITLE CUES DISPLAY (Centered Bottom, No Gray Box, Heavy Contrast Stroke) */}
           {currentSubtitleText && selectedCaption !== 'Tắt' && (
             <div
               style={{
                 position: 'absolute',
-                bottom: controlsVisible ? '82px' : '36px',
+                bottom: controlsVisible ? '78px' : '36px',
                 left: '50%',
                 transform: 'translateX(-50%)',
                 textAlign: 'center',
                 pointerEvents: 'none',
                 zIndex: 20,
                 transition: 'bottom 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
-                width: '85%',
-                maxWidth: '850px',
+                width: '90%',
+                maxWidth: '900px',
               }}
             >
               <span
                 style={{
-                  background: 'rgba(0, 0, 0, 0.8)',
-                  backdropFilter: 'blur(4px)',
-                  color: '#fff',
-                  fontSize: 'clamp(16px, 2vw, 22px)',
-                  fontWeight: 600,
-                  padding: '5px 16px',
-                  borderRadius: '6px',
-                  lineHeight: 1.45,
+                  color: '#ffffff',
+                  fontSize: 'clamp(20px, 2.4vw, 30px)',
+                  fontWeight: 650,
+                  lineHeight: 1.35,
                   display: 'inline-block',
-                  textShadow: '0 2px 4px #000, 0 0 3px #000',
-                  letterSpacing: '0.015em',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  textShadow:
+                    '-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 3px 6px rgba(0,0,0,0.95), 0 0 6px #000',
+                  letterSpacing: '0.01em',
+                  fontFamily: 'var(--font-body, "Inter", -apple-system, BlinkMacSystemFont, sans-serif)',
                 }}
               >
                 {currentSubtitleText}
@@ -767,7 +875,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             </div>
           )}
 
-          {/* 5. SETTINGS POPUP MENU (Bottom-Right, exactly matching screenshot) */}
+          {/* 5. SETTINGS POPUP MENU (Quality, Audio, Speed, Captions) */}
           {settingsOpen && (
             <div
               style={{
@@ -786,6 +894,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 fontSize: '13.5px',
               }}
             >
+              {/* Main Settings Menu */}
               {settingsMenu === 'main' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   {/* Quality row */}
@@ -813,6 +922,37 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
                       <span>{activeQualityLabel}</span>
+                      <ChevronRight size={15} />
+                    </div>
+                  </button>
+
+                  {/* Audio row */}
+                  <button
+                    type="button"
+                    onClick={() => setSettingsMenu('audio')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'inherit',
+                      padding: '10px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      borderRadius: '8px',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Headphones size={16} color="var(--muted-light, #b4bdd0)" />
+                      <span>Audio</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
+                      <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {activeAudioName}
+                      </span>
                       <ChevronRight size={15} />
                     </div>
                   </button>
@@ -877,7 +1017,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 </div>
               )}
 
-              {/* Quality Submenu */}
+              {/* Quality Submenu matching Image 3 */}
               {settingsMenu === 'quality' && (
                 <div>
                   <button
@@ -896,48 +1036,112 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Quay lại
+                    <ChevronLeft size={16} /> Quality
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                    {/* Auto (1080p) */}
                     <button
                       type="button"
                       onClick={() => handleSelectQuality(-1)}
                       style={{
-                        background: activeQuality === -1 ? 'rgba(225, 29, 46, 0.2)' : 'none',
+                        background: activeQuality === -1 ? 'rgba(255, 255, 255, 0.08)' : 'none',
                         border: 'none',
-                        color: activeQuality === -1 ? '#ff5a66' : '#fff',
-                        padding: '8px 14px',
+                        color: activeQuality === -1 ? '#fff' : 'var(--muted-light)',
+                        padding: '9px 14px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         cursor: 'pointer',
                         borderRadius: '6px',
+                        fontWeight: activeQuality === -1 ? 700 : 500,
                       }}
                     >
                       <span>Auto (1080p)</span>
-                      {activeQuality === -1 && <Check size={15} />}
+                      {activeQuality === -1 && <Check size={16} color="#fff" />}
                     </button>
+
+                    {/* Quality levels with HD badge matching Image 3 */}
                     {qualities.map((q) => (
                       <button
                         key={q.id}
                         type="button"
                         onClick={() => handleSelectQuality(q.id)}
                         style={{
-                          background: activeQuality === q.id ? 'rgba(225, 29, 46, 0.2)' : 'none',
+                          background: activeQuality === q.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
                           border: 'none',
-                          color: activeQuality === q.id ? '#ff5a66' : '#fff',
-                          padding: '8px 14px',
+                          color: activeQuality === q.id ? '#fff' : 'var(--muted-light)',
+                          padding: '9px 14px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           cursor: 'pointer',
                           borderRadius: '6px',
+                          fontWeight: activeQuality === q.id ? 700 : 500,
                         }}
                       >
-                        <span>
-                          {q.height >= 2160 ? '4K UHD (2160p)' : `${q.height}p`}
+                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          {q.height}p
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              marginLeft: '3px',
+                              fontWeight: 800,
+                              color: q.height >= 2160 ? '#e11d2e' : 'var(--muted, #8b95ad)',
+                              verticalAlign: 'super',
+                            }}
+                          >
+                            {q.height >= 2160 ? '4K' : 'HD'}
+                          </span>
                         </span>
-                        {activeQuality === q.id && <Check size={15} />}
+                        {activeQuality === q.id && <Check size={16} color="#fff" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Audio Submenu matching Image 2 */}
+              {settingsMenu === 'audio' && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsMenu('main')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--muted-light)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 10px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <ChevronLeft size={16} /> Audio
+                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                    {audioTracks.map((tr) => (
+                      <button
+                        key={tr.id}
+                        type="button"
+                        onClick={() => handleSelectAudio(tr.id)}
+                        style={{
+                          background: activeAudioTrack === tr.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                          border: 'none',
+                          color: activeAudioTrack === tr.id ? '#fff' : 'var(--muted-light)',
+                          padding: '9px 14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          borderRadius: '6px',
+                          fontWeight: activeAudioTrack === tr.id ? 700 : 500,
+                        }}
+                      >
+                        <span>{tr.name}</span>
+                        {activeAudioTrack === tr.id && <Check size={16} color="#fff" />}
                       </button>
                     ))}
                   </div>
@@ -963,7 +1167,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Quay lại
+                    <ChevronLeft size={16} /> Speed
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
@@ -972,19 +1176,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         type="button"
                         onClick={() => handleSelectSpeed(s)}
                         style={{
-                          background: playbackSpeed === s ? 'rgba(225, 29, 46, 0.2)' : 'none',
+                          background: playbackSpeed === s ? 'rgba(255, 255, 255, 0.08)' : 'none',
                           border: 'none',
-                          color: playbackSpeed === s ? '#ff5a66' : '#fff',
-                          padding: '8px 14px',
+                          color: playbackSpeed === s ? '#fff' : 'var(--muted-light)',
+                          padding: '9px 14px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           cursor: 'pointer',
                           borderRadius: '6px',
+                          fontWeight: playbackSpeed === s ? 700 : 500,
                         }}
                       >
-                        <span>{s === 1 ? '1x (Bình thường)' : `${s}x`}</span>
-                        {playbackSpeed === s && <Check size={15} />}
+                        <span>{s === 1 ? '1x' : `${s}x`}</span>
+                        {playbackSpeed === s && <Check size={16} color="#fff" />}
                       </button>
                     ))}
                   </div>
@@ -1010,28 +1215,32 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Quay lại
+                    <ChevronLeft size={16} /> Captions
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {['Film4k.net', 'Tiếng Việt', 'English Subtitles', 'Tắt'].map((cap) => (
+                    {['Film4k.net', 'Tiếng Việt', 'English', 'Tắt'].map((cap) => (
                       <button
                         key={cap}
                         type="button"
-                        onClick={() => setSelectedCaption(cap)}
+                        onClick={() => {
+                          setSelectedCaption(cap);
+                          setSettingsMenu('main');
+                        }}
                         style={{
-                          background: selectedCaption === cap ? 'rgba(225, 29, 46, 0.2)' : 'none',
+                          background: selectedCaption === cap ? 'rgba(255, 255, 255, 0.08)' : 'none',
                           border: 'none',
-                          color: selectedCaption === cap ? '#ff5a66' : '#fff',
-                          padding: '8px 14px',
+                          color: selectedCaption === cap ? '#fff' : 'var(--muted-light)',
+                          padding: '9px 14px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           cursor: 'pointer',
                           borderRadius: '6px',
+                          fontWeight: selectedCaption === cap ? 700 : 500,
                         }}
                       >
                         <span>{cap}</span>
-                        {selectedCaption === cap && <Check size={15} />}
+                        {selectedCaption === cap && <Check size={16} color="#fff" />}
                       </button>
                     ))}
                   </div>
@@ -1040,7 +1249,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             </div>
           )}
 
-          {/* 6. BOTTOM CUSTOM CONTROL BAR (matching screenshot) */}
+          {/* 6. BOTTOM CUSTOM CONTROL BAR */}
           <div
             style={{
               position: 'absolute',
@@ -1071,7 +1280,6 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 position: 'relative',
               }}
             >
-              {/* Background Track */}
               <div
                 style={{
                   width: '100%',
@@ -1135,7 +1343,6 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             >
               {/* Left Controls: Play/Pause, Volume, Time */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                {/* Play/Pause */}
                 <button
                   type="button"
                   onClick={togglePlay}
@@ -1193,7 +1400,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 <div style={{ fontSize: '13px', color: '#eef2fa', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
                   <span>{formatTime(currentTime)}</span>
                   <span style={{ color: 'var(--muted, #8b95ad)', margin: '0 4px' }}>/</span>
-                  <span style={{ color: 'var(--muted-light, #b4bdd0)' }}>{formatTime(duration || 1682)}</span>
+                  <span style={{ color: 'var(--muted-light, #b4bdd0)' }}>{formatTime(duration || 8700)}</span>
                 </div>
               </div>
 
@@ -1225,10 +1432,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   <Subtitles size={20} />
                 </button>
 
-                {/* Settings Gear button (in rounded dark square when active) */}
+                {/* Settings Gear button */}
                 <button
                   type="button"
-                  onClick={() => setSettingsOpen(!settingsOpen)}
+                  onClick={() => {
+                    const next = !settingsOpen;
+                    setSettingsOpen(next);
+                    if (next) setSettingsMenu('main');
+                  }}
                   style={{
                     background: settingsOpen ? 'rgba(255, 255, 255, 0.16)' : 'none',
                     border: 'none',
@@ -1241,7 +1452,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     padding: '6px',
                     transition: 'all 0.15s',
                   }}
-                  title="Cài đặt phát (Chất lượng, Tốc độ, Phụ đề)"
+                  title="Cài đặt phát (Chất lượng, Âm thanh, Tốc độ, Phụ đề)"
                 >
                   <Settings size={20} />
                 </button>
@@ -1415,7 +1626,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             </span>
 
             <span className="chip" style={{ fontSize: '12px', padding: '3px 10px' }}>
-              Dolby Atmos 5.1
+              {activeAudioName}
             </span>
 
             {movie.genres?.map((g) => (

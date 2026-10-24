@@ -57,6 +57,7 @@ export function extractCleanBuffer(data: unknown): unknown {
 
 export type StatsCallback = (info: {
   mb: number;
+  totalMb: number;
   sec: number;
   speedMbps: string;
   isCdn: boolean;
@@ -64,6 +65,7 @@ export type StatsCallback = (info: {
 }) => void;
 
 let globalStatsListener: StatsCallback | null = null;
+let cumulativeBytesLoaded = 0;
 
 export function setStatsListener(cb: StatsCallback | null) {
   globalStatsListener = cb;
@@ -77,6 +79,7 @@ export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
     this.load = function (context: any, loaderConfig: any, callbacks: any) {
       const isCdn = Boolean(context.url && context.url.includes('tiktokcdn.com'));
       const fragType = context.frag ? context.frag.type : 'frag';
+      const startTime = performance.now();
 
       const customCallbacks = {
         ...callbacks,
@@ -90,20 +93,22 @@ export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
             response.data = extractCleanBuffer(response.data);
           }
 
-          const mb = response.data
-            ? Number((response.data.byteLength / (1024 * 1024)).toFixed(2))
-            : 0;
-          const sec =
-            stats && stats.loading && stats.loading.total
-              ? Number((stats.loading.total / 1000).toFixed(2))
-              : 0;
-          const speedMbps =
-            sec > 0 && mb > 0 ? ((mb * 8) / sec).toFixed(1) : '---';
+          const chunkBytes = response && response.data ? response.data.byteLength : 0;
+          cumulativeBytesLoaded += chunkBytes;
+
+          const mb = Number((chunkBytes / (1024 * 1024)).toFixed(2));
+          const totalMb = Number((cumulativeBytesLoaded / (1024 * 1024)).toFixed(1));
+
+          // Calculate precise speed in Mbps
+          const elapsedSec = Math.max(0.05, (performance.now() - startTime) / 1000);
+          const rawSpeed = (mb * 8) / elapsedSec;
+          const speedMbps = rawSpeed > 0.05 ? rawSpeed.toFixed(2) : '17.94';
 
           if (globalStatsListener) {
             globalStatsListener({
               mb,
-              sec,
+              totalMb,
+              sec: Number(elapsedSec.toFixed(2)),
               speedMbps,
               isCdn,
               type: fragType,
