@@ -67,6 +67,15 @@ pub fn create_app(state: AppState) -> Router {
     Router::new()
         .nest("/api", api_routes)
         .route("/", get(root_handler))
+        .route("/movie/:slug", get(spa_page_handler))
+        .route("/movie/:slug/*rest", get(spa_page_handler))
+        .route("/watch/:slug", get(spa_page_handler))
+        .route("/watch/:slug/:ep", get(spa_page_handler))
+        .route("/explore", get(spa_page_handler))
+        .route("/genres", get(spa_page_handler))
+        .route("/television", get(spa_page_handler))
+        .route("/sports", get(spa_page_handler))
+        .route("/mylist", get(spa_page_handler))
         .fallback_service(serve_dir)
         .layer(cors)
 }
@@ -80,6 +89,32 @@ pub struct RootQuery {
 
 pub async fn health_check() -> &'static str {
     "OK"
+}
+
+pub async fn spa_page_handler() -> axum::response::Response {
+    let dist_dirs = [
+        PathBuf::from("/app/frontend/dist"),
+        PathBuf::from("../frontend/dist"),
+        PathBuf::from("frontend/dist"),
+        PathBuf::from("dist"),
+        PathBuf::from("/Users/kuminhdey/Downloads/webproxy/frontend/dist"),
+    ];
+    for dir in &dist_dirs {
+        let index = dir.join("index.html");
+        if let Ok(content) = tokio::fs::read_to_string(&index).await {
+            return (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                content,
+            ).into_response();
+        }
+    }
+
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        "<h1>🎬 Film4k Cinema</h1><p>Frontend SPA will serve here once built.</p>",
+    ).into_response()
 }
 
 pub async fn root_handler(
@@ -96,23 +131,7 @@ pub async fn root_handler(
         }
     }
 
-    let dist_dirs = [
-        PathBuf::from("/app/frontend/dist"),
-        PathBuf::from("../frontend/dist"),
-        PathBuf::from("frontend/dist"),
-        PathBuf::from("dist"),
-        PathBuf::from("/Users/kuminhdey/Downloads/webproxy/frontend/dist"),
-    ];
-    for dir in &dist_dirs {
-        let index = dir.join("index.html");
-        if let Ok(content) = tokio::fs::read_to_string(&index).await {
-            return axum::response::Html(content).into_response();
-        }
-    }
-
-    axum::response::Html(
-        "<h1>🎬 Film4k Proxy Backend Running</h1><p>Frontend SPA will serve here once built.</p>"
-    ).into_response()
+    spa_page_handler().await
 }
 
 pub async fn list_movies(

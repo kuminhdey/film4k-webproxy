@@ -2796,5 +2796,32 @@
     },
     "episodes": [],
     "crawledAt": "2026-10-24T12:07:12.152Z"
+  },
+  {
+    "id": "7bc559438b0c9ca6944ad999",
+    "slug": "street-fighter",
+    "type": "movie",
+    "title_vi": "Võ Sĩ Đường Phố",
+    "title_en": "Street Fighter",
+    "year": 2026,
+    "quality": "4K",
+    "score": 8.4,
+    "genres": [
+      "Phim Hành Động",
+      "Phim Phiêu Lưu",
+      "Phim Võ Thuật"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/eSvYccJm5ejJXFtJTqM2dIqrhK7.jpg",
+    "overview": "Được chuyển thể từ dòng game đối kháng huyền thoại của Capcom, Street Fighter quy tụ những võ sĩ đỉnh cao thế giới vào một giải đấu sinh tử ngầm đầy bí ẩn và khốc liệt. Ryu và Ken bước vào cuộc hành trình tìm kiếm sức mạnh tối thượng và vén màn âm mưu thống trị thế giới của tổ chức tội phạm Shadaloo.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server VIP (4K CDN)",
+      "hlsUrl": "https://fiml4k.fun/api/hls/Xk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FXk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:05:00.000Z"
   }
 ]
