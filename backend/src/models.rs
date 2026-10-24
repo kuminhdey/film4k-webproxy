@@ -35,7 +35,7 @@ fn default_one() -> i32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Movie {
     #[serde(default)]
-    pub id: Option<i64>,
+    pub id: Option<serde_json::Value>,
     pub slug: String,
     #[serde(rename = "type", default = "default_movie_type")]
     pub movie_type: String, // "movie" or "tv"
@@ -62,7 +62,7 @@ pub struct Movie {
     #[serde(rename = "totalEpisodes", default)]
     pub total_episodes: Option<i32>,
     #[serde(default)]
-    pub stream: Option<String>,
+    pub stream: Option<serde_json::Value>,
     #[serde(default)]
     pub episodes: Vec<Episode>,
 }

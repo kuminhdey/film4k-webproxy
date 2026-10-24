@@ -121,6 +121,18 @@ impl Database {
             movie.slug
         ).to_lowercase();
 
+        let stream_str = match &movie.stream {
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            Some(serde_json::Value::Object(obj)) => {
+                obj.get("proxyStreamUrl")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| obj.get("hlsUrl").and_then(|v| v.as_str()))
+                    .map(|s| s.to_string())
+                    .or_else(|| Some(serde_json::to_string(obj).unwrap_or_default()))
+            }
+            _ => None,
+        };
+
         conn.execute(
             r#"
             INSERT INTO movies (slug, movie_type, title_vi, title_en, search_text, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, updated_at)
@@ -157,7 +169,7 @@ impl Database {
                 movie.backdrop,
                 movie.overview,
                 movie.total_episodes,
-                movie.stream,
+                stream_str,
             ],
         )?;
 
@@ -294,7 +306,7 @@ impl Database {
                 let genres_raw: String = row.get(8)?;
                 let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
                 Ok(Movie {
-                    id: Some(row.get(0)?),
+                    id: Some(serde_json::json!(row.get::<_, i64>(0)?)),
                     slug: row.get(1)?,
                     movie_type: row.get(2)?,
                     title_vi: row.get(3)?,
@@ -308,7 +320,7 @@ impl Database {
                     backdrop: row.get(11)?,
                     overview: row.get(12)?,
                     total_episodes: row.get(13)?,
-                    stream: row.get(14)?,
+                    stream: row.get::<_, Option<String>>(14)?.map(serde_json::Value::String),
                     episodes: Vec::new(),
                 })
             },

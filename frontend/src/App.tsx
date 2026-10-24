@@ -1,10 +1,14 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, Suspense } from 'react';
 import { Navbar } from './components/Navbar';
 import { Billboard } from './components/Billboard';
 import { MovieCard } from './components/MovieCard';
-import { PlayerModal } from './components/PlayerModal';
+import { MovieGridSkeleton, BillboardSkeleton } from './components/MovieSkeleton';
 import { MovieSummary, MoviesResponse } from './types';
-import { Sparkles, Clapperboard, Tv, Loader2 } from 'lucide-react';
+import { Sparkles, Clapperboard, Tv } from 'lucide-react';
+
+const PlayerModal = React.lazy(() =>
+  import('./components/PlayerModal').then((m) => ({ default: m.PlayerModal }))
+);
 
 export const App: React.FC = () => {
   const [movies, setMovies] = useState<MovieSummary[]>([]);
@@ -69,7 +73,13 @@ export const App: React.FC = () => {
       />
 
       {/* Hero Billboard Banner */}
-      {!searchQuery && <Billboard movie={featuredMovie} onPlay={handlePlayMovie} onMoreInfo={handleMoreInfo} />}
+      {!searchQuery && (
+        loading && !featuredMovie ? (
+          <BillboardSkeleton />
+        ) : (
+          <Billboard movie={featuredMovie} onPlay={handlePlayMovie} onMoreInfo={handleMoreInfo} />
+        )
+      )}
 
       {/* Movie Section / Catalog */}
       <main style={{ maxWidth: '1440px', margin: '0 auto', padding: searchQuery ? '90px 32px 0' : '20px 32px 0' }}>
@@ -89,16 +99,12 @@ export const App: React.FC = () => {
             </h2>
           </div>
           <span style={{ fontSize: '0.85rem', color: '#9494a8' }}>
-            Hiển thị {movies.length} / {total} phim
+            {loading ? 'Đang tải...' : `Hiển thị ${movies.length} / ${total} phim`}
           </span>
         </div>
 
-        {/* Loading state */}
-        {loading && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px', color: '#e50914' }}>
-            <Loader2 size={36} className="animate-spin" />
-          </div>
-        )}
+        {/* Loading state: Netflix Skeleton Grid */}
+        {loading && <MovieGridSkeleton count={24} />}
 
         {/* Empty state */}
         {!loading && movies.length === 0 && (
@@ -111,6 +117,7 @@ export const App: React.FC = () => {
         {/* Movie Grid */}
         {!loading && movies.length > 0 && (
           <div
+            className="animate-fade-in"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
@@ -126,10 +133,12 @@ export const App: React.FC = () => {
 
       {/* Cinematic Player Modal */}
       {selectedMovieSlug && (
-        <PlayerModal
-          slug={selectedMovieSlug}
-          onClose={() => setSelectedMovieSlug(null)}
-        />
+        <Suspense fallback={null}>
+          <PlayerModal
+            slug={selectedMovieSlug}
+            onClose={() => setSelectedMovieSlug(null)}
+          />
+        </Suspense>
       )}
     </div>
   );

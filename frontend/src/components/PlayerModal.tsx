@@ -5,6 +5,13 @@ import {
   Settings,
   Activity,
   Tv,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  RotateCcw,
+  RotateCw,
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
@@ -38,6 +45,146 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
+  const osdTimerRef = useRef<number | null>(null);
+  const [osd, setOsd] = useState<{
+    icon: 'play' | 'pause' | 'mute' | 'unmute' | 'volume' | 'rewind' | 'forward' | 'fullscreen';
+    text: string;
+    percent?: number;
+  } | null>(null);
+
+  const triggerOsd = (
+    icon: 'play' | 'pause' | 'mute' | 'unmute' | 'volume' | 'rewind' | 'forward' | 'fullscreen',
+    text: string,
+    percent?: number
+  ) => {
+    if (osdTimerRef.current) {
+      window.clearTimeout(osdTimerRef.current);
+    }
+    setOsd({ icon, text, percent });
+    osdTimerRef.current = window.setTimeout(() => {
+      setOsd(null);
+    }, 900);
+  };
+
+  const toggleFullscreen = () => {
+    const container = playerContainerRef.current || videoRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+      if (container.requestFullscreen) {
+        container.requestFullscreen().catch(() => {});
+      } else if ((container as any).webkitRequestFullscreen) {
+        (container as any).webkitRequestFullscreen();
+      }
+      triggerOsd('fullscreen', 'Toàn màn hình');
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+      triggerOsd('fullscreen', 'Thoát toàn màn hình');
+    }
+  };
+
+  // Keyboard Shortcuts Handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const video = videoRef.current;
+      if (!video) return;
+
+      switch (e.code) {
+        case 'Space': {
+          e.preventDefault();
+          if (video.paused) {
+            video.play().catch(() => {});
+            triggerOsd('play', 'Phát');
+          } else {
+            video.pause();
+            triggerOsd('pause', 'Tạm dừng');
+          }
+          break;
+        }
+        case 'KeyM': {
+          e.preventDefault();
+          video.muted = !video.muted;
+          if (video.muted) {
+            triggerOsd('mute', 'Đã tắt tiếng');
+          } else {
+            const volPct = Math.round(video.volume * 100);
+            triggerOsd('unmute', `Âm lượng: ${volPct}%`, volPct);
+          }
+          break;
+        }
+        case 'KeyF': {
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        }
+        case 'ArrowLeft': {
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 10);
+          triggerOsd('rewind', '-10 giây');
+          break;
+        }
+        case 'ArrowRight': {
+          e.preventDefault();
+          const maxTime = video.duration || video.currentTime + 10;
+          video.currentTime = Math.min(maxTime, video.currentTime + 10);
+          triggerOsd('forward', '+10 giây');
+          break;
+        }
+        case 'ArrowUp': {
+          e.preventDefault();
+          video.muted = false;
+          const newVol = Math.min(1, Math.round((video.volume + 0.1) * 10) / 10);
+          video.volume = newVol;
+          triggerOsd('volume', `Âm lượng: ${Math.round(newVol * 100)}%`, Math.round(newVol * 100));
+          break;
+        }
+        case 'ArrowDown': {
+          e.preventDefault();
+          const newVol = Math.max(0, Math.round((video.volume - 0.1) * 10) / 10);
+          video.volume = newVol;
+          if (newVol === 0) {
+            video.muted = true;
+            triggerOsd('mute', 'Đã tắt tiếng', 0);
+          } else {
+            triggerOsd('volume', `Âm lượng: ${Math.round(newVol * 100)}%`, Math.round(newVol * 100));
+          }
+          break;
+        }
+        case 'Escape': {
+          if (!document.fullscreenElement) {
+            onClose();
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (osdTimerRef.current) {
+        window.clearTimeout(osdTimerRef.current);
+      }
+    };
+  }, [onClose]);
 
   // 1. Fetch movie details
   useEffect(() => {
@@ -282,6 +429,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Video Canvas */}
         <div
+          ref={playerContainerRef}
+          className="video-container"
           style={{
             flex: 1,
             display: 'flex',
@@ -290,6 +439,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
             alignItems: 'center',
             position: 'relative',
             background: '#000',
+            overflow: 'hidden',
           }}
         >
           {loading && <div style={{ color: '#fff' }}>Đang nạp dữ liệu phim...</div>}
@@ -307,6 +457,102 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
               background: '#000',
             }}
           />
+
+          {/* On-Screen Display (OSD) Feedback */}
+          {osd && (
+            <div
+              className="player-osd"
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 30,
+                background: 'rgba(0, 0, 0, 0.85)',
+                backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '16px',
+                padding: '18px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px',
+                color: '#fff',
+                boxShadow: '0 12px 36px rgba(0, 0, 0, 0.8)',
+                minWidth: '130px',
+              }}
+            >
+              {osd.icon === 'play' && <Play size={34} fill="#fff" />}
+              {osd.icon === 'pause' && <Pause size={34} fill="#fff" />}
+              {osd.icon === 'mute' && <VolumeX size={34} color="#ff4d58" />}
+              {osd.icon === 'unmute' && <Volume2 size={34} color="#4ade80" />}
+              {osd.icon === 'volume' && <Volume2 size={34} color="#fff" />}
+              {osd.icon === 'rewind' && <RotateCcw size={34} color="#fff" />}
+              {osd.icon === 'forward' && <RotateCw size={34} color="#fff" />}
+              {osd.icon === 'fullscreen' && <Maximize size={34} color="#fff" />}
+              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{osd.text}</span>
+              {typeof osd.percent === 'number' && (
+                <div
+                  style={{
+                    width: '100px',
+                    height: '4px',
+                    background: 'rgba(255,255,255,0.2)',
+                    borderRadius: '2px',
+                    overflow: 'hidden',
+                    marginTop: '2px',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${osd.percent}%`,
+                      height: '100%',
+                      background: '#e50914',
+                      borderRadius: '2px',
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Keyboard Shortcut Hints */}
+          <div
+            className="shortcut-hints"
+            style={{
+              position: 'absolute',
+              bottom: '50px',
+              left: '24px',
+              zIndex: 10,
+              background: 'rgba(10, 10, 14, 0.7)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '20px',
+              padding: '6px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              fontSize: '0.75rem',
+              color: '#a0a0b8',
+              userSelect: 'none',
+              pointerEvents: 'none',
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>Space</kbd> Phát/Dừng
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>M</kbd> Tắt tiếng
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>F</kbd> Toàn màn hình
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>← / →</kbd> Tua 10s
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <kbd style={{ background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '3px', color: '#fff', fontSize: '0.7rem' }}>↑ / ↓</kbd> Âm lượng
+            </span>
+          </div>
 
           {/* Quick Audio / Quality selector controls bar */}
           <div

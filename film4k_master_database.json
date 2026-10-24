@@ -2333,5 +2333,112 @@
     },
     "episodes": [],
     "crawledAt": "2026-10-24T11:15:05.191Z"
+  },
+  {
+    "id": "6ac449438b0c9ca6944ad878",
+    "slug": "spider-man-brand-new-day",
+    "type": "movie",
+    "title_vi": "Người Nhện: Khởi Đầu Mới",
+    "title_en": "Spider-Man: Brand New Day",
+    "year": 2026,
+    "quality": "4K",
+    "score": 8.1,
+    "genres": [
+      "Phim Khoa Học Viễn Tưởng",
+      "Phim Hành Động",
+      "Phim Phiêu Lưu"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/eSvYccJm5ejJXFtJTqM2dIqrhK7.jpg",
+    "overview": "Không còn Tony Stark, MJ hay Ned kề cận, Peter buộc phải đơn thân độc mã đối diện với phe đối đầu bí ẩn. Tuy nhiên, khi áp lực ngày càng gia tăng, nó kích hoạt một sự biến đổi thể chất bất ngờ, đe dọa chính sự tồn tại của anh. Đồng thời, một chuỗi tội phạm bí ẩn mới xuất hiện, kéo theo một trong những mối đe dọa mạnh mẽ nhất mà Spider-Man từng đối mặt.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/Xk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FXk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:04:30.174Z"
+  },
+  {
+    "id": "6aa500b6c080f574546d107c",
+    "slug": "hope",
+    "type": "movie",
+    "title_vi": "Hope: Vùng Tử Địa",
+    "title_en": "Hope",
+    "year": 2026,
+    "quality": "1080p",
+    "score": 7.2,
+    "genres": [
+      "Phim Khoa Học Viễn Tưởng",
+      "Phim Bí Ẩn",
+      "Phim Hành Động"
+    ],
+    "country": "Hàn Quốc",
+    "poster": "https://image.tmdb.org/t/p/w500/yY5GFSFM4eQknenk2oCoC19EeF5.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/hrCTKrc3Tz2wbPOt5rcrlAhqF11.jpg",
+    "overview": "Tại Hope Harbor, một ngôi làng hẻo lánh nằm gần khu vực phi quân sự, cảnh sát trưởng Bum-seok đã nhận được tin báo khẩn cấp từ người dân địa phương về sự xuất hiện của một con hổ. Khi cả ngôi làng chìm trong hoảng loạn, Bum-seok ngỡ ngàng khi phát hiện một sự thật nằm ngoài sức tưởng tượng của con người.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/6iIslbMROlzOMpOFe4m_mhlFaoS9JyUP3QsOsMXDN44xX_GWGJHtCYblXLBH0Pw54VqQrNIl3K8f3pavjQZjZnE9cuKK0VM/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2F6iIslbMROlzOMpOFe4m_mhlFaoS9JyUP3QsOsMXDN44xX_GWGJHtCYblXLBH0Pw54VqQrNIl3K8f3pavjQZjZnE9cuKK0VM%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:04:31.248Z"
+  },
+  {
+    "id": "6ab6275be5cf45f7c76d9502",
+    "slug": "desire",
+    "type": "movie",
+    "title_vi": "Ham Muốn Cháy Bỏng",
+    "title_en": "Desire",
+    "year": 2011,
+    "quality": "1080p",
+    "score": 6.3,
+    "genres": [
+      "Phim Chính Kịch",
+      "Phim Lãng Mạn"
+    ],
+    "country": "Pháp",
+    "poster": "https://image.tmdb.org/t/p/w500/yBTElYnRkwySYzMunE6urPT9LvT.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/zbTaYrQzZaaEf1SZlv3RTZiUvZw.jpg",
+    "overview": "Q là một bộ phim chính kịch khiêu dâm của Pháp năm 2011 của đạo diễn Laurent Bouhnik. Nó đã được phát hành tại Hoa Kỳ với tên gọi Desire.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/Io4m-hPtfYI-HCtVH_KEo66qYta9HGb3PWyrjNHBv8DNkqDdbuKC5effy0VN8LA39Yjz_Ah4jGCHkXQuAhEnvf991Fw8stCXsg/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FIo4m-hPtfYI-HCtVH_KEo66qYta9HGb3PWyrjNHBv8DNkqDdbuKC5effy0VN8LA39Yjz_Ah4jGCHkXQuAhEnvf991Fw8stCXsg%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:04:31.932Z"
+  },
+  {
+    "id": "6aae5e4ec080f57454a60743",
+    "slug": "resident-evil-2026",
+    "type": "movie",
+    "title_vi": "Vùng Đất Quỷ Dữ",
+    "title_en": "Resident Evil",
+    "year": 2026,
+    "quality": "1080p",
+    "score": 7.6,
+    "genres": [
+      "Phim Kinh Dị",
+      "Phim Khoa Học Viễn Tưởng",
+      "Phim Phiêu Lưu"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/jlFMvLuzjwt7aI1QVtiNVnFHNBe.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/1CIaRYKf3zg2Xyce1CSfCMg2Vfw.jpg",
+    "overview": "Medical courier Bryan unwittingly finds himself fighting for survival as one fateful, horrifying night collapses around him in chaos.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/52YVWV-Qx4sQzQl2t-NOQpGnvVFCOqwni97ntDPvoXfEORFWSGCFqO2r3U5jyORdUn8i1ltNQhpMOdfnKMk8_NoU61-WsBuCgLwpCUA9SVYl3wQmcA/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2F52YVWV-Qx4sQzQl2t-NOQpGnvVFCOqwni97ntDPvoXfEORFWSGCFqO2r3U5jyORdUn8i1ltNQhpMOdfnKMk8_NoU61-WsBuCgLwpCUA9SVYl3wQmcA%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:04:31.933Z"
   }
 ]

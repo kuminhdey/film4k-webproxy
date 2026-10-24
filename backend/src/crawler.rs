@@ -91,12 +91,17 @@ impl CrawlerService {
             let path = std::path::Path::new(path_str);
             if path.exists() {
                 if let Ok(content) = tokio::fs::read_to_string(path).await {
-                    if let Ok(movies) = serde_json::from_str::<Vec<Movie>>(&content) {
-                        for m in movies {
-                            if self.db.upsert_movie(&m).is_ok() {
-                                imported_total += 1;
+                    match serde_json::from_str::<Vec<Movie>>(&content) {
+                        Ok(movies) => {
+                            info!("Importing {} movies from {:?}", movies.len(), path);
+                            for m in movies {
+                                match self.db.upsert_movie(&m) {
+                                    Ok(_) => imported_total += 1,
+                                    Err(e) => tracing::warn!("Failed to upsert movie {}: {}", m.slug, e),
+                                }
                             }
                         }
+                        Err(e) => tracing::error!("Failed to parse JSON {:?}: {}", path, e),
                     }
                 }
             }

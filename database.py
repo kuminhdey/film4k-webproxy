@@ -16,26 +16,42 @@ def get_connection():
 def init_db():
     conn = get_connection()
     with conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS movies (
-                slug TEXT PRIMARY KEY,
-                id TEXT,
-                type TEXT, -- 'movie' or 'tv'
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                movie_type TEXT NOT NULL DEFAULT 'movie',
                 title_vi TEXT,
                 title_en TEXT,
+                search_text TEXT NOT NULL DEFAULT '',
                 year INTEGER,
                 quality TEXT,
                 score REAL,
-                genres TEXT, -- JSON array
+                genres_json TEXT NOT NULL DEFAULT '[]',
                 country TEXT,
                 poster TEXT,
                 backdrop TEXT,
                 overview TEXT,
-                total_episodes INTEGER DEFAULT 1,
-                hls_url TEXT,
-                episodes_json TEXT, -- JSON array of episodes
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                total_episodes INTEGER,
+                stream TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                movie_slug TEXT NOT NULL,
+                season INTEGER NOT NULL DEFAULT 1,
+                episode INTEGER NOT NULL,
+                title TEXT,
+                runtime INTEGER,
+                still TEXT,
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                UNIQUE(movie_slug, season, episode),
+                FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
             )
         """)
         conn.execute("""
@@ -45,9 +61,9 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(type)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_year ON movies(year)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_score ON movies(score)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug)")
     conn.close()
 
 def upsert_movie(movie_data: Dict[str, Any]):
@@ -55,102 +71,88 @@ def upsert_movie(movie_data: Dict[str, Any]):
     slug = movie_data.get("slug")
     if not slug:
         return
+    
+    movie_type = movie_data.get("type") or movie_data.get("movie_type", "movie")
+    title_vi = movie_data.get("title_vi") or ""
+    title_en = movie_data.get("title_en") or ""
+    search_text = f"{title_vi} {title_en} {slug}".lower()
+    year = movie_data.get("year", 2024)
+    quality = movie_data.get("quality", "1080p")
+    score = movie_data.get("score", 0.0)
+    genres_json = json.dumps(movie_data.get("genres", []), ensure_ascii=False)
+    country = movie_data.get("country", "")
+    poster = movie_data.get("poster", "")
+    backdrop = movie_data.get("backdrop", "")
+    overview = movie_data.get("overview", "")
+    total_episodes = movie_data.get("totalEpisodes") or movie_data.get("total_episodes", 1)
+
+    stream_val = movie_data.get("stream")
+    stream_str = None
+    if isinstance(stream_val, dict):
+        stream_str = stream_val.get("proxyStreamUrl") or stream_val.get("hlsUrl")
+    elif isinstance(stream_val, str):
+        stream_str = stream_val
+    elif movie_data.get("hls_url"):
+        stream_str = movie_data.get("hls_url")
+
     with conn:
         conn.execute("""
             INSERT INTO movies (
-                slug, id, type, title_vi, title_en, year, quality, score,
-                genres, country, poster, backdrop, overview, total_episodes,
-                hls_url, episodes_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                slug, movie_type, title_vi, title_en, search_text,
+                year, quality, score, genres_json, country,
+                poster, backdrop, overview, total_episodes, stream, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(slug) DO UPDATE SET
-                title_vi=excluded.title_vi,
-                title_en=excluded.title_en,
-                year=excluded.year,
-                quality=excluded.quality,
-                score=excluded.score,
-                genres=excluded.genres,
-                country=excluded.country,
-                poster=excluded.poster,
-                backdrop=excluded.backdrop,
-                overview=excluded.overview,
-                total_episodes=excluded.total_episodes,
-                hls_url=excluded.hls_url,
-                episodes_json=excluded.episodes_json,
-                updated_at=CURRENT_TIMESTAMP
+                movie_type = excluded.movie_type,
+                title_vi = COALESCE(excluded.title_vi, movies.title_vi),
+                title_en = COALESCE(excluded.title_en, movies.title_en),
+                search_text = excluded.search_text,
+                year = COALESCE(excluded.year, movies.year),
+                quality = COALESCE(excluded.quality, movies.quality),
+                score = COALESCE(excluded.score, movies.score),
+                genres_json = excluded.genres_json,
+                country = COALESCE(excluded.country, movies.country),
+                poster = COALESCE(excluded.poster, movies.poster),
+                backdrop = COALESCE(excluded.backdrop, movies.backdrop),
+                overview = COALESCE(excluded.overview, movies.overview),
+                total_episodes = COALESCE(excluded.total_episodes, movies.total_episodes),
+                stream = COALESCE(excluded.stream, movies.stream),
+                updated_at = CURRENT_TIMESTAMP
         """, (
-            slug,
-            movie_data.get("id", ""),
-            movie_data.get("type", "movie"),
-            movie_data.get("title_vi", ""),
-            movie_data.get("title_en", ""),
-            movie_data.get("year", 2024),
-            movie_data.get("quality", "1080p"),
-            movie_data.get("score", 0.0),
-            json.dumps(movie_data.get("genres", []), ensure_ascii=False),
-            movie_data.get("country", ""),
-            movie_data.get("poster", ""),
-            movie_data.get("backdrop", ""),
-            movie_data.get("overview", ""),
-            movie_data.get("total_episodes", 1),
-            movie_data.get("hls_url", ""),
-            json.dumps(movie_data.get("episodes", []), ensure_ascii=False)
+            slug, movie_type, title_vi, title_en, search_text,
+            year, quality, score, genres_json, country,
+            poster, backdrop, overview, total_episodes, stream_str
         ))
+
+        # Episodes
+        episodes = movie_data.get("episodes", [])
+        for ep in episodes:
+            sources_json = json.dumps(ep.get("sources", []), ensure_ascii=False)
+            conn.execute("""
+                INSERT INTO episodes (
+                    movie_slug, season, episode, title, runtime, still, sources_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(movie_slug, season, episode) DO UPDATE SET
+                    title = excluded.title,
+                    runtime = excluded.runtime,
+                    still = excluded.still,
+                    sources_json = excluded.sources_json
+            """, (
+                slug,
+                ep.get("season", 1),
+                ep.get("episode", 1),
+                ep.get("title", f"Tập {ep.get('episode', 1)}"),
+                ep.get("runtime", 45),
+                ep.get("still", ""),
+                sources_json
+            ))
+
     conn.close()
-
-def get_movies(
-    type_filter: Optional[str] = None,
-    search: Optional[str] = None,
-    limit: int = 40,
-    offset: int = 0
-) -> List[Dict[str, Any]]:
-    conn = get_connection()
-    query = "SELECT * FROM movies WHERE 1=1"
-    params = []
-
-    if type_filter and type_filter in ["movie", "tv"]:
-        query += " AND type = ?"
-        params.append(type_filter)
-
-    if search:
-        query += " AND (title_vi LIKE ? OR title_en LIKE ? OR slug LIKE ?)"
-        s = f"%{search}%"
-        params.extend([s, s, s])
-
-    query += " ORDER BY updated_at DESC, score DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-
-    results = []
-    for row in rows:
-        r = dict(row)
-        r["genres"] = json.loads(r["genres"]) if r.get("genres") else []
-        r["episodes"] = json.loads(r["episodes_json"]) if r.get("episodes_json") else []
-        del r["episodes_json"]
-        results.append(r)
-    return results
-
-def get_movie_by_slug(slug: str) -> Optional[Dict[str, Any]]:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM movies WHERE slug = ?", (slug,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        return None
-    r = dict(row)
-    r["genres"] = json.loads(r["genres"]) if r.get("genres") else []
-    r["episodes"] = json.loads(r["episodes_json"]) if r.get("episodes_json") else []
-    del r["episodes_json"]
-    return r
 
 def get_stats() -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT count(*) as total, sum(case when type='movie' then 1 else 0 end) as movies, sum(case when type='tv' then 1 else 0 end) as series FROM movies")
+    cursor.execute("SELECT count(*) as total, sum(case when movie_type='movie' then 1 else 0 end) as movies, sum(case when movie_type='tv' then 1 else 0 end) as series FROM movies")
     row = cursor.fetchone()
     
     cursor.execute("SELECT value FROM crawler_state WHERE key = 'status'")
