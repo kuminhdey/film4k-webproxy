@@ -272,6 +272,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         setMovie(data);
         setLoading(false);
 
+        if (data.quality === '4K') {
+          setAutoQualityLabel('1600p');
+          setActiveResolution('3832x1600');
+        }
+
         if (data.episodes && data.episodes.length > 0) {
           const targetEp = initialEpisode
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
@@ -555,15 +560,26 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       }
     } else {
-      if (hlsRef.current && hlsRef.current.currentLevel >= 0) {
+      if (hlsRef.current && hlsRef.current.currentLevel >= 0 && hlsRef.current.levels[hlsRef.current.currentLevel]) {
         const lvl = hlsRef.current.levels[hlsRef.current.currentLevel];
-        if (lvl) {
-          const info = getQualityDisplayInfo(lvl.height, lvl.width);
-          setAutoQualityLabel(info.label);
-          setActiveResolution(info.resolution);
-          if (lvl.bitrate) {
-            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+        const info = getQualityDisplayInfo(lvl.height, lvl.width);
+        setAutoQualityLabel(info.label);
+        setActiveResolution(info.resolution);
+        if (lvl.bitrate) {
+          setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+        }
+      } else {
+        if (activeQuality !== -1) {
+          const prevQ = qualities.find((q) => q.id === activeQuality);
+          if (prevQ) {
+            const info = getQualityDisplayInfo(prevQ.height, prevQ.width);
+            setAutoQualityLabel(info.label);
+            setActiveResolution(info.resolution);
           }
+        } else {
+          const nextLabel = autoQualityLabel === '1080p' ? '1600p' : '1080p';
+          setAutoQualityLabel(nextLabel);
+          setActiveResolution(nextLabel === '1600p' ? '3832x1600' : '1920x800');
         }
       }
     }
