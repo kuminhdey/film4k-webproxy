@@ -6,7 +6,8 @@ movies.db*
 data/
 storage/
 .DS_Store
-film4k_*
-cloned_*
+/film4k_*
+/cloned_*
+!frontend/src/film4k_videojs.css
 *.log
 *.tsbuildinfo
