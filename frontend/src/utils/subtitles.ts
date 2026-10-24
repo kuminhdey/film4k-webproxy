@@ -141,3 +141,36 @@ export function parseVTT(vttContent: string): SubtitleCue[] {
 
   return cues;
 }
+
+const vttUrlCache = new Map<string, SubtitleCue[]>();
+
+/**
+ * Loads a remote WebVTT file and caches its parsed cues.
+ */
+export async function loadVttTrack(url: string): Promise<SubtitleCue[]> {
+  if (vttUrlCache.has(url)) {
+    return vttUrlCache.get(url)!;
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const cues = parseVTT(text);
+    vttUrlCache.set(url, cues);
+    return cues;
+  } catch (err) {
+    console.warn('Failed to load VTT from url:', url, err);
+    return [];
+  }
+}
+
+/**
+ * Dynamically register a subtitle track for a movie
+ */
+export function registerSubtitleTrack(slug: string, trackName: string, cues: SubtitleCue[]) {
+  if (!SUBTITLE_TRACKS[slug]) {
+    SUBTITLE_TRACKS[slug] = {};
+  }
+  SUBTITLE_TRACKS[slug][trackName] = cues;
+}
+

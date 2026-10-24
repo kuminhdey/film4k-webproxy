@@ -250,7 +250,8 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
       hlsRef.current = null;
     }
 
-    let rawUrl = currentSource.hlsUrl;
+    let rawUrl = currentSource.hlsUrl || currentSource.url || '';
+    if (!rawUrl) return;
     if (!rawUrl.includes('.m3u8')) {
       rawUrl = rawUrl.endsWith('/') ? `${rawUrl}master.m3u8` : `${rawUrl}/master.m3u8`;
     }
@@ -421,7 +422,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
           >
             <Activity size={14} />
             <span>
-              {streamStats.speedMbps} Mbps • {streamStats.isCdn ? 'TikTok CDN' : 'VPS Proxy'}
+              {streamStats.speedMbps} Mbps • {streamStats.isCdn ? 'CDN Tốc độ cao' : 'Máy chủ Proxy'}
             </span>
           </div>
 
@@ -463,7 +464,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
         >
           {loading && (
             <div style={{ color: 'var(--fg, #fff)', fontSize: '15px' }}>
-              Đang kết nối luồng 4K TikTok CDN...
+              Đang kết nối luồng phát 4K tốc độ cao...
             </div>
           )}
           {error && (

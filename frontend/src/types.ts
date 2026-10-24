@@ -1,33 +1,43 @@
-export interface Source {
-  label: string;
-  hlsUrl: string;
-  proxyStreamUrl?: string;
-}
-
 export interface ServerSource {
   id?: string | number;
-  label: string;
-  hlsUrl: string;
+  label?: string;
+  name?: string;
+  hlsUrl?: string;
+  url?: string;
   proxyStreamUrl?: string;
   quality?: string;
 }
 
+export type Source = ServerSource;
+
 export interface SubtitleTrack {
-  id?: string | number;
-  label: string;
+  id?: number | string;
+  label?: string;
+  name?: string;
   lang?: string;
+  language?: string;
   url?: string;
+  file?: string;
+  src?: string;
   kind?: string;
   default?: boolean;
+  isDefault?: boolean;
 }
 
+export type SubtitleTrackInfo = SubtitleTrack;
+
 export interface AudioTrack {
-  id?: string | number;
-  label: string;
+  id?: number | string;
+  name?: string;
+  label?: string;
   lang?: string;
   url?: string;
+  groupId?: string;
   default?: boolean;
+  isDefault?: boolean;
 }
+
+export type AudioTrackItem = AudioTrack;
 
 export interface Episode {
   id?: number;
@@ -37,16 +47,16 @@ export interface Episode {
   title?: string;
   runtime?: number;
   still?: string;
-  sources: Source[];
+  sources: ServerSource[];
   servers?: ServerSource[];
-  subtitles?: SubtitleTrack[];
-  audio_tracks?: AudioTrack[];
+  subtitles?: (string | SubtitleTrack)[];
+  audio_tracks?: (string | AudioTrack)[];
 }
 
 export interface Movie {
-  id?: number;
+  id?: number | string;
   slug: string;
-  type: string; // 'movie' | 'tv'
+  type: string;
   title_vi?: string;
   title_en?: string;
   year?: number;
@@ -58,11 +68,11 @@ export interface Movie {
   backdrop?: string;
   overview?: string;
   totalEpisodes?: number;
-  stream?: string;
-  episodes: Episode[];
+  stream?: string | { hlsUrl?: string; [key: string]: any };
   servers?: ServerSource[];
-  subtitles?: SubtitleTrack[];
-  audio_tracks?: AudioTrack[];
+  subtitles?: (string | SubtitleTrack)[];
+  audio_tracks?: (string | AudioTrack | { id?: number | string; name?: string; label?: string; lang?: string })[];
+  episodes: Episode[];
 }
 
 export interface MovieSummary {
@@ -86,3 +96,4 @@ export interface MoviesResponse {
   limit: number;
   offset: number;
 }
+

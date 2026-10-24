@@ -77,7 +77,7 @@ export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
     const originalLoad = this.load.bind(this);
 
     this.load = function (context: any, loaderConfig: any, callbacks: any) {
-      const isCdn = Boolean(context.url && context.url.includes('tiktokcdn.com'));
+      const isCdn = Boolean(context.url && (context.url.includes('cdn') || context.url.startsWith('http')));
       const fragType = context.frag ? context.frag.type : 'frag';
       const startTime = performance.now();
 
