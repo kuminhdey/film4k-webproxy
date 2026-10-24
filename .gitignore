@@ -11,3 +11,5 @@ storage/
 !frontend/src/film4k_videojs.css
 *.log
 *.tsbuildinfo
+*.db*
+/verified_*

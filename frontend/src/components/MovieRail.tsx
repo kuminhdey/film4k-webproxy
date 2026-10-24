@@ -5,6 +5,7 @@ interface MovieRailProps {
   title: string;
   movies: MovieSummary[];
   onSelect: (movie: MovieSummary) => void;
+  onPlay?: (movie: MovieSummary) => void;
   onViewAll?: () => void;
   id?: string;
 }
@@ -13,6 +14,7 @@ export const MovieRail: React.FC<MovieRailProps> = ({
   title,
   movies,
   onSelect,
+  onPlay,
   onViewAll,
   id,
 }) => {
@@ -72,7 +74,17 @@ export const MovieRail: React.FC<MovieRailProps> = ({
                         'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg'
                       }
                     />
-                    <span className="play" aria-hidden="true">
+                    <span
+                      className="play"
+                      aria-hidden="true"
+                      onClick={(e) => {
+                        if (onPlay) {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          onPlay(movie);
+                        }
+                      }}
+                    >
                       ▶
                     </span>
                     <span className="card-res">{res}</span>
