@@ -864,10 +864,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const selectedQuality = qualities.find((q) => q.id === activeQuality);
   const activeQualityLabel =
     activeQuality === -1
-      ? `Auto (${autoQualityLabel})`
+      ? `Tự động (${autoQualityLabel})`
       : selectedQuality
       ? getQualityDisplayInfo(selectedQuality.height, selectedQuality.width).label
-      : 'Auto';
+      : 'Tự động';
 
   if (loading) {
     return (
@@ -1130,36 +1130,36 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   letterSpacing: '0.05em',
                 }}
               >
-                STATS FOR NERDS
+                THÔNG SỐ KỸ THUẬT
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Resolution</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Độ phân giải</span>
                 <span style={{ fontWeight: 700 }}>{activeResolution}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>FPS</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Khung hình (FPS)</span>
                 <span style={{ fontWeight: 700 }}>{fps}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Dropped frames</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Khung hình bị rớt</span>
                 <span style={{ fontWeight: 600, color: droppedFrames > 5 ? '#ff5a66' : '#eef2fa' }}>
                   {droppedFrames}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Buffer length</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Độ dài bộ đệm</span>
                 <span style={{ fontWeight: 600 }}>{bufferLengthSec.toFixed(1)} s</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Network speed</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Tốc độ mạng</span>
                 <span style={{ fontWeight: 700, color: '#46d369' }}>{streamStats.speedMbps}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Bitrate</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Tốc độ bit (Bitrate)</span>
                 <span style={{ fontWeight: 600 }}>{activeBitrate}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--muted, #8b95ad)' }}>Audio</span>
+                <span style={{ color: 'var(--muted, #8b95ad)' }}>Âm thanh</span>
                 <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeAudioName}
                 </span>
@@ -1244,7 +1244,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Sliders size={16} color="var(--muted-light, #b4bdd0)" />
-                      <span>Quality</span>
+                      <span>Chất lượng</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
                       <span>{activeQualityLabel}</span>
@@ -1273,7 +1273,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Headphones size={16} color="var(--muted-light, #b4bdd0)" />
-                      <span>Audio</span>
+                      <span>Âm thanh</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
                       <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1304,7 +1304,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Gauge size={16} color="var(--muted-light, #b4bdd0)" />
-                      <span>Speed</span>
+                      <span>Tốc độ phát</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
                       <span>{playbackSpeed === 1 ? '1×' : `${playbackSpeed}×`}</span>
@@ -1333,7 +1333,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Subtitles size={16} color="var(--muted-light, #b4bdd0)" />
-                      <span>Captions</span>
+                      <span>Phụ đề</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
                       <span>{selectedCaption}</span>
@@ -1362,7 +1362,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Quality
+                    <ChevronLeft size={16} /> Chất lượng
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {/* Auto (1080p) or Auto (1600p) */}
@@ -1382,7 +1382,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         fontWeight: activeQuality === -1 ? 700 : 500,
                       }}
                     >
-                      <span>Auto ({autoQualityLabel})</span>
+                      <span>Tự động ({autoQualityLabel})</span>
                       {activeQuality === -1 && <Check size={16} color="#fff" />}
                     </button>
 
@@ -1448,7 +1448,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Audio
+                    <ChevronLeft size={16} /> Âm thanh
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {audioTracks.length > 0 ? (
@@ -1502,7 +1502,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Speed
+                    <ChevronLeft size={16} /> Tốc độ phát
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
@@ -1523,7 +1523,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                           fontWeight: playbackSpeed === s ? 700 : 500,
                         }}
                       >
-                        <span>{s === 1 ? '1x' : `${s}x`}</span>
+                        <span>{s === 1 ? 'Chuẩn (1×)' : `${s}×`}</span>
                         {playbackSpeed === s && <Check size={16} color="#fff" />}
                       </button>
                     ))}
@@ -1550,7 +1550,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       fontWeight: 700,
                     }}
                   >
-                    <ChevronLeft size={16} /> Captions
+                    <ChevronLeft size={16} /> Phụ đề
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {/* Off / Tắt option */}
@@ -1883,7 +1883,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         <div className="wrap" style={{ maxWidth: '1100px', margin: '16px auto 0' }}>
           <div className="servers" style={{ padding: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted, #8b95ad)', marginRight: '4px' }}>
-              Server:
+              Máy chủ phát:
             </span>
             {availableServers.length > 0 ? (
               availableServers.map((src, i) => {
