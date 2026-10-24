@@ -80,10 +80,10 @@ impl CrawlerService {
         info!("🚀 Crawler cycle started...");
         let start_time = SystemTime::now();
 
-        // 1. Check if crawler output file exists from latest run or crawl script
+        // 1. Check if master database exists
         let json_paths = [
             "/Users/kuminhdey/Downloads/webproxy/film4k_master_database.json",
-            "/Users/kuminhdey/Downloads/webproxy/film4k_sample_crawled.json",
+            "film4k_master_database.json",
         ];
 
         let mut imported_total = 0;

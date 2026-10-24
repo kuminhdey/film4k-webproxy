@@ -2440,5 +2440,361 @@
     },
     "episodes": [],
     "crawledAt": "2026-10-24T12:04:31.933Z"
+  },
+  {
+    "id": "6adc99be5094a727888caab2",
+    "slug": "the-sign",
+    "type": "tv",
+    "title_vi": "Điềm Báo",
+    "title_en": "The Sign",
+    "year": 2023,
+    "quality": "4K",
+    "score": 8.6,
+    "genres": [
+      "Phim Bí Ẩn",
+      "Phim Chính Kịch",
+      "Action & Adventure",
+      "Sci-Fi & Fantasy"
+    ],
+    "country": "Thái Lan",
+    "poster": "https://image.tmdb.org/t/p/w500/x9nbRCyOD1WJK13rqrZPleJJoKp.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/zvrmkaqCWwIGX6zBgGIGZHG3AaH.jpg",
+    "overview": "Kể từ khi Tharn có ý thức, anh ấy đã có khả năng linh cảm về những người xung quanh, biết được ai là tốt và ai là xấu. Khi trở thành đồng đội trong nhóm điều tra đặc biệt, Tharn lương thiện hoạt bát gặp được Phaya thông minh quyến rũ, cảm giác như họ đã quen biết nhau từ rất lâu.",
+    "totalEpisodes": 12,
+    "stream": null,
+    "episodes": [
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 1,
+        "title": "Tập 1",
+        "runtime": 71,
+        "still": "https://image.tmdb.org/t/p/w780/qInNoeDLYqJiO5bdHiTWbs2mTrd.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/dbLkADBNamg0erEnoVXG_NkonzEzzDfoeWai1yJHCAH3icL1JidCD2ljZNumRaRFqZU1anVieez33fF48qs87lPVzBvyybBMw_59NnnF_kZh4w/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FdbLkADBNamg0erEnoVXG_NkonzEzzDfoeWai1yJHCAH3icL1JidCD2ljZNumRaRFqZU1anVieez33fF48qs87lPVzBvyybBMw_59NnnF_kZh4w%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 2,
+        "title": "Tập 2",
+        "runtime": 66,
+        "still": "https://image.tmdb.org/t/p/w780/tEXEhV9lkQzqZPrifJUjlOrh3VP.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/iTZnqccue-DsPMn9XkYdAxGH9A9dxuN0EUji_u2IhTaV1kDk_PZPJyFYRTRf7FgjhGqzOJG8p2PvXahanT8VqIFwhs-cJ-EV1UC_eHJVqvad_w/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FiTZnqccue-DsPMn9XkYdAxGH9A9dxuN0EUji_u2IhTaV1kDk_PZPJyFYRTRf7FgjhGqzOJG8p2PvXahanT8VqIFwhs-cJ-EV1UC_eHJVqvad_w%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 3,
+        "title": "Tập 3",
+        "runtime": 88,
+        "still": "https://image.tmdb.org/t/p/w780/2cTx3QfzrA0LTeiqkoMm4wJKKGJ.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/A-8DaW0135aNS3yjH1M23a5Qqyg5LeYAG25IauUvg5W7HsjbJjXOe09hG68NVft3I56FnsE09gR9omzxnSgBKfu-CDfB2XkkVXdDLD8uB8QDvg/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FA-8DaW0135aNS3yjH1M23a5Qqyg5LeYAG25IauUvg5W7HsjbJjXOe09hG68NVft3I56FnsE09gR9omzxnSgBKfu-CDfB2XkkVXdDLD8uB8QDvg%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 4,
+        "title": "Tập 4",
+        "runtime": 68,
+        "still": "https://image.tmdb.org/t/p/w780/dw64x7y1VIF5lGQB5dG71k8KjHW.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/ZWB6lGJY1deKMe_D3mLIUE2AMD7x1AW1cQJVJOSfdNlMuWuVqeV2vvVbolfRaXPdZ4fav4otsA3OMIopqgWM-4D_S3JcjZ0Jpq-GIHtWJE1F4A/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FZWB6lGJY1deKMe_D3mLIUE2AMD7x1AW1cQJVJOSfdNlMuWuVqeV2vvVbolfRaXPdZ4fav4otsA3OMIopqgWM-4D_S3JcjZ0Jpq-GIHtWJE1F4A%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 5,
+        "title": "Tập 5",
+        "runtime": 82,
+        "still": "https://image.tmdb.org/t/p/w780/AwlpYjkLYwWacpMrJPvWUKNRUDB.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/6za8kHTBXbdFPHyUQTdnPQRcroPUZocfLPu2Ascmm-lEHr25uNBRVm7hy5vTKImpLDz2qVnPX22pnRvxxK7n353b4qJO6XsGTOEi4YVIfpjvkQ/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2F6za8kHTBXbdFPHyUQTdnPQRcroPUZocfLPu2Ascmm-lEHr25uNBRVm7hy5vTKImpLDz2qVnPX22pnRvxxK7n353b4qJO6XsGTOEi4YVIfpjvkQ%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 6,
+        "title": "Tập 6",
+        "runtime": 59,
+        "still": "https://image.tmdb.org/t/p/w780/5Rr0zFLt8x2PFZCfQGMLLmVVTav.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/gVWPrLaz48dos8tS--s_WXzRPWZUwqtz6Gzre5c9PgVXCPJ_R0T8vKvuGa5vS1hXv_e6Y6QQQ6RHEiAXbKT15v-G9RNWaCxuFh1I4yG27G0Kfg/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FgVWPrLaz48dos8tS--s_WXzRPWZUwqtz6Gzre5c9PgVXCPJ_R0T8vKvuGa5vS1hXv_e6Y6QQQ6RHEiAXbKT15v-G9RNWaCxuFh1I4yG27G0Kfg%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 7,
+        "title": "Tập 7",
+        "runtime": 83,
+        "still": "https://image.tmdb.org/t/p/w780/ya0KaXnLDq2Tt0SU2155YTCMGmK.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/P7f_h5GhXRmPYm5xBQFbJ0hOsYme83uLDFPNhhX6YmHdo3P4qjc8jkxv36hwscvcWA9sFp0vSiHngKJZjhpnOW_9e8--AHBcyJ21Hj31TxB6NA/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FP7f_h5GhXRmPYm5xBQFbJ0hOsYme83uLDFPNhhX6YmHdo3P4qjc8jkxv36hwscvcWA9sFp0vSiHngKJZjhpnOW_9e8--AHBcyJ21Hj31TxB6NA%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 8,
+        "title": "Tập 8",
+        "runtime": 54,
+        "still": "https://image.tmdb.org/t/p/w780/nbaG1RPQ71T1qS3Dnicz5HdHFnB.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/u2TGd5dldILJcG0J8yWwYUl1hhvgJFsMc85TmaAqJ-3RopmgnrOQp9rS1Zy_laT8dHUUOQ2k1yAnzSmQCfZ4wkHQhxgSCzRMIxU9SNZz3HA6RQ/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2Fu2TGd5dldILJcG0J8yWwYUl1hhvgJFsMc85TmaAqJ-3RopmgnrOQp9rS1Zy_laT8dHUUOQ2k1yAnzSmQCfZ4wkHQhxgSCzRMIxU9SNZz3HA6RQ%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 9,
+        "title": "Tập 9",
+        "runtime": 47,
+        "still": "https://image.tmdb.org/t/p/w780/93XnRT8SG4GhJJtIyyZBTEZwbly.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/ago5u9-bN7eG4KHn9qaQx2yElalWt7Lkywssf0wcbd_7ldvv3_cwBiP-RSe-jl6731vzODw2njGogCIZwDReOzO880yAXsVPD5r41C4WFvm7iQ/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2Fago5u9-bN7eG4KHn9qaQx2yElalWt7Lkywssf0wcbd_7ldvv3_cwBiP-RSe-jl6731vzODw2njGogCIZwDReOzO880yAXsVPD5r41C4WFvm7iQ%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 10,
+        "title": "Tập 10",
+        "runtime": 55,
+        "still": "https://image.tmdb.org/t/p/w780/8j8Wz0r793xjJiscD4yES7KBmwp.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/ZsXL8lid2jffR-1iozYmfFEqO3OPAwJd9UOqQIaeLwbIHK7sQXRfpub24RIOIJ9dP3aS4oxcZ28mCvzUi3i7RINcVCeirkUb-jpyc1h9zfdipw/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FZsXL8lid2jffR-1iozYmfFEqO3OPAwJd9UOqQIaeLwbIHK7sQXRfpub24RIOIJ9dP3aS4oxcZ28mCvzUi3i7RINcVCeirkUb-jpyc1h9zfdipw%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 11,
+        "title": "Tập 11",
+        "runtime": 45,
+        "still": "https://image.tmdb.org/t/p/w780/mkF0cNNsipbhhKSKjUdfB5SXb2V.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/CbYrOuJdyckAOIfrYJCWwN5fJSMrFlCFhOg0JFOfVnlr6QLs66emQPCPYyIulUtuRxqAEvd5k60i7Jh0bZmsamHQSIPHjn0d8puJyMlPlHxwFQ/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FCbYrOuJdyckAOIfrYJCWwN5fJSMrFlCFhOg0JFOfVnlr6QLs66emQPCPYyIulUtuRxqAEvd5k60i7Jh0bZmsamHQSIPHjn0d8puJyMlPlHxwFQ%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 12,
+        "title": "Tập 12",
+        "runtime": 70,
+        "still": "https://image.tmdb.org/t/p/w780/htokTMp6NlYmkysQmvFrrvDtM3D.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/22vaLOffgb_bXnBApU3___ECgQX1I_Fdk7rnJSGeWWO1KaI_0VFMi0i-HL34f4lv19HxLNPskR5Lw9txWrRRAUF2AEAPj2l75Jvx-gLXNPlcTw/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2F22vaLOffgb_bXnBApU3___ECgQX1I_Fdk7rnJSGeWWO1KaI_0VFMi0i-HL34f4lv19HxLNPskR5Lw9txWrRRAUF2AEAPj2l75Jvx-gLXNPlcTw%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "the-sign",
+        "season": 1,
+        "episode": 13,
+        "title": "Tập 13",
+        "runtime": 45,
+        "still": "",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/nV72dXhW_1x7vceH0a3AdD9yS1diRT7gx7WUNchlPQQVrZzR313BHgIAHj9I3Y0euXlHBQiQYFqTDACxg9wiemwnht8nuELtRRit64gCRoeODw/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FnV72dXhW_1x7vceH0a3AdD9yS1diRT7gx7WUNchlPQQVrZzR313BHgIAHj9I3Y0euXlHBQiQYFqTDACxg9wiemwnht8nuELtRRit64gCRoeODw%2Fmaster.m3u8"
+          }
+        ]
+      }
+    ],
+    "crawledAt": "2026-10-24T12:04:41.238Z"
+  },
+  {
+    "id": "6abad8510f218c7b49a37ce0",
+    "slug": "heart-of-the-beast",
+    "type": "movie",
+    "title_vi": "Trái Tim Quái Thú",
+    "title_en": "Heart of the Beast",
+    "year": 2026,
+    "quality": "1080p",
+    "score": 7.7,
+    "genres": [
+      "Phim Phiêu Lưu",
+      "Phim Gây Cấn"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/2nVdUaSsD4cV2GwwZpuXbiHIXM.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/bicMU6xVD5deVyKP2azpyx7xkmH.jpg",
+    "overview": "Sau một vụ tai nạn máy bay kinh hoàng, sĩ quan Lực lượng Đặc nhiệm James Belmont (Brad Pitt) và chú chó chiến đấu Odin bị mắc kẹt giữa vùng hoang dã sâu thẳm của Alaska. Từ đó, họ buộc phải cùng nhau bước vào cuộc chiến sinh tồn khốc liệt trước thiên nhiên khắc nghiệt. Từ đạo diễn danh tiếng David Ayer, Trái Tim Quái Thú là một bộ phim phiêu lưu đầy căng thẳng, khai thác mối gắn kết không thể tách rời giữa một người đàn ông và người bạn thân thiết nhất của mình, khi cả hai phải đối mặt với trận chiến lớn nhất cuộc đời.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/MzZIrBXibHxEb0L8xioOcG1rPGg9dmZjbzWRtc7fJsEyo0qit-qax9XW3c7u4ahAUv2bepjJYDHBEhkcCj2R0GiIIBLehJKpJFNry99xu7-7Ot_15A/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FMzZIrBXibHxEb0L8xioOcG1rPGg9dmZjbzWRtc7fJsEyo0qit-qax9XW3c7u4ahAUv2bepjJYDHBEhkcCj2R0GiIIBLehJKpJFNry99xu7-7Ot_15A%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:07:06.606Z"
+  },
+  {
+    "id": "6ad1e31dd9e7fb3ad587fd18",
+    "slug": "visionquest",
+    "type": "tv",
+    "title_vi": "VisionQuest",
+    "title_en": "VisionQuest",
+    "year": 2026,
+    "quality": "4K",
+    "score": 8.8,
+    "genres": [
+      "Sci-Fi & Fantasy",
+      "Phim Chính Kịch"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/xK27l5uwaVyZSlENWnmLlWwDQNS.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/uoXXbN2PrOxH6UKyP7kYwmGpAAP.jpg",
+    "overview": "Bị treo thưởng truy nã, Vision buộc phải đối diện với bản ngã của mình và chống lại sự thao túng từ Ultron để có thể sống sót.",
+    "totalEpisodes": 8,
+    "stream": null,
+    "episodes": [
+      {
+        "movieSlug": "visionquest",
+        "season": 1,
+        "episode": 1,
+        "title": "Không còn ràng buộc",
+        "runtime": 56,
+        "still": "https://image.tmdb.org/t/p/w780/zNV1OOF71fzTYand5duFx3uaWlE.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/bqdIetCLx58o31ZzyOWSIVJQCxix-oFH69sDFOb77vjnxrIRNQZtfg0duCD8_QEIAODXCYp4hu5XQVWDXvbbvQSS3t_uaz3eO6tjclH5Ah2w5_039A/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FbqdIetCLx58o31ZzyOWSIVJQCxix-oFH69sDFOb77vjnxrIRNQZtfg0duCD8_QEIAODXCYp4hu5XQVWDXvbbvQSS3t_uaz3eO6tjclH5Ah2w5_039A%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "visionquest",
+        "season": 1,
+        "episode": 2,
+        "title": "Theseus",
+        "runtime": 48,
+        "still": "https://image.tmdb.org/t/p/w780/sPFlMWA0YzOfuwys7BumrOJP5HR.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/da2PCQVmUf9yHvpwP1_nrgYeXK1nfQ4BBEXD5-AemSJ62nKP1F3wS_R2XXq1BKX13GFsdCDVjxcwjiq4IprI_Noxf3lIUbJKpjQxGnq9Vz-368fe8g/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2Fda2PCQVmUf9yHvpwP1_nrgYeXK1nfQ4BBEXD5-AemSJ62nKP1F3wS_R2XXq1BKX13GFsdCDVjxcwjiq4IprI_Noxf3lIUbJKpjQxGnq9Vz-368fe8g%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "visionquest",
+        "season": 1,
+        "episode": 3,
+        "title": "Khởi động lại",
+        "runtime": 54,
+        "still": "https://image.tmdb.org/t/p/w780/u2YwlI82Nm6pM3jFijt00lxY2Be.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/IPJ0fb_k6HDKFcjlbTcl1gtl3eEW0QpVbqZjDo2B1hc5kn6y9Ax-RNZB9nFuukA5c_4ifLJwTqy0OgkqJVPYPPnkmCszHEvRSbO8_vAPDcOdMXEcRw/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FIPJ0fb_k6HDKFcjlbTcl1gtl3eEW0QpVbqZjDo2B1hc5kn6y9Ax-RNZB9nFuukA5c_4ifLJwTqy0OgkqJVPYPPnkmCszHEvRSbO8_vAPDcOdMXEcRw%2Fmaster.m3u8"
+          }
+        ]
+      },
+      {
+        "movieSlug": "visionquest",
+        "season": 1,
+        "episode": 4,
+        "title": "Mã độc",
+        "runtime": 51,
+        "still": "https://image.tmdb.org/t/p/w780/6eVHqUOPEe1CIbvg4Dx6H4awFBR.jpg",
+        "sources": [
+          {
+            "label": "Server 1",
+            "hlsUrl": "https://fiml4k.fun/api/hls/C1G5nUdxswDhBWnSwr2wR3oW6jIyHeT8rCBcpOWx-o4fwhCieISZ6fwbJRpZQpGXDCFLv3MRVqWO00phhmXlPTSXjmUxh9FvZzO-qhwI586WFhA_-A/master.m3u8",
+            "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FC1G5nUdxswDhBWnSwr2wR3oW6jIyHeT8rCBcpOWx-o4fwhCieISZ6fwbJRpZQpGXDCFLv3MRVqWO00phhmXlPTSXjmUxh9FvZzO-qhwI586WFhA_-A%2Fmaster.m3u8"
+          }
+        ]
+      }
+    ],
+    "crawledAt": "2026-10-24T12:07:11.233Z"
+  },
+  {
+    "id": "6aa52659c080f574546e8fa2",
+    "slug": "the-odyssey",
+    "type": "movie",
+    "title_vi": "The Odyssey",
+    "title_en": "The Odyssey",
+    "year": 2026,
+    "quality": "1080p",
+    "score": 8,
+    "genres": [
+      "Phim Phiêu Lưu",
+      "Phim Hành Động",
+      "Phim Giả Tượng"
+    ],
+    "country": "Âu Mỹ",
+    "poster": "https://image.tmdb.org/t/p/w500/7876PK6gosE13Uq1B6nRxf7AJLT.jpg",
+    "backdrop": "https://image.tmdb.org/t/p/w1280/RMXG8myu1aGlNUsRjtxzmpdMK0.jpg",
+    "overview": "Câu chuyện theo chân Odysseus trong hành trình kéo dài 10 năm trở về nhà sau cuộc chiến thành Troy, nơi ông phải đối mặt với các vị thần, quái vật và vô vàn thử thách, đồng thời nỗ lực đoàn tụ với vợ và giành lại vương quốc của mình.",
+    "totalEpisodes": 1,
+    "stream": {
+      "label": "Server 1",
+      "hlsUrl": "https://fiml4k.fun/api/hls/AHc1XqSkbAos9ANw13GwJuRc-sciJ-YmDXtcro6T5LeKABFZjj0xu2RLiei6LjmBZe-vLOdyUZvGuRWpYvoitflLUgC_szlOFeZo0k8Q/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FAHc1XqSkbAos9ANw13GwJuRc-sciJ-YmDXtcro6T5LeKABFZjj0xu2RLiei6LjmBZe-vLOdyUZvGuRWpYvoitflLUgC_szlOFeZo0k8Q%2Fmaster.m3u8"
+    },
+    "episodes": [],
+    "crawledAt": "2026-10-24T12:07:12.152Z"
   }
 ]
