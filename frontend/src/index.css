@@ -28,6 +28,29 @@ html, body {
   background: var(--card-hover, #222a3c);
 }
 
+/* Thin custom scrollbar for cinema settings & subtitle menus */
+.cinema-menu-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+.cinema-menu-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.cinema-menu-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cinema-menu-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+.cinema-menu-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
 /* Modal Overlay for Cinema Player */
 .cinema-modal {
   position: fixed;

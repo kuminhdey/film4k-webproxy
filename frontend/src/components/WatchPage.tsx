@@ -114,6 +114,31 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const controlsTimeoutRef = useRef<number | null>(null);
   const scrubberRef = useRef<HTMLDivElement | null>(null);
   const savedSeekTimeRef = useRef<number>(0);
+  const settingsRef = useRef<HTMLDivElement | null>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Click-outside listener to close settings popup
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (
+        settingsRef.current &&
+        !settingsRef.current.contains(target) &&
+        settingsBtnRef.current &&
+        !settingsBtnRef.current.contains(target)
+      ) {
+        setSettingsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [settingsOpen]);
 
   // Flexible servers from currentEpisode sources, movie servers, or current source
   const availableServers: Source[] = useMemo(() => {
@@ -232,6 +257,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         return;
       }
 
+      // Esc closes settings popup and stats card immediately from anywhere
+      if (e.key === 'Escape' || e.code === 'Escape') {
+        if (settingsOpen || showStats) {
+          e.preventDefault();
+          setSettingsOpen(false);
+          setShowStats(false);
+          return;
+        }
+      }
+
       const video = videoRef.current;
       if (!video) return;
 
@@ -288,7 +323,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying]);
+  }, [isPlaying, settingsOpen, showStats]);
 
   // Subscribe to CDN Stats
   useEffect(() => {
@@ -1128,9 +1163,31 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   color: '#ff5a66',
                   fontSize: '11px',
                   letterSpacing: '0.05em',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                 }}
               >
-                THÔNG SỐ KỸ THUẬT
+                <span>THÔNG SỐ KỸ THUẬT</span>
+                <button
+                  type="button"
+                  onClick={() => setShowStats(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--muted, #8b95ad)',
+                    cursor: 'pointer',
+                    padding: '0 4px',
+                    fontSize: '14px',
+                    lineHeight: 1,
+                    transition: 'color 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted, #8b95ad)')}
+                  title="Đóng (Esc)"
+                >
+                  ✕
+                </button>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Độ phân giải</span>
@@ -1204,30 +1261,51 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           {/* 5. SETTINGS POPUP MENU (Quality, Audio, Speed, Captions) */}
           {settingsOpen && (
             <div
+              ref={settingsRef}
+              onClick={(e) => e.stopPropagation()}
+              onWheel={(e) => e.stopPropagation()}
               style={{
                 position: 'absolute',
-                bottom: '70px',
+                bottom: '72px',
                 right: '24px',
-                background: 'rgba(17, 22, 34, 0.95)',
-                backdropFilter: 'blur(18px)',
-                border: '1px solid rgba(255, 255, 255, 0.14)',
+                width: '280px',
+                maxHeight: 'min(420px, calc(100vh - 120px))',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                background: 'rgba(17, 22, 34, 0.96)',
+                backdropFilter: 'blur(20px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
                 borderRadius: '14px',
-                padding: '8px 6px',
-                width: '260px',
-                zIndex: 45,
-                boxShadow: '0 20px 48px rgba(0, 0, 0, 0.9)',
+                zIndex: 50,
+                boxShadow: '0 20px 48px -8px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.12)',
                 color: '#fff',
                 fontSize: '13.5px',
               }}
             >
               {/* Main Settings Menu */}
               {settingsMenu === 'main' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <div
+                  className="cinema-menu-scroll"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2px',
+                    padding: '8px 6px',
+                    overflowY: 'auto',
+                    flex: 1,
+                    maxHeight: '380px',
+                    overscrollBehavior: 'contain',
+                    WebkitOverflowScrolling: 'touch',
+                  }}
+                >
                   {/* Quality row */}
                   <button
                     type="button"
                     onClick={() => setSettingsMenu('quality')}
                     style={{
+                      minHeight: '40px',
                       background: 'none',
                       border: 'none',
                       color: 'inherit',
@@ -1237,7 +1315,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       justifyContent: 'space-between',
                       cursor: 'pointer',
                       borderRadius: '8px',
-                      transition: 'background 0.15s',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      width: '100%',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -1257,6 +1336,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     type="button"
                     onClick={() => setSettingsMenu('audio')}
                     style={{
+                      minHeight: '40px',
                       background: 'none',
                       border: 'none',
                       color: 'inherit',
@@ -1266,7 +1346,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       justifyContent: 'space-between',
                       cursor: 'pointer',
                       borderRadius: '8px',
-                      transition: 'background 0.15s',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      width: '100%',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -1288,6 +1369,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     type="button"
                     onClick={() => setSettingsMenu('speed')}
                     style={{
+                      minHeight: '40px',
                       background: 'none',
                       border: 'none',
                       color: 'inherit',
@@ -1297,7 +1379,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       justifyContent: 'space-between',
                       cursor: 'pointer',
                       borderRadius: '8px',
-                      transition: 'background 0.15s',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      width: '100%',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -1317,6 +1400,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     type="button"
                     onClick={() => setSettingsMenu('captions')}
                     style={{
+                      minHeight: '40px',
                       background: 'none',
                       border: 'none',
                       color: 'inherit',
@@ -1326,7 +1410,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       justifyContent: 'space-between',
                       cursor: 'pointer',
                       borderRadius: '8px',
-                      transition: 'background 0.15s',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      width: '100%',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -1336,75 +1421,130 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       <span>Phụ đề</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--muted, #8b95ad)' }}>
-                      <span>{selectedCaption}</span>
+                      <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {selectedCaption}
+                      </span>
                       <ChevronRight size={15} />
                     </div>
                   </button>
                 </div>
               )}
 
-              {/* Quality Submenu matching Image 3 */}
+              {/* Quality Submenu */}
               {settingsMenu === 'quality' && (
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                   <button
                     type="button"
                     onClick={() => setSettingsMenu('main')}
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: 'var(--muted-light)',
+                      color: 'var(--muted-light, #b4bdd0)',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '8px 10px',
+                      gap: '8px',
+                      padding: '10px 12px 8px',
                       cursor: 'pointer',
                       fontSize: '13px',
                       fontWeight: 700,
+                      width: '100%',
+                      flexShrink: 0,
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      textAlign: 'left',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)')}
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Chất lượng</span>
+                  </button>
+
+                  <div
+                    className="cinema-menu-scroll"
+                    style={{
+                      overflowY: 'auto',
+                      flex: 1,
+                      maxHeight: '340px',
+                      padding: '6px',
+                      overscrollBehavior: 'contain',
+                      WebkitOverflowScrolling: 'touch',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
                     }}
                   >
-                    <ChevronLeft size={16} /> Chất lượng
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {/* Auto (1080p) or Auto (1600p) */}
                     <button
                       type="button"
                       onClick={() => handleSelectQuality(-1)}
                       style={{
-                        background: activeQuality === -1 ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                        minHeight: '40px',
+                        background: activeQuality === -1 ? 'rgba(255, 255, 255, 0.10)' : 'none',
                         border: 'none',
-                        color: activeQuality === -1 ? '#fff' : 'var(--muted-light)',
+                        color: activeQuality === -1 ? '#fff' : 'var(--muted-light, #b4bdd0)',
                         padding: '9px 14px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         cursor: 'pointer',
-                        borderRadius: '6px',
+                        borderRadius: '8px',
                         fontWeight: activeQuality === -1 ? 700 : 500,
+                        transition: 'background 0.15s ease, color 0.15s ease',
+                        width: '100%',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeQuality !== -1) {
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                          e.currentTarget.style.color = '#fff';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeQuality !== -1) {
+                          e.currentTarget.style.background = 'none';
+                          e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                        }
                       }}
                     >
                       <span>Tự động ({autoQualityLabel})</span>
                       {activeQuality === -1 && <Check size={16} color="#fff" />}
                     </button>
 
-                    {/* Quality levels sorted from high to low (1600p 4K, then 1080p HD) */}
+                    {/* Quality levels sorted from high to low */}
                     {sortedQualities.map((q) => {
                       const info = getQualityDisplayInfo(q.height, q.width);
+                      const isSelected = activeQuality === q.id;
                       return (
                         <button
                           key={q.id}
                           type="button"
                           onClick={() => handleSelectQuality(q.id)}
                           style={{
-                            background: activeQuality === q.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                            minHeight: '40px',
+                            background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
                             border: 'none',
-                            color: activeQuality === q.id ? '#fff' : 'var(--muted-light)',
+                            color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
                             padding: '9px 14px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             cursor: 'pointer',
-                            borderRadius: '6px',
-                            fontWeight: activeQuality === q.id ? 700 : 500,
+                            borderRadius: '8px',
+                            fontWeight: isSelected ? 700 : 500,
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                            width: '100%',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                              e.currentTarget.style.color = '#fff';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'none';
+                              e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                            }
                           }}
                         >
                           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -1412,7 +1552,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                             <span
                               style={{
                                 fontSize: '10px',
-                                marginLeft: '3px',
+                                marginLeft: '4px',
                                 fontWeight: 800,
                                 color: info.badgeColor,
                                 verticalAlign: 'super',
@@ -1421,7 +1561,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                               {info.badge}
                             </span>
                           </span>
-                          {activeQuality === q.id && <Check size={16} color="#fff" />}
+                          {isSelected && <Check size={16} color="#fff" />}
                         </button>
                       );
                     })}
@@ -1431,51 +1571,91 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
               {/* Audio Submenu */}
               {settingsMenu === 'audio' && (
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                   <button
                     type="button"
                     onClick={() => setSettingsMenu('main')}
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: 'var(--muted-light)',
+                      color: 'var(--muted-light, #b4bdd0)',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '8px 10px',
+                      gap: '8px',
+                      padding: '10px 12px 8px',
                       cursor: 'pointer',
                       fontSize: '13px',
                       fontWeight: 700,
+                      width: '100%',
+                      flexShrink: 0,
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      textAlign: 'left',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)')}
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Âm thanh</span>
+                  </button>
+
+                  <div
+                    className="cinema-menu-scroll"
+                    style={{
+                      overflowY: 'auto',
+                      flex: 1,
+                      maxHeight: '340px',
+                      padding: '6px',
+                      overscrollBehavior: 'contain',
+                      WebkitOverflowScrolling: 'touch',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
                     }}
                   >
-                    <ChevronLeft size={16} /> Âm thanh
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {audioTracks.length > 0 ? (
-                      audioTracks.map((tr) => (
-                        <button
-                          key={tr.id}
-                          type="button"
-                          onClick={() => handleSelectAudio(tr.id, tr.name)}
-                          style={{
-                            background: activeAudioTrack === tr.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
-                            border: 'none',
-                            color: activeAudioTrack === tr.id ? '#fff' : 'var(--muted-light)',
-                            padding: '9px 14px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            cursor: 'pointer',
-                            borderRadius: '6px',
-                            fontWeight: activeAudioTrack === tr.id ? 700 : 500,
-                          }}
-                        >
-                          <span>{tr.name}</span>
-                          {activeAudioTrack === tr.id && <Check size={16} color="#fff" />}
-                        </button>
-                      ))
+                      audioTracks.map((tr) => {
+                        const isSelected = activeAudioTrack === tr.id;
+                        return (
+                          <button
+                            key={tr.id}
+                            type="button"
+                            onClick={() => handleSelectAudio(tr.id, tr.name)}
+                            style={{
+                              minHeight: '40px',
+                              background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
+                              border: 'none',
+                              color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
+                              padding: '9px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              cursor: 'pointer',
+                              borderRadius: '8px',
+                              fontWeight: isSelected ? 700 : 500,
+                              transition: 'background 0.15s ease, color 0.15s ease',
+                              width: '100%',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                                e.currentTarget.style.color = '#fff';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'none';
+                                e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                              }
+                            }}
+                          >
+                            <span>{tr.name}</span>
+                            {isSelected && <Check size={16} color="#fff" />}
+                          </button>
+                        );
+                      })
                     ) : (
-                      <div style={{ padding: '9px 14px', color: 'var(--muted)', fontSize: '13px' }}>
+                      <div style={{ padding: '12px 14px', color: 'var(--muted, #8b95ad)', fontSize: '13px' }}>
                         Âm thanh mặc định
                       </div>
                     )}
@@ -1485,74 +1665,136 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
               {/* Speed Submenu */}
               {settingsMenu === 'speed' && (
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                   <button
                     type="button"
                     onClick={() => setSettingsMenu('main')}
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: 'var(--muted-light)',
+                      color: 'var(--muted-light, #b4bdd0)',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '8px 10px',
+                      gap: '8px',
+                      padding: '10px 12px 8px',
                       cursor: 'pointer',
                       fontSize: '13px',
                       fontWeight: 700,
+                      width: '100%',
+                      flexShrink: 0,
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      textAlign: 'left',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)')}
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Tốc độ phát</span>
+                  </button>
+
+                  <div
+                    className="cinema-menu-scroll"
+                    style={{
+                      overflowY: 'auto',
+                      flex: 1,
+                      maxHeight: '340px',
+                      padding: '6px',
+                      overscrollBehavior: 'contain',
+                      WebkitOverflowScrolling: 'touch',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
                     }}
                   >
-                    <ChevronLeft size={16} /> Tốc độ phát
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => handleSelectSpeed(s)}
-                        style={{
-                          background: playbackSpeed === s ? 'rgba(255, 255, 255, 0.08)' : 'none',
-                          border: 'none',
-                          color: playbackSpeed === s ? '#fff' : 'var(--muted-light)',
-                          padding: '9px 14px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          cursor: 'pointer',
-                          borderRadius: '6px',
-                          fontWeight: playbackSpeed === s ? 700 : 500,
-                        }}
-                      >
-                        <span>{s === 1 ? 'Chuẩn (1×)' : `${s}×`}</span>
-                        {playbackSpeed === s && <Check size={16} color="#fff" />}
-                      </button>
-                    ))}
+                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => {
+                      const isSelected = playbackSpeed === s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => handleSelectSpeed(s)}
+                          style={{
+                            minHeight: '40px',
+                            background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
+                            border: 'none',
+                            color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
+                            padding: '9px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            borderRadius: '8px',
+                            fontWeight: isSelected ? 700 : 500,
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                            width: '100%',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                              e.currentTarget.style.color = '#fff';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'none';
+                              e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                            }
+                          }}
+                        >
+                          <span>{s === 1 ? 'Chuẩn (1×)' : `${s}×`}</span>
+                          {isSelected && <Check size={16} color="#fff" />}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
               {/* Captions Submenu */}
               {settingsMenu === 'captions' && (
-                <div>
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
                   <button
                     type="button"
                     onClick={() => setSettingsMenu('main')}
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: 'var(--muted-light)',
+                      color: 'var(--muted-light, #b4bdd0)',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '8px 10px',
+                      gap: '8px',
+                      padding: '10px 12px 8px',
                       cursor: 'pointer',
                       fontSize: '13px',
                       fontWeight: 700,
+                      width: '100%',
+                      flexShrink: 0,
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      textAlign: 'left',
+                      transition: 'color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)')}
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Phụ đề</span>
+                  </button>
+
+                  <div
+                    className="cinema-menu-scroll"
+                    style={{
+                      overflowY: 'auto',
+                      flex: 1,
+                      maxHeight: '340px',
+                      padding: '6px',
+                      overscrollBehavior: 'contain',
+                      WebkitOverflowScrolling: 'touch',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
                     }}
                   >
-                    <ChevronLeft size={16} /> Phụ đề
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
                     {/* Off / Tắt option */}
                     <button
                       type="button"
@@ -1561,16 +1803,31 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         setSettingsMenu('main');
                       }}
                       style={{
-                        background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                        minHeight: '40px',
+                        background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.10)' : 'none',
                         border: 'none',
-                        color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light)',
+                        color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light, #b4bdd0)',
                         padding: '9px 14px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         cursor: 'pointer',
-                        borderRadius: '6px',
+                        borderRadius: '8px',
                         fontWeight: selectedCaption === 'Tắt' ? 700 : 500,
+                        transition: 'background 0.15s ease, color 0.15s ease',
+                        width: '100%',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedCaption !== 'Tắt') {
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                          e.currentTarget.style.color = '#fff';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedCaption !== 'Tắt') {
+                          e.currentTarget.style.background = 'none';
+                          e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                        }
                       }}
                     >
                       <span>Tắt {availableSubtitleOptions.length === 0 ? '(Không có phụ đề)' : ''}</span>
@@ -1578,31 +1835,59 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     </button>
 
                     {/* Available Subtitle Tracks from DB, Episodes, and Manifest */}
-                    {availableSubtitleOptions.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedCaption(opt.label);
-                          setSettingsMenu('main');
-                        }}
-                        style={{
-                          background: selectedCaption === opt.label ? 'rgba(255, 255, 255, 0.08)' : 'none',
-                          border: 'none',
-                          color: selectedCaption === opt.label ? '#fff' : 'var(--muted-light)',
-                          padding: '9px 14px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          cursor: 'pointer',
-                          borderRadius: '6px',
-                          fontWeight: selectedCaption === opt.label ? 700 : 500,
-                        }}
-                      >
-                        <span>{opt.label}</span>
-                        {selectedCaption === opt.label && <Check size={16} color="#fff" />}
-                      </button>
-                    ))}
+                    {availableSubtitleOptions.map((opt) => {
+                      const isSelected = selectedCaption === opt.label;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCaption(opt.label);
+                            setSettingsMenu('main');
+                          }}
+                          style={{
+                            minHeight: '40px',
+                            background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
+                            border: 'none',
+                            color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
+                            padding: '9px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            borderRadius: '8px',
+                            fontWeight: isSelected ? 700 : 500,
+                            transition: 'background 0.15s ease, color 0.15s ease',
+                            width: '100%',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                              e.currentTarget.style.color = '#fff';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) {
+                              e.currentTarget.style.background = 'none';
+                              e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                            }
+                          }}
+                        >
+                          <span
+                            style={{
+                              maxWidth: '210px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              textAlign: 'left',
+                            }}
+                          >
+                            {opt.label}
+                          </span>
+                          {isSelected && <Check size={16} color="#fff" style={{ flexShrink: 0 }} />}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1798,6 +2083,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
                 {/* Settings Gear button */}
                 <button
+                  ref={settingsBtnRef}
                   type="button"
                   onClick={() => {
                     const next = !settingsOpen;
