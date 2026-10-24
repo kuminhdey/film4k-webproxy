@@ -1,0 +1,23 @@
+services:
+  film4k-webproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: film4k-webproxy:latest
+    container_name: film4k-webproxy
+    restart: always
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8090
+      - DATABASE_PATH=/app/data/movies.db
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

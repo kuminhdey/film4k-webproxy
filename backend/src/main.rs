@@ -27,8 +27,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 2. Seed initial movies
     let seed_paths = [
-        "../film4k_master_database.json",
+        "/app/film4k_master_database.json",
         "film4k_master_database.json",
+        "../film4k_master_database.json",
         "/Users/kuminhdey/Downloads/webproxy/film4k_master_database.json",
     ];
     for seed_path in &seed_paths {

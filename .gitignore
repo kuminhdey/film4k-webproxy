@@ -3,5 +3,6 @@ target/
 dist/
 *.pem
 movies.db*
+data/
 storage/
 .DS_Store
