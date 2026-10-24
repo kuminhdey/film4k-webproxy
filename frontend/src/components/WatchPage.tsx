@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import {
   Settings,
@@ -24,6 +24,7 @@ import {
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
 import { getSubtitleForTime } from '../utils/subtitles';
+import { getQualityDisplayInfo, sortQualitiesDescending, QualityLevel } from '../utils/quality';
 
 interface WatchPageProps {
   slug: string;
@@ -77,14 +78,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     isCdn: true,
   });
 
-  // HLS Qualities
-  const [qualities, setQualities] = useState<{ id: number; height: number; bitrate: number }[]>([
-    { id: 0, height: 720, bitrate: 4500000 },
-    { id: 1, height: 1080, bitrate: 8500000 },
-    { id: 2, height: 1600, bitrate: 14000000 },
+  // HLS Qualities (Normalized 2.39:1 scope defaults: 1920x800 -> 1080p HD, 3832x1600 -> 1600p 4K)
+  const [qualities, setQualities] = useState<QualityLevel[]>([
+    { id: 0, height: 800, width: 1920, bitrate: 8500000 },
+    { id: 1, height: 1600, width: 3832, bitrate: 14000000 },
   ]);
   const [activeQuality, setActiveQuality] = useState<number>(-1); // -1 = Auto
+  const [autoQualityLabel, setAutoQualityLabel] = useState<string>('1080p');
   const [activeResolution, setActiveResolution] = useState<string>('1920x800');
+
+  // Sorted qualities: highest resolution first (e.g. 1600p 4K, then 1080p HD)
+  const sortedQualities = useMemo(() => {
+    return sortQualitiesDescending(qualities);
+  }, [qualities]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -337,15 +343,18 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
         if (data.levels && data.levels.length > 0) {
-          const qList = data.levels.map((lvl, index) => ({
+          const qList: QualityLevel[] = data.levels.map((lvl, index) => ({
             id: index,
             height: lvl.height,
+            width: lvl.width,
             bitrate: lvl.bitrate,
           }));
           setQualities(qList);
           const topLvl = data.levels[data.levels.length - 1];
           if (topLvl && topLvl.height) {
-            setActiveResolution(`${topLvl.width || Math.round((topLvl.height * 16) / 9)}x${topLvl.height}`);
+            const info = getQualityDisplayInfo(topLvl.height, topLvl.width);
+            setAutoQualityLabel(info.label);
+            setActiveResolution(info.resolution);
             if (topLvl.bitrate) {
               setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
             }
@@ -357,9 +366,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
         if (hls.levels[data.level]) {
           const lvl = hls.levels[data.level];
-          setActiveResolution(`${lvl.width || Math.round((lvl.height * 16) / 9)}x${lvl.height}`);
-          if (lvl.bitrate) {
-            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+          const info = getQualityDisplayInfo(lvl.height, lvl.width);
+          setAutoQualityLabel(info.label);
+          if (activeQuality === -1) {
+            setActiveResolution(info.resolution);
+            if (lvl.bitrate) {
+              setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+            }
           }
         }
       });
@@ -435,7 +448,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     if (videoRef.current) {
       setDuration(videoRef.current.duration || 8700); // 2:25:00 default duration
       if (videoRef.current.videoWidth && videoRef.current.videoHeight) {
-        setActiveResolution(`${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`);
+        const w = videoRef.current.videoWidth;
+        const h = videoRef.current.videoHeight;
+        const info = getQualityDisplayInfo(h, w);
+        setAutoQualityLabel(info.label);
+        if (activeQuality === -1) {
+          setActiveResolution(info.resolution);
+        }
       }
     }
   };
@@ -525,10 +544,27 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       hlsRef.current.currentLevel = id;
     }
     setActiveQuality(id);
-    if (id !== -1 && qualities[id]) {
-      setActiveResolution(`${qualities[id].height}p`);
-      if (qualities[id].bitrate) {
-        setActiveBitrate(`${(qualities[id].bitrate / 1000000).toFixed(1)} Mbps`);
+    if (id !== -1) {
+      const q = qualities.find((item) => item.id === id);
+      if (q) {
+        const info = getQualityDisplayInfo(q.height, q.width);
+        setActiveResolution(info.resolution);
+        setAutoQualityLabel(info.label);
+        if (q.bitrate) {
+          setActiveBitrate(`${(q.bitrate / 1000000).toFixed(1)} Mbps`);
+        }
+      }
+    } else {
+      if (hlsRef.current && hlsRef.current.currentLevel >= 0) {
+        const lvl = hlsRef.current.levels[hlsRef.current.currentLevel];
+        if (lvl) {
+          const info = getQualityDisplayInfo(lvl.height, lvl.width);
+          setAutoQualityLabel(info.label);
+          setActiveResolution(info.resolution);
+          if (lvl.bitrate) {
+            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+          }
+        }
       }
     }
     setSettingsMenu('main');
@@ -563,8 +599,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   };
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const selectedQuality = qualities.find((q) => q.id === activeQuality);
   const activeQualityLabel =
-    activeQuality === -1 ? 'Auto (1080p)' : qualities[activeQuality] ? `${qualities[activeQuality].height}p` : 'Auto';
+    activeQuality === -1
+      ? `Auto (${autoQualityLabel})`
+      : selectedQuality
+      ? getQualityDisplayInfo(selectedQuality.height, selectedQuality.width).label
+      : 'Auto';
 
   if (loading) {
     return (
@@ -1039,7 +1080,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <ChevronLeft size={16} /> Quality
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {/* Auto (1080p) */}
+                    {/* Auto (1080p) or Auto (1600p) */}
                     <button
                       type="button"
                       onClick={() => handleSelectQuality(-1)}
@@ -1056,46 +1097,49 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         fontWeight: activeQuality === -1 ? 700 : 500,
                       }}
                     >
-                      <span>Auto (1080p)</span>
+                      <span>Auto ({autoQualityLabel})</span>
                       {activeQuality === -1 && <Check size={16} color="#fff" />}
                     </button>
 
-                    {/* Quality levels with HD badge matching Image 3 */}
-                    {qualities.map((q) => (
-                      <button
-                        key={q.id}
-                        type="button"
-                        onClick={() => handleSelectQuality(q.id)}
-                        style={{
-                          background: activeQuality === q.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
-                          border: 'none',
-                          color: activeQuality === q.id ? '#fff' : 'var(--muted-light)',
-                          padding: '9px 14px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          cursor: 'pointer',
-                          borderRadius: '6px',
-                          fontWeight: activeQuality === q.id ? 700 : 500,
-                        }}
-                      >
-                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                          {q.height}p
-                          <span
-                            style={{
-                              fontSize: '10px',
-                              marginLeft: '3px',
-                              fontWeight: 800,
-                              color: q.height >= 2160 ? '#e11d2e' : 'var(--muted, #8b95ad)',
-                              verticalAlign: 'super',
-                            }}
-                          >
-                            {q.height >= 2160 ? '4K' : 'HD'}
+                    {/* Quality levels sorted from high to low (1600p 4K, then 1080p HD) */}
+                    {sortedQualities.map((q) => {
+                      const info = getQualityDisplayInfo(q.height, q.width);
+                      return (
+                        <button
+                          key={q.id}
+                          type="button"
+                          onClick={() => handleSelectQuality(q.id)}
+                          style={{
+                            background: activeQuality === q.id ? 'rgba(255, 255, 255, 0.08)' : 'none',
+                            border: 'none',
+                            color: activeQuality === q.id ? '#fff' : 'var(--muted-light)',
+                            padding: '9px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            borderRadius: '6px',
+                            fontWeight: activeQuality === q.id ? 700 : 500,
+                          }}
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            {info.label}
+                            <span
+                              style={{
+                                fontSize: '10px',
+                                marginLeft: '3px',
+                                fontWeight: 800,
+                                color: info.badgeColor,
+                                verticalAlign: 'super',
+                              }}
+                            >
+                              {info.badge}
+                            </span>
                           </span>
-                        </span>
-                        {activeQuality === q.id && <Check size={16} color="#fff" />}
-                      </button>
-                    ))}
+                          {activeQuality === q.id && <Check size={16} color="#fff" />}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

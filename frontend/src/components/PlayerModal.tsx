@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import {
   X,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
+import { getQualityDisplayInfo, sortQualitiesDescending, QualityLevel } from '../utils/quality';
 
 interface PlayerModalProps {
   slug: string;
@@ -40,9 +41,13 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
   // Player state
   const [audioTracks, setAudioTracks] = useState<{ id: number; name: string }[]>([]);
   const [activeAudioTrack, setActiveAudioTrack] = useState<number>(-1);
-  const [qualities, setQualities] = useState<{ id: number; height: number; bitrate: number }[]>([]);
+  const [qualities, setQualities] = useState<QualityLevel[]>([]);
   const [activeQuality, setActiveQuality] = useState<number>(-1); // -1 = Auto
   const [showSettings, setShowSettings] = useState(false);
+
+  const sortedQualities = useMemo(() => {
+    return sortQualitiesDescending(qualities);
+  }, [qualities]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -270,9 +275,10 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
         videoEl.play().catch(() => {});
 
         // Parse quality levels
-        const levels = data.levels.map((lvl, index) => ({
+        const levels: QualityLevel[] = data.levels.map((lvl, index) => ({
           id: index,
           height: lvl.height,
+          width: lvl.width,
           bitrate: lvl.bitrate,
         }));
         setQualities(levels);
@@ -653,17 +659,20 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
                   >
                     Tự động (Auto)
                   </button>
-                  {qualities.map((q) => (
-                    <button
-                      key={q.id}
-                      type="button"
-                      className={`chip ${activeQuality === q.id ? 'on' : ''}`}
-                      onClick={() => handleSelectQuality(q.id)}
-                      style={{ justifyContent: 'flex-start' }}
-                    >
-                      {q.height}p ({Math.round(q.bitrate / 1000000)} Mbps)
-                    </button>
-                  ))}
+                  {sortedQualities.map((q) => {
+                    const info = getQualityDisplayInfo(q.height, q.width);
+                    return (
+                      <button
+                        key={q.id}
+                        type="button"
+                        className={`chip ${activeQuality === q.id ? 'on' : ''}`}
+                        onClick={() => handleSelectQuality(q.id)}
+                        style={{ justifyContent: 'flex-start' }}
+                      >
+                        {info.label} [{info.badge}]{q.bitrate ? ` (${(q.bitrate / 1000000).toFixed(1)} Mbps)` : ''}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
