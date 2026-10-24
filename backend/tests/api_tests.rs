@@ -3,7 +3,7 @@ use webproxy_backend::{
     crawler::CrawlerService,
     create_app,
     db::Database,
-    models::{Episode, Movie, MoviesResponse, Source},
+    models::{AudioTrack, Episode, Movie, MoviesResponse, ServerSource, Source, SubtitleTrack},
     proxy::is_valid_remote_url,
     AppState,
 };
@@ -42,6 +42,50 @@ async fn spawn_test_server() -> (String, Database) {
                     hls_url: "https://film4k.net/api/hls/interstellar.m3u8".to_string(),
                     proxy_stream_url: None,
                 }],
+                servers: vec![ServerSource {
+                    id: Some(serde_json::json!("srv-1")),
+                    label: "Server VIP 1".to_string(),
+                    hls_url: "https://film4k.net/api/hls/interstellar.m3u8".to_string(),
+                    proxy_stream_url: None,
+                    quality: Some("4K".to_string()),
+                }],
+                subtitles: vec![SubtitleTrack {
+                    id: Some(serde_json::json!("sub-vi")),
+                    label: "Tiếng Việt".to_string(),
+                    lang: Some("vi".to_string()),
+                    url: Some("/api/subtitles/interstellar.vtt".to_string()),
+                    kind: Some("subtitles".to_string()),
+                    is_default: Some(true),
+                }],
+                audio_tracks: vec![AudioTrack {
+                    id: Some(serde_json::json!(0)),
+                    label: "ENG (Stereo)".to_string(),
+                    lang: Some("en".to_string()),
+                    url: None,
+                    is_default: Some(true),
+                }],
+            }],
+            servers: vec![ServerSource {
+                id: Some(serde_json::json!("srv-1")),
+                label: "Server VIP 1".to_string(),
+                hls_url: "https://film4k.net/api/hls/interstellar.m3u8".to_string(),
+                proxy_stream_url: None,
+                quality: Some("4K".to_string()),
+            }],
+            subtitles: vec![SubtitleTrack {
+                id: Some(serde_json::json!("sub-vi")),
+                label: "Tiếng Việt".to_string(),
+                lang: Some("vi".to_string()),
+                url: Some("/api/subtitles/interstellar.vtt".to_string()),
+                kind: Some("subtitles".to_string()),
+                is_default: Some(true),
+            }],
+            audio_tracks: vec![AudioTrack {
+                id: Some(serde_json::json!(0)),
+                label: "ENG (Stereo)".to_string(),
+                lang: Some("en".to_string()),
+                url: None,
+                is_default: Some(true),
             }],
         },
         Movie {
@@ -74,6 +118,9 @@ async fn spawn_test_server() -> (String, Database) {
                         hls_url: "https://film4k.net/api/hls/bb_s1e1.m3u8".to_string(),
                         proxy_stream_url: None,
                     }],
+                    servers: vec![],
+                    subtitles: vec![],
+                    audio_tracks: vec![],
                 },
                 Episode {
                     id: None,
@@ -88,8 +135,14 @@ async fn spawn_test_server() -> (String, Database) {
                         hls_url: "https://film4k.net/api/hls/bb_s1e2.m3u8".to_string(),
                         proxy_stream_url: None,
                     }],
+                    servers: vec![],
+                    subtitles: vec![],
+                    audio_tracks: vec![],
                 },
             ],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
         },
         Movie {
             id: None,
@@ -120,7 +173,13 @@ async fn spawn_test_server() -> (String, Database) {
                     hls_url: "https://film4k.net/api/hls/inception.m3u8".to_string(),
                     proxy_stream_url: None,
                 }],
+                servers: vec![],
+                subtitles: vec![],
+                audio_tracks: vec![],
             }],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
         },
         Movie {
             id: None,
@@ -151,7 +210,13 @@ async fn spawn_test_server() -> (String, Database) {
                     hls_url: "https://film4k.net/api/hls/oppenheimer.m3u8".to_string(),
                     proxy_stream_url: None,
                 }],
+                servers: vec![],
+                subtitles: vec![],
+                audio_tracks: vec![],
             }],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
         },
     ];
 
@@ -371,8 +436,20 @@ async fn test_api_movie_details_and_episodes() {
     assert_eq!(resp.status(), StatusCode::OK);
     let movie: Movie = resp.json().await.unwrap();
     assert_eq!(movie.slug, "interstellar");
+    assert_eq!(movie.servers.len(), 1);
+    assert_eq!(movie.servers[0].label, "Server VIP 1");
+    assert_eq!(movie.subtitles.len(), 1);
+    assert_eq!(movie.subtitles[0].label, "Tiếng Việt");
+    assert_eq!(movie.audio_tracks.len(), 1);
+    assert_eq!(movie.audio_tracks[0].label, "ENG (Stereo)");
     assert_eq!(movie.episodes.len(), 1);
     assert_eq!(movie.episodes[0].sources[0].label, "Server VIP 1");
+    assert_eq!(movie.episodes[0].servers.len(), 1);
+    assert_eq!(movie.episodes[0].servers[0].label, "Server VIP 1");
+    assert_eq!(movie.episodes[0].subtitles.len(), 1);
+    assert_eq!(movie.episodes[0].subtitles[0].label, "Tiếng Việt");
+    assert_eq!(movie.episodes[0].audio_tracks.len(), 1);
+    assert_eq!(movie.episodes[0].audio_tracks[0].label, "ENG (Stereo)");
 
     // 3. Non-existent slug returns 404 NOT_FOUND
     let resp = client

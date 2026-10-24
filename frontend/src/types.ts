@@ -4,6 +4,31 @@ export interface Source {
   proxyStreamUrl?: string;
 }
 
+export interface ServerSource {
+  id?: string | number;
+  label: string;
+  hlsUrl: string;
+  proxyStreamUrl?: string;
+  quality?: string;
+}
+
+export interface SubtitleTrack {
+  id?: string | number;
+  label: string;
+  lang?: string;
+  url?: string;
+  kind?: string;
+  default?: boolean;
+}
+
+export interface AudioTrack {
+  id?: string | number;
+  label: string;
+  lang?: string;
+  url?: string;
+  default?: boolean;
+}
+
 export interface Episode {
   id?: number;
   movieSlug: string;
@@ -13,6 +38,9 @@ export interface Episode {
   runtime?: number;
   still?: string;
   sources: Source[];
+  servers?: ServerSource[];
+  subtitles?: SubtitleTrack[];
+  audio_tracks?: AudioTrack[];
 }
 
 export interface Movie {
@@ -32,6 +60,9 @@ export interface Movie {
   totalEpisodes?: number;
   stream?: string;
   episodes: Episode[];
+  servers?: ServerSource[];
+  subtitles?: SubtitleTrack[];
+  audio_tracks?: AudioTrack[];
 }
 
 export interface MovieSummary {

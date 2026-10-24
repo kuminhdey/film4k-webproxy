@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use anyhow::Context;
 use tracing::{info, warn};
 
-use crate::models::{Episode, Movie, MovieSummary, Source};
+use crate::models::{AudioTrack, Episode, Movie, MovieSummary, ServerSource, Source, SubtitleTrack};
 
 #[derive(Clone)]
 pub struct Database {
@@ -60,6 +60,9 @@ impl Database {
                 overview TEXT,
                 total_episodes INTEGER,
                 stream TEXT,
+                servers_json TEXT NOT NULL DEFAULT '[]',
+                subtitles_json TEXT NOT NULL DEFAULT '[]',
+                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -73,6 +76,9 @@ impl Database {
                 runtime INTEGER,
                 still TEXT,
                 sources_json TEXT NOT NULL DEFAULT '[]',
+                servers_json TEXT NOT NULL DEFAULT '[]',
+                subtitles_json TEXT NOT NULL DEFAULT '[]',
+                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
                 UNIQUE(movie_slug, season, episode),
                 FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
             );
@@ -82,6 +88,16 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug);
             "#,
         )?;
+
+        // Auto-migrate new columns for pre-existing databases
+        let _ = conn.execute("ALTER TABLE movies ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE movies ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE movies ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'", []);
+
+        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'", []);
+
         Ok(())
     }
 
@@ -139,10 +155,14 @@ impl Database {
             _ => None,
         };
 
+        let servers_json = serde_json::to_string(&movie.servers).unwrap_or_else(|_| "[]".to_string());
+        let subtitles_json = serde_json::to_string(&movie.subtitles).unwrap_or_else(|_| "[]".to_string());
+        let audio_tracks_json = serde_json::to_string(&movie.audio_tracks).unwrap_or_else(|_| "[]".to_string());
+
         conn.execute(
             r#"
-            INSERT INTO movies (slug, movie_type, title_vi, title_en, search_text, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+            INSERT INTO movies (slug, movie_type, title_vi, title_en, search_text, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, servers_json, subtitles_json, audio_tracks_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
             ON CONFLICT(slug) DO UPDATE SET
                 movie_type = excluded.movie_type,
                 title_vi = COALESCE(excluded.title_vi, movies.title_vi),
@@ -158,6 +178,9 @@ impl Database {
                 overview = COALESCE(excluded.overview, movies.overview),
                 total_episodes = COALESCE(excluded.total_episodes, movies.total_episodes),
                 stream = COALESCE(excluded.stream, movies.stream),
+                servers_json = CASE WHEN excluded.servers_json != '[]' THEN excluded.servers_json ELSE movies.servers_json END,
+                subtitles_json = CASE WHEN excluded.subtitles_json != '[]' THEN excluded.subtitles_json ELSE movies.subtitles_json END,
+                audio_tracks_json = CASE WHEN excluded.audio_tracks_json != '[]' THEN excluded.audio_tracks_json ELSE movies.audio_tracks_json END,
                 updated_at = CURRENT_TIMESTAMP
             "#,
             params![
@@ -176,20 +199,29 @@ impl Database {
                 movie.overview,
                 movie.total_episodes,
                 stream_str,
+                servers_json,
+                subtitles_json,
+                audio_tracks_json,
             ],
         )?;
 
         for ep in &movie.episodes {
             let sources_json = serde_json::to_string(&ep.sources).unwrap_or_else(|_| "[]".to_string());
+            let ep_servers_json = serde_json::to_string(&ep.servers).unwrap_or_else(|_| "[]".to_string());
+            let ep_subtitles_json = serde_json::to_string(&ep.subtitles).unwrap_or_else(|_| "[]".to_string());
+            let ep_audio_tracks_json = serde_json::to_string(&ep.audio_tracks).unwrap_or_else(|_| "[]".to_string());
             conn.execute(
                 r#"
-                INSERT INTO episodes (movie_slug, season, episode, title, runtime, still, sources_json)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO episodes (movie_slug, season, episode, title, runtime, still, sources_json, servers_json, subtitles_json, audio_tracks_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 ON CONFLICT(movie_slug, season, episode) DO UPDATE SET
                     title = excluded.title,
                     runtime = excluded.runtime,
                     still = excluded.still,
-                    sources_json = excluded.sources_json
+                    sources_json = excluded.sources_json,
+                    servers_json = CASE WHEN excluded.servers_json != '[]' THEN excluded.servers_json ELSE episodes.servers_json END,
+                    subtitles_json = CASE WHEN excluded.subtitles_json != '[]' THEN excluded.subtitles_json ELSE episodes.subtitles_json END,
+                    audio_tracks_json = CASE WHEN excluded.audio_tracks_json != '[]' THEN excluded.audio_tracks_json ELSE episodes.audio_tracks_json END
                 "#,
                 params![
                     movie.slug,
@@ -199,6 +231,9 @@ impl Database {
                     ep.runtime,
                     ep.still,
                     sources_json,
+                    ep_servers_json,
+                    ep_subtitles_json,
+                    ep_audio_tracks_json,
                 ],
             )?;
         }
@@ -304,13 +339,20 @@ impl Database {
 
         let mut movie_opt: Option<Movie> = conn.query_row(
             r#"
-            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream
+            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, servers_json, subtitles_json, audio_tracks_json
             FROM movies WHERE slug = ?1
             "#,
             params![slug],
             |row| {
                 let genres_raw: String = row.get(8)?;
                 let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+                let servers_raw: String = row.get(15).unwrap_or_else(|_| "[]".to_string());
+                let servers: Vec<ServerSource> = serde_json::from_str(&servers_raw).unwrap_or_default();
+                let subtitles_raw: String = row.get(16).unwrap_or_else(|_| "[]".to_string());
+                let subtitles: Vec<SubtitleTrack> = serde_json::from_str(&subtitles_raw).unwrap_or_default();
+                let audio_tracks_raw: String = row.get(17).unwrap_or_else(|_| "[]".to_string());
+                let audio_tracks: Vec<AudioTrack> = serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
+
                 Ok(Movie {
                     id: Some(serde_json::json!(row.get::<_, i64>(0)?)),
                     slug: row.get(1)?,
@@ -328,6 +370,9 @@ impl Database {
                     total_episodes: row.get(13)?,
                     stream: row.get::<_, Option<String>>(14)?.map(serde_json::Value::String),
                     episodes: Vec::new(),
+                    servers,
+                    subtitles,
+                    audio_tracks,
                 })
             },
         ).ok();
@@ -335,7 +380,7 @@ impl Database {
         if let Some(ref mut movie) = movie_opt {
             let mut ep_stmt = conn.prepare(
                 r#"
-                SELECT id, season, episode, title, runtime, still, sources_json
+                SELECT id, season, episode, title, runtime, still, sources_json, servers_json, subtitles_json, audio_tracks_json
                 FROM episodes
                 WHERE movie_slug = ?1
                 ORDER BY season ASC, episode ASC
@@ -345,6 +390,13 @@ impl Database {
             let ep_rows = ep_stmt.query_map(params![slug], |row| {
                 let sources_raw: String = row.get(6)?;
                 let sources: Vec<Source> = serde_json::from_str(&sources_raw).unwrap_or_default();
+                let servers_raw: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
+                let servers: Vec<ServerSource> = serde_json::from_str(&servers_raw).unwrap_or_default();
+                let subtitles_raw: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+                let subtitles: Vec<SubtitleTrack> = serde_json::from_str(&subtitles_raw).unwrap_or_default();
+                let audio_tracks_raw: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+                let audio_tracks: Vec<AudioTrack> = serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
+
                 Ok(Episode {
                     id: Some(row.get(0)?),
                     movie_slug: slug.to_string(),
@@ -354,6 +406,9 @@ impl Database {
                     runtime: row.get(4)?,
                     still: row.get(5)?,
                     sources,
+                    servers,
+                    subtitles,
+                    audio_tracks,
                 })
             })?;
 
@@ -370,7 +425,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Episode, Movie, Source};
+    use crate::models::{AudioTrack, Episode, Movie, ServerSource, Source, SubtitleTrack};
 
     #[test]
     fn test_db_crud_and_query() {
@@ -405,6 +460,50 @@ mod tests {
                     hls_url: "https://film4k.net/api/hls/test/master.m3u8".to_string(),
                     proxy_stream_url: None,
                 }],
+                servers: vec![ServerSource {
+                    id: Some(serde_json::json!("srv-1")),
+                    label: "Server VIP 1".to_string(),
+                    hls_url: "https://film4k.net/api/hls/test/master.m3u8".to_string(),
+                    proxy_stream_url: None,
+                    quality: Some("4K".to_string()),
+                }],
+                subtitles: vec![SubtitleTrack {
+                    id: Some(serde_json::json!("sub-vi")),
+                    label: "Tiếng Việt".to_string(),
+                    lang: Some("vi".to_string()),
+                    url: Some("/api/subtitles/interstellar.vtt".to_string()),
+                    kind: Some("subtitles".to_string()),
+                    is_default: Some(true),
+                }],
+                audio_tracks: vec![AudioTrack {
+                    id: Some(serde_json::json!(0)),
+                    label: "ENG (Stereo)".to_string(),
+                    lang: Some("en".to_string()),
+                    url: None,
+                    is_default: Some(true),
+                }],
+            }],
+            servers: vec![ServerSource {
+                id: Some(serde_json::json!("srv-1")),
+                label: "Server VIP 1".to_string(),
+                hls_url: "https://film4k.net/api/hls/test/master.m3u8".to_string(),
+                proxy_stream_url: None,
+                quality: Some("4K".to_string()),
+            }],
+            subtitles: vec![SubtitleTrack {
+                id: Some(serde_json::json!("sub-vi")),
+                label: "Tiếng Việt".to_string(),
+                lang: Some("vi".to_string()),
+                url: Some("/api/subtitles/interstellar.vtt".to_string()),
+                kind: Some("subtitles".to_string()),
+                is_default: Some(true),
+            }],
+            audio_tracks: vec![AudioTrack {
+                id: Some(serde_json::json!(0)),
+                label: "ENG (Stereo)".to_string(),
+                lang: Some("en".to_string()),
+                url: None,
+                is_default: Some(true),
             }],
         };
 
@@ -413,8 +512,20 @@ mod tests {
         // 1. Query by slug
         let found = db.get_movie_by_slug("interstellar").unwrap().expect("Movie should exist");
         assert_eq!(found.title_en.as_deref(), Some("Interstellar"));
+        assert_eq!(found.servers.len(), 1);
+        assert_eq!(found.servers[0].label, "Server VIP 1");
+        assert_eq!(found.subtitles.len(), 1);
+        assert_eq!(found.subtitles[0].label, "Tiếng Việt");
+        assert_eq!(found.audio_tracks.len(), 1);
+        assert_eq!(found.audio_tracks[0].label, "ENG (Stereo)");
         assert_eq!(found.episodes.len(), 1);
         assert_eq!(found.episodes[0].sources[0].label, "Server 1");
+        assert_eq!(found.episodes[0].servers.len(), 1);
+        assert_eq!(found.episodes[0].servers[0].label, "Server VIP 1");
+        assert_eq!(found.episodes[0].subtitles.len(), 1);
+        assert_eq!(found.episodes[0].subtitles[0].label, "Tiếng Việt");
+        assert_eq!(found.episodes[0].audio_tracks.len(), 1);
+        assert_eq!(found.episodes[0].audio_tracks[0].label, "ENG (Stereo)");
 
         // 2. Query list with search
         let (list, total) = db.get_movies(Some("hố đen"), None, None, 10, 0).unwrap();
@@ -431,5 +542,53 @@ mod tests {
         let (empty_list, empty_total) = db.get_movies(Some("nonexistent_film"), None, None, 10, 0).unwrap();
         assert_eq!(empty_total, 0);
         assert!(empty_list.is_empty());
+    }
+
+    #[test]
+    fn test_seed_master_database_and_verify_movie_configs() {
+        let db = Database::new_in_memory().unwrap();
+        let seed_path = std::path::Path::new("../film4k_master_database.json");
+        if !seed_path.exists() {
+            return;
+        }
+
+        let inserted = db.seed_from_file(seed_path).unwrap();
+        assert_eq!(inserted, 17);
+
+        // 1. Verify spider-man-brand-new-day
+        let spidey = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().expect("Spiderman should exist");
+        assert_eq!(spidey.servers.len(), 3);
+        assert_eq!(spidey.servers[0].label, "Server VIP (4K CDN)");
+        assert_eq!(spidey.servers[0].quality.as_deref(), Some("4K"));
+        assert_eq!(spidey.servers[1].label, "Server 2 (Dự Phòng)");
+        assert_eq!(spidey.servers[2].label, "Server 3 (Direct CDN)");
+
+        assert_eq!(spidey.subtitles.len(), 3);
+        assert_eq!(spidey.subtitles[0].label, "Film4k.net");
+        assert_eq!(spidey.subtitles[0].url.as_deref(), Some("/api/subtitles/spider-man-brand-new-day.vtt"));
+        assert_eq!(spidey.subtitles[0].is_default, Some(true));
+        assert_eq!(spidey.subtitles[1].label, "Tiếng Việt");
+        assert_eq!(spidey.subtitles[2].label, "English");
+
+        assert_eq!(spidey.audio_tracks.len(), 3);
+        assert_eq!(spidey.audio_tracks[0].label, "ENG (Stereo)");
+        assert_eq!(spidey.audio_tracks[0].is_default, Some(true));
+        assert_eq!(spidey.audio_tracks[1].label, "ENG (Dolby Atmos 5.1)");
+        assert_eq!(spidey.audio_tracks[2].label, "VIE (Thuyết minh)");
+
+        // 2. Verify street-fighter
+        let sf = db.get_movie_by_slug("street-fighter").unwrap().expect("Street Fighter should exist");
+        assert_eq!(sf.servers.len(), 3);
+        assert_eq!(sf.servers[0].label, "Server VIP (4K CDN)");
+        assert_eq!(sf.subtitles.len(), 3);
+        assert_eq!(sf.subtitles[0].url.as_deref(), Some("/api/subtitles/street-fighter.vtt"));
+        assert_eq!(sf.audio_tracks.len(), 3);
+        assert_eq!(sf.audio_tracks[2].label, "VIE (Lồng tiếng)");
+
+        // 3. Verify other movies have configs populated
+        let jurassic = db.get_movie_by_slug("jurassic-park").unwrap().expect("Jurassic Park should exist");
+        assert!(!jurassic.servers.is_empty());
+        assert!(!jurassic.subtitles.is_empty());
+        assert!(!jurassic.audio_tracks.is_empty());
     }
 }
