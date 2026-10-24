@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
-import { getSubtitleForTime } from '../utils/subtitles';
+import { getSubtitleForTime, getAvailableSubtitleTracks } from '../utils/subtitles';
 import { getQualityDisplayInfo, sortQualitiesDescending, QualityLevel } from '../utils/quality';
 
 interface WatchPageProps {
@@ -253,7 +253,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       setCurrentSubtitleText(null);
       return;
     }
-    const text = getSubtitleForTime(slug, currentTime);
+    const text = getSubtitleForTime(slug, currentTime, selectedCaption);
     setCurrentSubtitleText(text);
   }, [slug, currentTime, selectedCaption]);
 
@@ -773,6 +773,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             ref={videoRef}
             onClick={handleVideoClick}
             onTimeUpdate={handleTimeUpdate}
+            onSeeking={handleTimeUpdate}
+            onSeeked={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
@@ -905,14 +907,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   fontWeight: 650,
                   lineHeight: 1.35,
                   display: 'inline-block',
+                  whiteSpace: 'pre-line',
                   textShadow:
                     '-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 3px 6px rgba(0,0,0,0.95), 0 0 6px #000',
                   letterSpacing: '0.01em',
                   fontFamily: 'var(--font-body, "Inter", -apple-system, BlinkMacSystemFont, sans-serif)',
                 }}
-              >
-                {currentSubtitleText}
-              </span>
+                dangerouslySetInnerHTML={{ __html: currentSubtitleText }}
+              />
             </div>
           )}
 
@@ -1262,7 +1264,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <ChevronLeft size={16} /> Captions
                   </button>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                    {['Film4k.net', 'Tiếng Việt', 'English', 'Tắt'].map((cap) => (
+                    {[...getAvailableSubtitleTracks(slug), 'Tắt'].map((cap) => (
                       <button
                         key={cap}
                         type="button"
