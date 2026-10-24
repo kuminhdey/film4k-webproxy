@@ -58,4 +58,7 @@ Before any commit:
   - **BẮT BUỘC DÙNG `agy`:** Khi sử dụng Antigravity tại các children worktree, **BẮT BUỘC PHẢI DÙNG `agy`** (chạy interactive terminal: `agy -i "<chi_tiet_nhiem_vu>" --dangerously-skip-permissions`) để người dùng thấy rõ tab `agy` và tiến trình làm việc trực tiếp trong ứng dụng Orca.
 - **ĐỒNG BỘ MÃ NGUỒN:**
   - Đồng bộ tất cả worktrees bằng lệnh `git fetch origin main && git reset --hard origin/main` sau mỗi commit được đẩy lên `origin/main`.
+- **CƠ CHẾ GỬI LỆNH ĐẾN CHILDREN TERMINAL (SEND IMMEDIATELY VS QUEUE):**
+  - **Lệnh cần thực thi ngay (Send Immediately):** Khi cần chỉ đạo khẩn, sửa lỗi build gấp, hoặc chuyển hướng mà không muốn lệnh nằm chờ trong hàng đợi khi `agy` đang chạy turn, kích hoạt gửi ngay lập tức bằng `Alt+M` (gửi chuỗi ANSI escape `\x1bm` qua `orca terminal send`) hoặc `--interrupt`.
+  - **Lệnh vào hàng đợi (Queued):** Các hướng dẫn tuần tự, bước tiếp theo có thể đợi lượt chạy hiện tại kết thúc thì gửi bình thường vào hàng đợi.
 
