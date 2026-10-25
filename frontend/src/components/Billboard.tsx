@@ -127,7 +127,7 @@ export const Billboard: React.FC<BillboardProps> = ({ movie, onPlay, onMoreInfo 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '12px' }}>
           <button className="btn-primary" onClick={() => onPlay(movie)}>
-            <Play size={18} fill="#fff" />
+            <Play size={18} fill="#070e08" color="#070e08" />
             Xem Phim Ngay
           </button>
           <button className="btn-secondary" onClick={() => onMoreInfo(movie)}>

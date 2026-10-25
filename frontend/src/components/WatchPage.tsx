@@ -1274,7 +1274,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <div style={{ fontWeight: 700, fontSize: '18px', color: '#fff' }}>
               {displayTitle}{' '}
               {currentEpisode && currentEpisode.episode > 1 && (
-                <span style={{ color: 'var(--accent-light, #ff5a66)', marginLeft: '6px' }}>
+                <span style={{ color: 'var(--accent-light, #c6ff00)', marginLeft: '6px' }}>
                   — Tập {currentEpisode.episode}
                 </span>
               )}
@@ -1439,11 +1439,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               position: 'absolute',
               top: '20px',
               left: '24px',
-              background: showStats ? 'rgba(225, 29, 46, 0.28)' : 'rgba(15, 18, 28, 0.65)',
-              border: showStats ? '1px solid rgba(225, 29, 46, 0.65)' : '1px solid rgba(255, 255, 255, 0.16)',
+              background: showStats ? 'rgba(174, 234, 0, 0.22)' : 'rgba(10, 21, 12, 0.75)',
+              border: showStats ? '1px solid #aeea00' : '1px solid rgba(40, 84, 54, 0.5)',
               borderRadius: '999px',
               padding: '6px 14px',
-              color: '#fff',
+              color: showStats ? '#aeea00' : '#fcfdf7',
               fontSize: '12px',
               fontWeight: 700,
               display: 'inline-flex',
@@ -1455,7 +1455,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               transition: 'all 0.2s ease',
             }}
           >
-            <Activity size={13} color={showStats ? '#ff5a66' : '#fff'} />
+            <Activity size={13} color={showStats ? '#aeea00' : '#fff'} />
             <span>THỐNG KÊ</span>
           </button>
 
@@ -1466,9 +1466,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 position: 'absolute',
                 top: '60px',
                 left: '24px',
-                background: 'rgba(11, 14, 22, 0.92)',
+                background: 'rgba(10, 21, 12, 0.94)',
                 backdropFilter: 'blur(16px)',
-                border: '1px solid rgba(255, 255, 255, 0.14)',
+                border: '1px solid #1e3f28',
                 borderRadius: '12px',
                 padding: '12px 18px',
                 width: '260px',
@@ -1483,10 +1483,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               <div
                 style={{
                   fontWeight: 700,
-                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                  borderBottom: '1px solid rgba(40, 84, 54, 0.4)',
                   paddingBottom: '4px',
                   marginBottom: '6px',
-                  color: '#ff5a66',
+                  color: '#aeea00',
                   fontSize: '11px',
                   letterSpacing: '0.05em',
                   display: 'flex',
@@ -1525,7 +1525,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted, #8b95ad)' }}>Khung hình bị rớt</span>
-                <span style={{ fontWeight: 600, color: droppedFrames > 5 ? '#ff5a66' : '#eef2fa' }}>
+                <span style={{ fontWeight: 600, color: droppedFrames > 5 ? '#fbbf24' : '#eef2fa' }}>
                   {droppedFrames}
                 </span>
               </div>
@@ -2269,7 +2269,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     bottom: 0,
                     left: 0,
                     width: `${bufferedPercent}%`,
-                    background: 'rgba(255, 255, 255, 0.35)',
+                    background: '#2d5a37',
                     transition: 'width 0.3s ease',
                   }}
                 />
@@ -2296,8 +2296,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   width: '12px',
                   height: '12px',
                   borderRadius: '50%',
-                  background: 'var(--accent, #aeea00)',
-                  boxShadow: '0 0 10px rgba(174, 234, 0, 0.8), 0 0 4px rgba(198, 255, 0, 0.9)',
+                  background: '#c6ff00',
+                  boxShadow: '0 0 12px rgba(198, 255, 0, 0.8), 0 0 4px rgba(174, 234, 0, 0.9)',
                   pointerEvents: 'none',
                 }}
               />
@@ -2316,6 +2316,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                 <button
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={togglePlay}
                   style={{
                     background: 'none',
@@ -2329,13 +2330,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   }}
                   title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
                 >
-                  {isPlaying ? <Pause size={20} fill="#fff" /> : <Play size={20} fill="#fff" />}
+                  {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
                 </button>
 
                 {/* Volume & Inline Slider */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <button
                     type="button"
+                    className="cinema-ctrl-btn"
                     onClick={toggleMute}
                     style={{
                       background: 'none',
@@ -2380,6 +2382,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 {/* Captions button */}
                 <button
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={() => {
                     if (selectedCaption === 'Tắt') {
                       if (availableSubtitleOptions.length > 0) {
@@ -2390,10 +2393,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     }
                   }}
                   style={{
-                    background: selectedCaption !== 'Tắt' ? 'rgba(255,255,255,0.14)' : 'none',
+                    background: selectedCaption !== 'Tắt' ? 'rgba(174, 234, 0, 0.16)' : 'none',
                     border: 'none',
                     borderRadius: '6px',
-                    color: selectedCaption !== 'Tắt' ? '#fff' : 'var(--muted, #8b95ad)',
+                    color: selectedCaption !== 'Tắt' ? '#aeea00' : 'var(--muted, #8b95ad)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -2409,16 +2412,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 <button
                   ref={settingsBtnRef}
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={() => {
                     const next = !settingsOpen;
                     setSettingsOpen(next);
                     if (next) setSettingsMenu('main');
                   }}
                   style={{
-                    background: settingsOpen ? 'rgba(255, 255, 255, 0.16)' : 'none',
+                    background: settingsOpen ? 'rgba(174, 234, 0, 0.18)' : 'none',
                     border: 'none',
                     borderRadius: '8px',
-                    color: '#fff',
+                    color: settingsOpen ? '#aeea00' : '#fff',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -2434,6 +2438,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 {/* Cast / AirPlay icon */}
                 <button
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={() => alert('Truyền luồng tới thiết bị Smart TV / AirPlay / Google Cast')}
                   style={{
                     background: 'none',
@@ -2452,6 +2457,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 {/* Picture-in-Picture */}
                 <button
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={togglePiP}
                   style={{
                     background: 'none',
@@ -2470,6 +2476,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 {/* Fullscreen */}
                 <button
                   type="button"
+                  className="cinema-ctrl-btn"
                   onClick={toggleFullscreen}
                   style={{
                     background: 'none',

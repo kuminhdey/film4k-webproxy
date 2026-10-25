@@ -1,6 +1,16 @@
 @import './film4k.css';
 @import './film4k_videojs.css';
 
+/* Global Avocado Cinema Text Selection */
+::selection {
+  background: #aeea00 !important;
+  color: #070e08 !important;
+}
+::-moz-selection {
+  background: #aeea00 !important;
+  color: #070e08 !important;
+}
+
 /* Suppress default native browser subtitle box so custom high-contrast Cinema UI overlay renders cleanly */
 video::cue {
   display: none !important;
@@ -18,7 +28,7 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom Scrollbars matching dark aesthetic */
+/* Custom Scrollbars matching dark avocado aesthetic */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -31,14 +41,14 @@ html, body {
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--card-hover, #285436);
+  background: var(--accent-deep, #84cc16);
 }
 
 /* Thin custom scrollbar for cinema settings & subtitle menus */
 .cinema-menu-scroll {
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-color: rgba(174, 234, 0, 0.3) transparent;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
@@ -50,11 +60,11 @@ html, body {
   background: transparent;
 }
 .cinema-menu-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(174, 234, 0, 0.25);
   border-radius: 4px;
 }
 .cinema-menu-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(174, 234, 0, 0.55);
 }
 
 /* Modal Overlay for Cinema Player */
@@ -62,7 +72,7 @@ html, body {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(7, 9, 15, 0.94);
+  background: rgba(7, 14, 8, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   display: flex;
@@ -83,4 +93,163 @@ html, body {
     grid-template-columns: repeat(2, 1fr);
     gap: 14px 10px;
   }
+}
+
+/* ==========================================================================
+   ECC UI/UX REFINEMENT: HOVER, FOCUS, ACTIVE & HIGHLIGHT RULES
+   ========================================================================== */
+
+/* 1. Thẻ Phim (Movie Cards & Posters) */
+.movie-card {
+  position: relative;
+  border-radius: var(--radius-md, 12px);
+  overflow: hidden;
+  background: var(--card, #0f2214);
+  border: 1px solid var(--border, #1e3f28);
+  cursor: pointer;
+  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.movie-card:hover,
+.movie-card:focus-visible {
+  border-color: #aeea00 !important;
+  box-shadow: 0 12px 32px rgba(174, 234, 0, 0.28) !important;
+  transform: scale(1.03) !important;
+}
+.card:hover .thumb,
+.card:focus-visible .thumb {
+  border-color: #aeea00 !important;
+  box-shadow: 0 12px 32px rgba(174, 234, 0, 0.28) !important;
+  transform: scale(1.03) !important;
+}
+
+/* 2. Thanh Điều Hướng (Sidebar & Navbar Links) */
+.side-link {
+  border-left: 3px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.side-link:hover {
+  color: #c6ff00 !important;
+  background: rgba(174, 234, 0, 0.08) !important;
+  border-left: 3px solid #84cc16 !important;
+  transform: translateX(2px);
+}
+.side-link.on {
+  color: #aeea00 !important;
+  background: linear-gradient(90deg, rgba(174, 234, 0, 0.18), rgba(174, 234, 0, 0.03)) !important;
+  border-left: 3px solid #aeea00 !important;
+  box-shadow: none !important;
+}
+.side-link.on .side-ico,
+.side-link.on svg {
+  color: #aeea00 !important;
+  fill: currentColor !important;
+}
+
+.nav-tab-btn {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.nav-tab-btn:hover {
+  color: #c6ff00 !important;
+  background: rgba(174, 234, 0, 0.08) !important;
+  border-color: #84cc16 !important;
+}
+.nav-tab-btn.on {
+  color: #aeea00 !important;
+  background: linear-gradient(90deg, rgba(174, 234, 0, 0.18), rgba(174, 234, 0, 0.03)) !important;
+  border-color: #aeea00 !important;
+}
+
+/* 3. Nút Bấm (Buttons & CTA) */
+button.btn, .btn, .btn-primary, button.btn-primary {
+  background: linear-gradient(135deg, #aeea00 0%, #84cc16 100%) !important;
+  color: #070e08 !important;
+  font-weight: 700 !important;
+  border-radius: var(--radius-md, 12px);
+  border: none !important;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+button.btn:hover, .btn:hover, .btn-primary:hover, button.btn-primary:hover {
+  background: linear-gradient(135deg, #c6ff00 0%, #aeea00 100%) !important;
+  box-shadow: 0 6px 24px rgba(174, 234, 0, 0.5) !important;
+  transform: translateY(-2px) !important;
+  filter: none !important;
+}
+button.ghost, .ghost-btn, .btn-secondary, button.btn-secondary {
+  color: var(--fg, #fcfdf7) !important;
+  border: 1px solid var(--border, #1e3f28) !important;
+  background: rgba(15, 34, 20, 0.6) !important;
+  border-radius: var(--radius-md, 12px);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+button.ghost:hover, .ghost-btn:hover, .btn-secondary:hover, button.btn-secondary:hover {
+  border-color: #aeea00 !important;
+  color: #aeea00 !important;
+  background: rgba(174, 234, 0, 0.1) !important;
+}
+
+/* 4. Ô Tìm Kiếm (Search Box) */
+form.search input, .nav-search-input {
+  background: #0f2214;
+  border: 1px solid #1e3f28;
+  color: #fcfdf7;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+form.search input:hover, .nav-search-input:hover {
+  border-color: #84cc16;
+  background: #0e2214;
+}
+form.search input:focus, .nav-search-input:focus {
+  border-color: #aeea00 !important;
+  box-shadow: 0 0 0 3px rgba(174, 234, 0, 0.3) !important;
+  background: #0e2214 !important;
+  outline: none !important;
+}
+
+/* 5. Chip Bộ Lọc (Filter Chips) */
+.chip, .genres .chip, .filter-chips .chip {
+  background: var(--card, #0f2214);
+  color: var(--muted-light, #cbd8cb);
+  border: 1px solid var(--border, #1e3f28);
+  border-radius: var(--radius-full, 9999px);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chip:hover, .genres .chip:hover, .filter-chips .chip:hover {
+  border-color: #84cc16 !important;
+  color: #fcfdf7 !important;
+  background: rgba(132, 204, 22, 0.15) !important;
+}
+.chip.on, .genres .chip.on, .filter-chips .chip.on {
+  background: #132b1a !important;
+  border-color: #aeea00 !important;
+  color: #c6ff00 !important;
+  box-shadow: 0 0 12px rgba(174, 234, 0, 0.35) !important;
+  font-weight: 600;
+}
+
+/* 6. Trình Phát Video (Player Controls & Seekbar) */
+.cinema-ctrl-btn {
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.cinema-ctrl-btn:hover {
+  color: #aeea00 !important;
+  filter: drop-shadow(0 0 8px rgba(174, 234, 0, 0.4)) !important;
+}
+.cinema-ctrl-btn svg {
+  transition: transform 0.15s ease;
+}
+.cinema-ctrl-btn:hover svg {
+  transform: scale(1.08);
+}
+
+/* 7. Bảng Quản Trị (Admin Dashboard) */
+tbody tr {
+  transition: background 0.15s ease;
+}
+tbody tr:hover, .admin-table tr:hover {
+  background: rgba(174, 234, 0, 0.05) !important;
 }

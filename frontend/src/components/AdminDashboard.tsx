@@ -1092,8 +1092,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     alignItems: 'center',
                     gap: '4px',
                     padding: '2px 8px',
-                    background: 'rgba(229, 9, 20, 0.15)',
-                    color: '#ff4d4f',
+                    background: 'rgba(174, 234, 0, 0.15)',
+                    color: '#aeea00',
                     borderRadius: '12px',
                     fontSize: '11px',
                     fontWeight: 600,
@@ -1141,9 +1141,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               style={{
                 width: `${Math.min(100, Math.max(2, stats.crawler_progress_percent))}%`,
                 height: '100%',
-                background: stats.crawler_is_running
-                  ? 'linear-gradient(90deg, #aeea00, #c6ff00)'
-                  : '#10b981',
+                background: 'linear-gradient(90deg, #aeea00, #84cc16)',
                 borderRadius: '6px',
                 transition: 'width 0.4s ease-out',
                 boxShadow: stats.crawler_is_running ? '0 0 12px rgba(174, 234, 0, 0.5)' : 'none',
@@ -1580,7 +1578,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                           borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
                           transition: 'background 0.15s',
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)')}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(174, 234, 0, 0.05)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
                         {/* Title & Poster */}

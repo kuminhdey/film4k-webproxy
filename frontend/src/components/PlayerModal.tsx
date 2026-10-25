@@ -512,7 +512,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
             >
               {osd.icon === 'play' && <Play size={34} fill="#fff" />}
               {osd.icon === 'pause' && <Pause size={34} fill="#fff" />}
-              {osd.icon === 'mute' && <VolumeX size={34} color="#ff4d58" />}
+              {osd.icon === 'mute' && <VolumeX size={34} color="#fbbf24" />}
               {osd.icon === 'unmute' && <Volume2 size={34} color="#4ade80" />}
               {osd.icon === 'volume' && <Volume2 size={34} color="#fff" />}
               {osd.icon === 'rewind' && <RotateCcw size={34} color="#fff" />}

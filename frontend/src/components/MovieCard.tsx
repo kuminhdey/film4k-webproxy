@@ -19,11 +19,11 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick }) => {
           style={{
             width: '100%',
             height: '100%',
-            background: '#1a1a24',
+            background: 'var(--card, #0f2214)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#666',
+            color: 'var(--muted, #94a896)',
           }}
         >
           No Image

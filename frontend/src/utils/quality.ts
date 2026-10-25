@@ -15,7 +15,7 @@ export interface QualityDisplayInfo {
 
 /**
  * Normalizes video resolutions, particularly for 2.39:1 ultrawide cinema format:
- * - 3832x1600 (height ~1600): Displays as "1600p" with "4K" badge (#e11d2e)
+ * - 3832x1600 (height ~1600): Displays as "1600p" with "4K" badge (#aeea00)
  * - 1920x800 (height ~800): Displays as "1080p" with "HD" badge (var(--muted, #8b95ad)), replacing raw 800p
  * - 1920x1080: Displays as "1080p" with "HD" badge
  * - 3840x2160: Displays as "2160p" with "4K" badge
