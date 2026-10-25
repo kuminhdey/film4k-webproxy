@@ -31,6 +31,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/health", get(health_check))
         .route("/movies", get(list_movies))
         .route("/movies/:slug", get(get_movie))
+        .route("/stream/:slug/master.m3u8", get(handle_movie_stream))
         .route("/proxy/stream", get(handle_stream_proxy))
         .route("/crawler/status", get(get_crawler_status))
         .route("/crawler/trigger", post(trigger_crawler));
@@ -182,6 +183,24 @@ pub async fn get_movie(
             ))
         }
     }
+}
+
+pub async fn handle_movie_stream(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    if let Ok(Some(movie)) = state.db.get_movie_by_slug(&slug) {
+        if let Some(url) = movie.get_primary_hls_url() {
+            let proxy_query = proxy::ProxyQuery {
+                url,
+                keep_cdn: Some("1".to_string()),
+                slug: Some(slug),
+            };
+            return handle_stream_proxy(State(state), Query(proxy_query), headers).await;
+        }
+    }
+    (StatusCode::NOT_FOUND, "Movie stream not found").into_response()
 }
 
 pub async fn get_crawler_status(State(state): State<AppState>) -> Json<crawler::CrawlerStatus> {

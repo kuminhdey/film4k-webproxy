@@ -142,17 +142,48 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   }, [settingsOpen]);
 
   // Flexible servers from currentEpisode sources, movie servers, or current source
+  // Always prioritizing Server VIP (Server 1) from /api/stream/${movie.slug}/master.m3u8
   const availableServers: Source[] = useMemo(() => {
+    const list: Source[] = [];
+    if (movie?.slug) {
+      list.push({
+        label: 'Server VIP (4K Siêu Nhanh)',
+        hlsUrl: `/api/stream/${movie.slug}/master.m3u8`,
+        proxyStreamUrl: `/api/stream/${movie.slug}/master.m3u8`,
+      });
+    }
     if (currentEpisode && currentEpisode.sources && currentEpisode.sources.length > 0) {
-      return currentEpisode.sources;
+      currentEpisode.sources.forEach((s, idx) => {
+        const label = s.label || `Server ${idx + 2}`;
+        if (
+          label !== 'Server VIP (4K Siêu Nhanh)' &&
+          !list.some((existing) => existing.hlsUrl === s.hlsUrl)
+        ) {
+          list.push({
+            ...s,
+            label,
+          });
+        }
+      });
+    } else if (movie?.servers && movie.servers.length > 0) {
+      movie.servers.forEach((s, idx) => {
+        const label = s.label || `Server ${idx + 2}`;
+        if (
+          label !== 'Server VIP (4K Siêu Nhanh)' &&
+          !list.some((existing) => existing.hlsUrl === s.hlsUrl)
+        ) {
+          list.push({
+            ...s,
+            label,
+          });
+        }
+      });
+    } else if (currentSource) {
+      if (!list.some((existing) => existing.label === currentSource.label || existing.hlsUrl === currentSource.hlsUrl)) {
+        list.push(currentSource);
+      }
     }
-    if (movie?.servers && movie.servers.length > 0) {
-      return movie.servers;
-    }
-    if (currentSource) {
-      return [currentSource];
-    }
-    return [];
+    return list;
   }, [currentEpisode, movie, currentSource]);
 
   // Flexible subtitle tracks from movie.subtitles, currentEpisode.subtitles, HLS manifest, or local tracks
@@ -218,6 +249,21 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
     return list;
   }, [movie, currentEpisode, hlsSubtitleTracks, slug]);
+
+  // Fallback to movie.audio_tracks if audioTracks from HLS is empty
+  const displayAudioTracks = useMemo(() => {
+    if (audioTracks.length > 0) return audioTracks;
+    if (movie?.audio_tracks && movie.audio_tracks.length > 0) {
+      return movie.audio_tracks.map((tr, idx) => ({
+        id: typeof tr === 'object' && (tr as any).id !== undefined ? (tr as any).id : idx,
+        name:
+          typeof tr === 'string'
+            ? tr
+            : (tr as any).name || (tr as any).label || (tr as any).lang || `Audio ${idx + 1}`,
+      }));
+    }
+    return [];
+  }, [audioTracks, movie]);
 
   // Format seconds to MM:SS or HH:MM:SS
   const formatTime = (secs: number) => {
@@ -516,51 +562,40 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
         setSelectedCaption(initialCaption);
 
-        // Sources & Server initialization
+        // Sources & Server initialization: prioritize Server VIP connecting to /api/stream/${data.slug}/master.m3u8
+        const localMasterUrl = `/api/stream/${data.slug}/master.m3u8`;
+        const vipSource: Source = {
+          label: 'Server VIP (4K Siêu Nhanh)',
+          hlsUrl: localMasterUrl,
+          proxyStreamUrl: localMasterUrl,
+        };
+
         if (data.episodes && data.episodes.length > 0) {
           const targetEp = initialEpisode
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
             : data.episodes[0];
           setCurrentEpisode(targetEp);
-          if (targetEp.sources && targetEp.sources.length > 0) {
-            setCurrentSource(targetEp.sources[0]);
-          } else if (data.servers && data.servers.length > 0) {
-            setCurrentSource(data.servers[0]);
-          }
+          setCurrentSource(vipSource);
         } else if (data.servers && data.servers.length > 0) {
           const virtualEp: Episode = {
             movieSlug: data.slug,
             season: 1,
             episode: 1,
             title: data.title_vi || data.title_en || 'Full Movie',
-            sources: data.servers,
+            sources: [vipSource, ...data.servers.filter((s) => s.label !== 'Server VIP (4K Siêu Nhanh)')],
           };
           setCurrentEpisode(virtualEp);
-          setCurrentSource(data.servers[0]);
-        } else if (data.stream) {
-          let hls = '';
-          if (typeof data.stream === 'string') {
-            hls = data.stream;
-          } else if (typeof data.stream === 'object' && (data.stream as any).hlsUrl) {
-            hls = (data.stream as any).hlsUrl;
-          }
-
-          if (hls) {
-            const singleSource: Source = {
-              label: 'Server VIP (4K Siêu Nhanh)',
-              hlsUrl: hls,
-              proxyStreamUrl: `/api/proxy/stream?url=${encodeURIComponent(hls)}&keep_cdn=1`,
-            };
-            const virtualEp: Episode = {
-              movieSlug: data.slug,
-              season: 1,
-              episode: 1,
-              title: data.title_vi || data.title_en || 'Full Movie',
-              sources: [singleSource],
-            };
-            setCurrentEpisode(virtualEp);
-            setCurrentSource(singleSource);
-          }
+          setCurrentSource(vipSource);
+        } else {
+          const virtualEp: Episode = {
+            movieSlug: data.slug,
+            season: 1,
+            episode: 1,
+            title: data.title_vi || data.title_en || 'Full Movie',
+            sources: [vipSource],
+          };
+          setCurrentEpisode(virtualEp);
+          setCurrentSource(vipSource);
         }
       })
       .catch((err) => {
@@ -618,6 +653,49 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
             }
           }
+        }
+
+        // Fix Audio Tracks menu: Populate immediately at MANIFEST_PARSED!
+        const hlsAudios =
+          data.audioTracks && data.audioTracks.length > 0
+            ? data.audioTracks
+            : hls.audioTracks && hls.audioTracks.length > 0
+            ? hls.audioTracks
+            : [];
+
+        if (hlsAudios.length > 0) {
+          const tracks = hlsAudios.map((tr) => ({
+            id: tr.id,
+            name: tr.name || tr.lang || `Track ${tr.id + 1}`,
+          }));
+          setAudioTracks(tracks);
+          const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+          setActiveAudioTrack(curId);
+          if (tracks[curId]) {
+            setActiveAudioName(tracks[curId].name);
+          }
+        } else if (movie?.audio_tracks && movie.audio_tracks.length > 0) {
+          const fallbackTracks = movie.audio_tracks.map((tr, idx) => ({
+            id: typeof tr === 'object' && (tr as any).id !== undefined ? (tr as any).id : idx,
+            name:
+              typeof tr === 'string'
+                ? tr
+                : (tr as any).name || (tr as any).label || (tr as any).lang || `Audio ${idx + 1}`,
+          }));
+          setAudioTracks(fallbackTracks);
+          setActiveAudioTrack(fallbackTracks[0].id);
+          setActiveAudioName(fallbackTracks[0].name);
+        }
+
+        // Subtitles from manifest
+        if (data.subtitleTracks && data.subtitleTracks.length > 0) {
+          const subs: SubtitleTrackOption[] = data.subtitleTracks.map((tr) => ({
+            id: `hls-${tr.id}`,
+            label: tr.name || tr.lang || `Track ${tr.id + 1}`,
+            hlsTrackId: tr.id,
+            url: tr.url,
+          }));
+          setHlsSubtitleTracks(subs);
         }
         if (savedSeekTimeRef.current > 0) {
           video.currentTime = savedSeekTimeRef.current;
@@ -937,7 +1015,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       hlsRef.current.audioTrack = numId;
     }
     setActiveAudioTrack(id);
-    const targetName = trackName || audioTracks.find((t) => t.id === id)?.name || `Track ${id}`;
+    const targetName =
+      trackName ||
+      audioTracks.find((t) => String(t.id) === String(id))?.name ||
+      displayAudioTracks.find((t) => String(t.id) === String(id))?.name ||
+      `Track ${id}`;
     setActiveAudioName(targetName);
     setSettingsMenu('main');
   };
@@ -1725,9 +1807,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       gap: '2px',
                     }}
                   >
-                    {audioTracks.length > 0 ? (
-                      audioTracks.map((tr) => {
-                        const isSelected = activeAudioTrack === tr.id;
+                    {displayAudioTracks.length > 0 ? (
+                      displayAudioTracks.map((tr) => {
+                        const isSelected = String(activeAudioTrack) === String(tr.id);
                         return (
                           <button
                             key={tr.id}
