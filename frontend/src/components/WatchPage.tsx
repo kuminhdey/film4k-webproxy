@@ -20,9 +20,11 @@ import {
   Check,
   ArrowLeft,
   Home,
+  Film,
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
+import { saveWatchProgress, getMovieProgress } from '../utils/watchProgress';
 import {
   getSubtitleForTime,
   findCueBinarySearch,
@@ -121,6 +123,90 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const savedSeekTimeRef = useRef<number>(0);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Auto next episode & Resume playback state
+  const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('bofilm_auto_next') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [resumeToast, setResumeToast] = useState<string | null>(null);
+  const hasResumedRef = useRef<boolean>(false);
+  const lastSavedTimeRef = useRef<number>(0);
+  const countdownDismissedRef = useRef<boolean>(false);
+
+  // Compute next episode if series
+  const nextEpisode = useMemo(() => {
+    if (!movie?.episodes || movie.episodes.length <= 1 || !currentEpisode) return null;
+    const currentIndex = movie.episodes.findIndex((e) => e.episode === currentEpisode.episode);
+    if (currentIndex >= 0 && currentIndex < movie.episodes.length - 1) {
+      return movie.episodes[currentIndex + 1];
+    }
+    return null;
+  }, [movie, currentEpisode]);
+
+  const handleToggleAutoNext = () => {
+    setAutoNextEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('bofilm_auto_next', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Reset resume and countdown flags when switching episode or movie
+  useEffect(() => {
+    hasResumedRef.current = false;
+    lastSavedTimeRef.current = 0;
+    countdownDismissedRef.current = false;
+    setCountdown(null);
+  }, [slug, currentEpisode?.episode]);
+
+  // Countdown timer effect for Auto Next Episode
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      if (nextEpisode) {
+        handleSelectEpisode(nextEpisode);
+      }
+      setCountdown(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdown, nextEpisode]);
+
+  // Save progress on beforeunload and component unmount
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (videoRef.current && movie && (videoRef.current.duration || duration) > 0) {
+        saveWatchProgress({
+          slug: movie.slug,
+          title: movie.title_vi || movie.title_en || 'Phim',
+          title_en: movie.title_en,
+          poster: movie.poster,
+          backdrop: movie.backdrop,
+          episode: currentEpisode?.episode,
+          currentTime: videoRef.current.currentTime,
+          duration: videoRef.current.duration || duration,
+          movie_type: movie.type,
+        });
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      handleBeforeUnload();
+    };
+  }, [movie, currentEpisode, duration]);
 
   // Click-outside listener to close settings popup
   useEffect(() => {
@@ -967,6 +1053,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
     const cur = videoRef.current.currentTime;
+    const dur = videoRef.current.duration || duration || 0;
     setCurrentTime(cur);
 
     // Read activeCues directly from video.textTracks on timeupdate if activeCues not loaded yet
@@ -979,14 +1066,43 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
     if (videoRef.current.buffered.length > 0) {
       const bufEnd = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
-      const total = videoRef.current.duration || 1;
+      const total = dur || 1;
       setBufferedPercent(Math.min(100, (bufEnd / total) * 100));
+    }
+
+    // Throttle save watch progress every 5 seconds
+    if (Math.abs(cur - lastSavedTimeRef.current) >= 5 && dur > 0 && movie) {
+      lastSavedTimeRef.current = cur;
+      saveWatchProgress({
+        slug: movie.slug,
+        title: movie.title_vi || movie.title_en || 'Phim',
+        title_en: movie.title_en,
+        poster: movie.poster,
+        backdrop: movie.backdrop,
+        episode: currentEpisode?.episode,
+        currentTime: cur,
+        duration: dur,
+        movie_type: movie.type,
+      });
+    }
+
+    // Auto next episode countdown trigger (35s before end of video)
+    if (
+      autoNextEnabled &&
+      nextEpisode &&
+      !countdownDismissedRef.current &&
+      countdown === null &&
+      dur > 35 &&
+      cur >= dur - 35
+    ) {
+      setCountdown(10);
     }
   };
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
-      setDuration(videoRef.current.duration || 8700); // 2:25:00 default duration
+      const dur = videoRef.current.duration || 8700; // default duration fallback
+      setDuration(dur);
       if (videoRef.current.videoWidth && videoRef.current.videoHeight) {
         const w = videoRef.current.videoWidth;
         const h = videoRef.current.videoHeight;
@@ -996,6 +1112,60 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           setActiveResolution(info.resolution);
         }
       }
+
+      // Resume playback check
+      if (!hasResumedRef.current) {
+        hasResumedRef.current = true;
+        const saved = getMovieProgress(slug, currentEpisode?.episode);
+        if (saved && saved.currentTime > 10 && saved.currentTime < dur * 0.95) {
+          videoRef.current.currentTime = saved.currentTime;
+          setCurrentTime(saved.currentTime);
+          const mins = Math.floor(saved.currentTime / 60);
+          const secs = Math.floor(saved.currentTime % 60);
+          const timeFormatted = `${mins}:${String(secs).padStart(2, '0')}`;
+          setResumeToast(`🥑 Đang tiếp tục phát từ phút ${timeFormatted}`);
+          setTimeout(() => {
+            setResumeToast(null);
+          }, 4000);
+        }
+      }
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    if (autoNextEnabled && nextEpisode && !countdownDismissedRef.current) {
+      setCountdown(10);
+    }
+    if (movie && videoRef.current && videoRef.current.duration > 0) {
+      saveWatchProgress({
+        slug: movie.slug,
+        title: movie.title_vi || movie.title_en || 'Phim',
+        title_en: movie.title_en,
+        poster: movie.poster,
+        backdrop: movie.backdrop,
+        episode: currentEpisode?.episode,
+        currentTime: videoRef.current.duration,
+        duration: videoRef.current.duration,
+        movie_type: movie.type,
+      });
+    }
+  };
+
+  const handlePause = () => {
+    setIsPlaying(false);
+    if (movie && videoRef.current && videoRef.current.duration > 0) {
+      saveWatchProgress({
+        slug: movie.slug,
+        title: movie.title_vi || movie.title_en || 'Phim',
+        title_en: movie.title_en,
+        poster: movie.poster,
+        backdrop: movie.backdrop,
+        episode: currentEpisode?.episode,
+        currentTime: videoRef.current.currentTime,
+        duration: videoRef.current.duration,
+        movie_type: movie.type,
+      });
     }
   };
 
@@ -1354,7 +1524,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             onSeeked={handleTimeUpdate}
             onLoadedMetadata={handleLoadedMetadata}
             onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
+            onPause={handlePause}
+            onEnded={handleEnded}
             style={{
               width: '100%',
               height: '100%',
@@ -1364,6 +1535,36 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             }}
             playsInline
           />
+
+          {/* Resume Playback Toast */}
+          {resumeToast && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '20px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(10, 21, 12, 0.94)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                border: '1px solid #aeea00',
+                borderRadius: '30px',
+                padding: '8px 22px',
+                color: '#fcfdf7',
+                fontSize: '13.5px',
+                fontWeight: 700,
+                zIndex: 35,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.8), 0 0 16px rgba(174, 234, 0, 0.35)',
+                pointerEvents: 'none',
+                animation: 'fadeIn 0.25s ease',
+              }}
+            >
+              <span>{resumeToast}</span>
+            </div>
+          )}
 
           {/* 1. TOP-RIGHT WATERMARK: Bơ Film 4K */}
           <div
@@ -1753,6 +1954,53 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       <ChevronRight size={15} />
                     </div>
                   </button>
+
+                  {/* Auto Next Episode Toggle */}
+                  <div
+                    style={{
+                      minHeight: '40px',
+                      padding: '10px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      borderRadius: '8px',
+                      transition: 'background 0.15s ease',
+                      width: '100%',
+                    }}
+                    onClick={handleToggleAutoNext}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Film size={16} color="var(--muted-light, #b4bdd0)" />
+                      <span>Tự động chuyển tập</span>
+                    </div>
+                    <div
+                      style={{
+                        width: '38px',
+                        height: '22px',
+                        borderRadius: '999px',
+                        background: autoNextEnabled ? '#aeea00' : 'rgba(255, 255, 255, 0.2)',
+                        position: 'relative',
+                        transition: 'background 0.2s ease',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          background: autoNextEnabled ? '#070e08' : '#cbd8cb',
+                          position: 'absolute',
+                          top: '3px',
+                          left: autoNextEnabled ? '19px' : '3px',
+                          transition: 'left 0.2s ease',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -2494,6 +2742,144 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               </div>
             </div>
           </div>
+
+          {/* Bottom-Right Countdown Next Episode Overlay */}
+          {countdown !== null && nextEpisode && (
+            <div
+              className="auto-next-overlay"
+              style={{
+                position: 'absolute',
+                bottom: controlsVisible ? '90px' : '24px',
+                right: '24px',
+                zIndex: 35,
+                background: 'rgba(15, 34, 20, 0.96)',
+                border: '1px solid #1e3f28',
+                boxShadow: '0 16px 40px rgba(0, 0, 0, 0.85), 0 0 20px rgba(174, 234, 0, 0.2)',
+                borderRadius: '14px',
+                padding: '16px 18px',
+                maxWidth: '340px',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                color: '#fcfdf7',
+                transition: 'bottom 0.25s ease',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    color: '#aeea00',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>Tập tiếp theo sau</span>
+                  <span
+                    style={{
+                      background: '#aeea00',
+                      color: '#070e08',
+                      borderRadius: '50%',
+                      width: '20px',
+                      height: '20px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                    }}
+                  >
+                    {countdown}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCountdown(null);
+                    countdownDismissedRef.current = true;
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--muted, #94a896)',
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    fontSize: '12px',
+                    borderRadius: '4px',
+                  }}
+                  title="Hủy chuyển tập"
+                >
+                  ✕ Hủy
+                </button>
+              </div>
+
+              <div
+                style={{
+                  fontSize: '13.5px',
+                  fontWeight: 700,
+                  marginBottom: '12px',
+                  color: '#fff',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                Tập {nextEpisode.episode}: {nextEpisode.title || `Tập ${nextEpisode.episode}`}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setCountdown(null);
+                    handleSelectEpisode(nextEpisode);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '7px 14px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
+                    color: '#070e08',
+                    border: 'none',
+                  }}
+                >
+                  ▶ Phát ngay
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setCountdown(null);
+                    countdownDismissedRef.current = true;
+                  }}
+                  style={{
+                    padding: '7px 12px',
+                    fontSize: '13px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Server Selection Chips / Badge */}

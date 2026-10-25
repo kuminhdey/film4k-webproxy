@@ -148,11 +148,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </li>
         <li>
           <a
-            className={`side-link ${activeTab === 'favourites' ? 'on' : ''}`}
-            href="/favourites"
+            className={`side-link ${activeTab === 'mylist' || activeTab === 'favourites' ? 'on' : ''}`}
+            href="/mylist"
             onClick={(e) => {
               e.preventDefault();
-              onTabChange('favourites');
+              onTabChange('mylist');
             }}
           >
             <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">

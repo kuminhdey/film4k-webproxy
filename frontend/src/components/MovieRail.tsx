@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { Bookmark } from 'lucide-react';
 import { MovieSummary } from '../types';
+import { isInMyList, toggleMyList } from '../utils/myList';
 
 interface MovieRailProps {
   title: string;
@@ -18,6 +20,14 @@ export const MovieRail: React.FC<MovieRailProps> = ({
   onViewAll,
   id,
 }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => setTick((t) => t + 1);
+    window.addEventListener('bofilm_mylist_updated', handleUpdate);
+    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
+  }, []);
+
   if (!movies || movies.length === 0) return null;
 
   return (
@@ -87,6 +97,35 @@ export const MovieRail: React.FC<MovieRailProps> = ({
                     >
                       ▶
                     </span>
+                    <button
+                      type="button"
+                      className="card-bookmark-btn"
+                      title={isInMyList(movie.slug) ? 'Xóa khỏi Danh sách của tôi' : 'Thêm vào Danh sách của tôi'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        toggleMyList(movie);
+                      }}
+                      style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: '8px',
+                        width: '26px',
+                        height: '26px',
+                        borderRadius: '50%',
+                        background: 'rgba(7, 14, 8, 0.8)',
+                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                        color: isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 4,
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <Bookmark size={13} fill={isInMyList(movie.slug) ? '#fbbf24' : 'none'} color={isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb'} />
+                    </button>
                     <span className="card-res">{res}</span>
                     <span className="card-vi">TM|PD</span>
                     <span className="card-score">

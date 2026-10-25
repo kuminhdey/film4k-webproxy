@@ -73,11 +73,11 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         </a>
 
         <a
-          className={`mobile-nav-tab ${activeTab === 'favourites' ? 'on' : ''}`}
-          href="/favourites"
+          className={`mobile-nav-tab ${activeTab === 'mylist' || activeTab === 'favourites' ? 'on' : ''}`}
+          href="/mylist"
           onClick={(e) => {
             e.preventDefault();
-            onTabChange('favourites');
+            onTabChange('mylist');
           }}
         >
           <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">

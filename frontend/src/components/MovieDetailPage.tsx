@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Bookmark, Check } from 'lucide-react';
 import { Movie, MovieSummary } from '../types';
+import { isInMyList, toggleMyList } from '../utils/myList';
 
 interface MovieDetailPageProps {
   slug: string;
@@ -11,6 +13,38 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
   const [related, setRelated] = useState<MovieSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inMyList, setInMyList] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (movie) {
+      setInMyList(isInMyList(movie.slug));
+    }
+    const handleUpdate = () => {
+      if (movie) setInMyList(isInMyList(movie.slug));
+    };
+    window.addEventListener('bofilm_mylist_updated', handleUpdate);
+    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
+  }, [movie]);
+
+  const handleToggleMyList = () => {
+    if (!movie) return;
+    const added = toggleMyList({
+      slug: movie.slug,
+      title_vi: movie.title_vi,
+      title_en: movie.title_en,
+      poster: movie.poster,
+      backdrop: movie.backdrop,
+      year: movie.year,
+      quality: movie.quality,
+      score: movie.score,
+      movie_type: movie.type,
+      genres: movie.genres,
+      total_episodes: movie.totalEpisodes,
+    });
+    setToastMsg(added ? 'Đã thêm vào Danh sách của tôi' : 'Đã xóa khỏi Danh sách của tôi');
+    setTimeout(() => setToastMsg(null), 3000);
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -363,6 +397,28 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
               <button
                 type="button"
                 className="ghost-btn"
+                onClick={handleToggleMyList}
+                style={{
+                  padding: '12px 22px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderColor: inMyList ? '#aeea00' : undefined,
+                  color: inMyList ? '#aeea00' : undefined,
+                  background: inMyList ? 'rgba(174, 234, 0, 0.12)' : undefined,
+                }}
+              >
+                {inMyList ? <Check size={18} color="#aeea00" /> : <Bookmark size={18} />}
+                <span>{inMyList ? '✓ Đã trong Danh sách' : '+ Danh sách của tôi'}</span>
+              </button>
+
+              <button
+                type="button"
+                className="ghost-btn"
                 onClick={() => onNavigate('/')}
                 style={{
                   padding: '12px 20px',
@@ -377,6 +433,29 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
                 ← Quay lại Trang Chủ
               </button>
             </div>
+
+            {/* Bookmark Toast Feedback */}
+            {toastMsg && (
+              <div
+                style={{
+                  marginTop: '14px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 18px',
+                  borderRadius: '30px',
+                  background: 'rgba(10, 21, 12, 0.94)',
+                  border: '1px solid #1e3f28',
+                  color: '#aeea00',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                  animation: 'fadeIn 0.2s ease',
+                }}
+              >
+                <span>🥑 {toastMsg}</span>
+              </div>
+            )}
           </div>
         </div>
       </section>

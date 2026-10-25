@@ -1,6 +1,7 @@
-import React from 'react';
-import { Play, Star } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Star, Bookmark } from 'lucide-react';
 import { MovieSummary } from '../types';
+import { isInMyList, toggleMyList } from '../utils/myList';
 
 interface MovieCardProps {
   movie: MovieSummary;
@@ -8,10 +9,19 @@ interface MovieCardProps {
 }
 
 export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick }) => {
+  const [bookmarked, setBookmarked] = useState(() => isInMyList(movie.slug));
+
+  useEffect(() => {
+    setBookmarked(isInMyList(movie.slug));
+    const handleUpdate = () => setBookmarked(isInMyList(movie.slug));
+    window.addEventListener('bofilm_mylist_updated', handleUpdate);
+    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
+  }, [movie.slug]);
+
   const posterUrl = movie.poster || movie.backdrop;
 
   return (
-    <div className="movie-card" onClick={() => onClick(movie)} style={{ aspectRatio: '2/3' }}>
+    <div className="movie-card" onClick={() => onClick(movie)} style={{ aspectRatio: '2/3', position: 'relative' }}>
       {posterUrl ? (
         <img src={posterUrl} alt={movie.title_vi || movie.title_en || 'Poster'} loading="lazy" />
       ) : (
@@ -40,16 +50,42 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick }) => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          zIndex: 2,
+          zIndex: 3,
         }}
       >
         <span className="badge-4k">4K</span>
-        {movie.score && (
-          <span className="badge-score">
-            <Star size={11} fill="#f5c518" strokeWidth={0} />
-            {movie.score.toFixed(1)}
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {movie.score && (
+            <span className="badge-score">
+              <Star size={11} fill="#fbbf24" strokeWidth={0} />
+              {movie.score.toFixed(1)}
+            </span>
+          )}
+          <button
+            type="button"
+            className="card-bookmark-btn"
+            title={bookmarked ? 'Xóa khỏi Danh sách của tôi' : 'Thêm vào Danh sách của tôi'}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMyList(movie);
+            }}
+            style={{
+              width: '26px',
+              height: '26px',
+              borderRadius: '50%',
+              background: 'rgba(7, 14, 8, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: bookmarked ? '#fbbf24' : '#cbd8cb',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Bookmark size={13} fill={bookmarked ? '#fbbf24' : 'none'} color={bookmarked ? '#fbbf24' : '#cbd8cb'} />
+          </button>
+        </div>
       </div>
 
       {/* Hover overlay */}

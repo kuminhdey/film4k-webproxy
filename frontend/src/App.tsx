@@ -9,13 +9,16 @@ import { MobileNav } from './components/MobileNav';
 import { MovieDetailPage } from './components/MovieDetailPage';
 import { WatchPage } from './components/WatchPage';
 import { AdminDashboard } from './components/AdminDashboard';
+import { ContinueWatchingRail } from './components/ContinueWatchingRail';
+import { MyListPage } from './components/MyListPage';
 import { MovieSummary, MoviesResponse, HomeResponse } from './types';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Bookmark } from 'lucide-react';
+import { isInMyList, toggleMyList } from './utils/myList';
 
 const PAGE_LIMIT = 48;
 
 interface RouteState {
-  view: 'home' | 'movie' | 'watch' | 'admin';
+  view: 'home' | 'movie' | 'watch' | 'admin' | 'mylist';
   slug?: string;
   episode?: number;
 }
@@ -27,6 +30,13 @@ function parseCurrentRoute(): RouteState {
   if (path === '/admin' || path.startsWith('/admin/')) {
     return {
       view: 'admin',
+    };
+  }
+
+  // My List route: /mylist or /favourites
+  if (path === '/mylist' || path === '/favourites') {
+    return {
+      view: 'mylist',
     };
   }
 
@@ -101,6 +111,14 @@ export const App: React.FC = () => {
     if (['explore', 'genres', 'television', 'sports', 'mylist'].includes(p)) {
       setActiveTab(p);
     }
+  }, []);
+
+  // Listen to My List updates for catalog cards
+  const [, setBookmarkTick] = useState(0);
+  useEffect(() => {
+    const handleListUpdate = () => setBookmarkTick((t) => t + 1);
+    window.addEventListener('bofilm_mylist_updated', handleListUpdate);
+    return () => window.removeEventListener('bofilm_mylist_updated', handleListUpdate);
   }, []);
 
   // Build query params helper for multi-dimensional filter matrix
@@ -376,6 +394,10 @@ export const App: React.FC = () => {
         activeTab={activeTab}
         onTabChange={(tab) => {
           setActiveTab(tab);
+          if (tab === 'mylist' || tab === 'favourites') {
+            navigateTo('/mylist');
+            return;
+          }
           if (route.view !== 'home') {
             navigateTo('/');
           }
@@ -423,10 +445,23 @@ export const App: React.FC = () => {
             initialEpisode={route.episode}
             onNavigate={navigateTo}
           />
+        ) : route.view === 'mylist' ? (
+          <MyListPage onNavigate={navigateTo} />
         ) : (
           <>
             <main className="wrap">
               <div className="home">
+              {/* Continue Watching Rail (Resumes unfinished movies) */}
+              <ContinueWatchingRail
+                onPlay={(item) => {
+                  const targetPath =
+                    item.episode && item.episode > 1
+                      ? `/watch/${item.slug}/${item.episode}`
+                      : `/watch/${item.slug}`;
+                  navigateTo(targetPath);
+                }}
+              />
+
               {/* Filter Bar */}
               <FilterBar
                 sort={sort}
@@ -527,6 +562,35 @@ export const App: React.FC = () => {
                                   >
                                     ▶
                                   </span>
+                                  <button
+                                    type="button"
+                                    className="card-bookmark-btn"
+                                    title={isInMyList(movie.slug) ? 'Xóa khỏi Danh sách của tôi' : 'Thêm vào Danh sách của tôi'}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      toggleMyList(movie);
+                                    }}
+                                    style={{
+                                      position: 'absolute',
+                                      top: '8px',
+                                      left: '8px',
+                                      width: '26px',
+                                      height: '26px',
+                                      borderRadius: '50%',
+                                      background: 'rgba(7, 14, 8, 0.8)',
+                                      border: '1px solid rgba(255, 255, 255, 0.2)',
+                                      color: isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      cursor: 'pointer',
+                                      zIndex: 4,
+                                      transition: 'all 0.15s ease',
+                                    }}
+                                  >
+                                    <Bookmark size={13} fill={isInMyList(movie.slug) ? '#fbbf24' : 'none'} color={isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb'} />
+                                  </button>
                                   <span className="card-res">{res}</span>
                                   <span className="card-vi">TM|PD</span>
                                   <span className="card-score">
@@ -826,6 +890,10 @@ export const App: React.FC = () => {
         activeTab={activeTab}
         onTabChange={(tab) => {
           setActiveTab(tab);
+          if (tab === 'mylist' || tab === 'favourites') {
+            navigateTo('/mylist');
+            return;
+          }
           if (route.view !== 'home') {
             navigateTo('/');
           }

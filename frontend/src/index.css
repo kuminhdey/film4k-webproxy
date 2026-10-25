@@ -259,3 +259,37 @@ tbody tr {
 tbody tr:hover, .admin-table tr:hover {
   background: rgba(174, 234, 0, 0.05) !important;
 }
+
+/* 8. Continue Watching & Bookmark Enhancements */
+.continue-card:hover {
+  border-color: #aeea00 !important;
+  box-shadow: 0 12px 32px rgba(174, 234, 0, 0.28) !important;
+  transform: translateY(-4px) scale(1.02) !important;
+}
+
+.continue-card:hover .continue-play-overlay div {
+  transform: scale(1.12);
+  background: rgba(174, 234, 0, 0.95) !important;
+  color: #070e08 !important;
+}
+
+.continue-card:hover .continue-play-overlay div svg {
+  fill: #070e08 !important;
+}
+
+.card-bookmark-btn:hover {
+  background: rgba(174, 234, 0, 0.25) !important;
+  border-color: #aeea00 !important;
+  transform: scale(1.1);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Bookmark, Check } from 'lucide-react';
 import { MovieSummary } from '../types';
+import { isInMyList, toggleMyList } from '../utils/myList';
 
 interface HeroBannerProps {
   movies: MovieSummary[];
@@ -9,6 +11,8 @@ interface HeroBannerProps {
 
 export const HeroBanner: React.FC<HeroBannerProps> = ({ movies, onPlay, onInfo }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [inList, setInList] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   // Pick top 5 featured movies with backdrops or posters
   const featured = useMemo(() => {
@@ -32,6 +36,27 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ movies, onPlay, onInfo }
   }
 
   const activeMovie = featured[currentIndex] || featured[0];
+
+  useEffect(() => {
+    if (activeMovie) {
+      setInList(isInMyList(activeMovie.slug));
+    }
+    const handleUpdate = () => {
+      if (activeMovie) {
+        setInList(isInMyList(activeMovie.slug));
+      }
+    };
+    window.addEventListener('bofilm_mylist_updated', handleUpdate);
+    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
+  }, [activeMovie]);
+
+  const handleToggleBookmark = () => {
+    if (!activeMovie) return;
+    const added = toggleMyList(activeMovie);
+    setToastMsg(added ? 'Đã thêm vào Danh sách của tôi' : 'Đã xóa khỏi Danh sách của tôi');
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
   const title = activeMovie.title_vi || activeMovie.title_en || 'Phim 4K';
   const backdropUrl =
     activeMovie.backdrop ||
@@ -87,7 +112,46 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ movies, onPlay, onInfo }
           >
             <span aria-hidden="true">ⓘ</span> Thông tin khác
           </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={handleToggleBookmark}
+            style={{
+              borderColor: inList ? '#aeea00' : undefined,
+              color: inList ? '#aeea00' : undefined,
+              background: inList ? 'rgba(174, 234, 0, 0.12)' : undefined,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            {inList ? <Check size={16} color="#aeea00" /> : <Bookmark size={16} />}
+            <span>{inList ? '✓ Đã lưu' : '+ Danh sách của tôi'}</span>
+          </button>
         </div>
+
+        {/* Bookmark Feedback Toast */}
+        {toastMsg && (
+          <div
+            style={{
+              marginTop: '12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              background: 'rgba(10, 21, 12, 0.92)',
+              border: '1px solid #1e3f28',
+              color: '#aeea00',
+              fontSize: '12.5px',
+              fontWeight: 700,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+              animation: 'fadeIn 0.2s ease',
+            }}
+          >
+            <span>🥑 {toastMsg}</span>
+          </div>
+        )}
       </div>
 
       {featured.length > 1 && (
