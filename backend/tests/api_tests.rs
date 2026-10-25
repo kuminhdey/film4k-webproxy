@@ -4,7 +4,7 @@ use webproxy_backend::{
     create_app,
     db::Database,
     models::{
-        AudioTrack, Episode, HomeResponse, Movie, MoviesResponse, RecommendationsResponse,
+        AudioTrack, BySlugsResponse, Episode, HomeResponse, Movie, MoviesResponse, RecommendationsResponse,
         SearchSuggestResponse, ServerSource, Source, SubtitleTrack,
     },
     proxy::is_valid_remote_url,
@@ -1184,4 +1184,130 @@ async fn test_hls_prewarming_service() {
 
     // Clean up
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+}
+
+#[tokio::test]
+async fn test_api_movies_by_slugs() {
+    let (base_url, db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // Seed "spider-man-brand-new-day" and "hope" as specified in task requirements
+    let movie1 = Movie {
+        id: None,
+        slug: "spider-man-brand-new-day".to_string(),
+        movie_type: "movie".to_string(),
+        title_vi: Some("Người Nhện: Khởi Đầu Mới".to_string()),
+        title_en: Some("Spider-Man: Brand New Day".to_string()),
+        year: Some(2026),
+        quality: Some("4K UHD".to_string()),
+        score: Some(8.9),
+        genres: vec!["Action".to_string(), "Adventure".to_string()],
+        country: Some("US".to_string()),
+        poster: Some("https://example.com/spiderman.jpg".to_string()),
+        backdrop: Some("https://example.com/spiderman_bg.jpg".to_string()),
+        overview: Some("Spider-Man embarks on a new chapter...".to_string()),
+        total_episodes: Some(1),
+        stream: None,
+        episodes: vec![],
+        servers: vec![],
+        subtitles: vec![],
+        audio_tracks: vec![],
+    };
+
+    let movie2 = Movie {
+        id: None,
+        slug: "hope".to_string(),
+        movie_type: "movie".to_string(),
+        title_vi: Some("Hy Vọng".to_string()),
+        title_en: Some("Hope".to_string()),
+        year: Some(2025),
+        quality: Some("1080p".to_string()),
+        score: Some(8.5),
+        genres: vec!["Drama".to_string()],
+        country: Some("KR".to_string()),
+        poster: Some("https://example.com/hope.jpg".to_string()),
+        backdrop: Some("https://example.com/hope_bg.jpg".to_string()),
+        overview: Some("A touching drama of endurance and hope...".to_string()),
+        total_episodes: Some(1),
+        stream: None,
+        episodes: vec![],
+        servers: vec![],
+        subtitles: vec![],
+        audio_tracks: vec![],
+    };
+
+    db.upsert_movie(&movie1).expect("Failed to upsert movie1");
+    db.upsert_movie(&movie2).expect("Failed to upsert movie2");
+
+    // 1. GET /api/movies/by-slugs?slugs=spider-man-brand-new-day,hope -> 200 OK, returns 2 movies in input order
+    let resp = client
+        .get(format!("{}/api/movies/by-slugs?slugs=spider-man-brand-new-day,hope", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: BySlugsResponse = resp.json().await.unwrap();
+    assert_eq!(data.movies.len(), 2);
+    assert_eq!(data.movies[0].slug, "spider-man-brand-new-day");
+    assert_eq!(data.movies[0].title_en, Some("Spider-Man: Brand New Day".to_string()));
+    assert_eq!(data.movies[1].slug, "hope");
+    assert_eq!(data.movies[1].title_en, Some("Hope".to_string()));
+
+    // 2. Strict order preservation: test reverse order slugs=hope,spider-man-brand-new-day
+    let resp_rev = client
+        .get(format!("{}/api/movies/by-slugs?slugs=hope,spider-man-brand-new-day", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_rev.status(), StatusCode::OK);
+    let data_rev: BySlugsResponse = resp_rev.json().await.unwrap();
+    assert_eq!(data_rev.movies.len(), 2);
+    assert_eq!(data_rev.movies[0].slug, "hope");
+    assert_eq!(data_rev.movies[1].slug, "spider-man-brand-new-day");
+
+    // 3. Nonexistent slugs return empty array with status 200
+    let resp_nonexistent = client
+        .get(format!("{}/api/movies/by-slugs?slugs=nonexistent-slug-1,nonexistent-slug-2", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_nonexistent.status(), StatusCode::OK);
+    let data_nonexistent: BySlugsResponse = resp_nonexistent.json().await.unwrap();
+    assert!(data_nonexistent.movies.is_empty());
+
+    // 4. Empty or missing slugs returns empty array with status 200
+    let resp_empty = client
+        .get(format!("{}/api/movies/by-slugs", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_empty.status(), StatusCode::OK);
+    let data_empty: BySlugsResponse = resp_empty.json().await.unwrap();
+    assert!(data_empty.movies.is_empty());
+
+    let resp_empty_param = client
+        .get(format!("{}/api/movies/by-slugs?slugs=", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_empty_param.status(), StatusCode::OK);
+    let data_empty_param: BySlugsResponse = resp_empty_param.json().await.unwrap();
+    assert!(data_empty_param.movies.is_empty());
+
+    // 5. Mixed existing and nonexistent slugs
+    let resp_mixed = client
+        .get(format!("{}/api/movies/by-slugs?slugs=ghost,hope,fake-slug", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_mixed.status(), StatusCode::OK);
+    let data_mixed: BySlugsResponse = resp_mixed.json().await.unwrap();
+    assert_eq!(data_mixed.movies.len(), 1);
+    assert_eq!(data_mixed.movies[0].slug, "hope");
 }

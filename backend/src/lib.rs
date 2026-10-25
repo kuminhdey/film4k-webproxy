@@ -60,6 +60,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/health", get(health_check))
         .route("/home", get(get_home))
         .route("/movies", get(list_movies))
+        .route("/movies/by-slugs", get(get_movies_by_slugs_handler))
         .route("/movies/:slug", get(get_movie))
         .route("/movies/:slug/recommendations", get(get_movie_recommendations))
         .route("/search/suggest", get(search_suggest))
@@ -219,6 +220,30 @@ pub async fn search_suggest(
     let q = query.q.unwrap_or_default();
     let results = state.db.search_suggest(&q, 6).unwrap_or_default();
     Json(models::SearchSuggestResponse { results })
+}
+
+pub async fn get_movies_by_slugs_handler(
+    State(state): State<AppState>,
+    Query(query): Query<models::BySlugsQuery>,
+) -> Json<models::BySlugsResponse> {
+    let slugs_str = query.slugs.unwrap_or_default();
+    let slugs: Vec<String> = slugs_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if slugs.is_empty() {
+        return Json(models::BySlugsResponse { movies: Vec::new() });
+    }
+
+    match state.db.get_movies_by_slugs(&slugs) {
+        Ok(movies) => Json(models::BySlugsResponse { movies }),
+        Err(err) => {
+            error!("Database error in get_movies_by_slugs_handler: {}", err);
+            Json(models::BySlugsResponse { movies: Vec::new() })
+        }
+    }
 }
 
 pub async fn get_movie_recommendations(

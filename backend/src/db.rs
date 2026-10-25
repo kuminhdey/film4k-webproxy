@@ -503,6 +503,73 @@ impl Database {
         Ok(list)
     }
 
+    pub fn get_movies_by_slugs(&self, slugs: &[String]) -> anyhow::Result<Vec<MovieSummary>> {
+        let mut clean_slugs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for s in slugs {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+                clean_slugs.push(trimmed.to_string());
+                if clean_slugs.len() >= 50 {
+                    break;
+                }
+            }
+        }
+
+        if clean_slugs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders: Vec<String> = (1..=clean_slugs.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            r#"
+            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
+            FROM movies
+            WHERE slug IN ({})
+            "#,
+            placeholders.join(", ")
+        );
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = clean_slugs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let genres_raw: String = row.get(8)?;
+            let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+            Ok(MovieSummary {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                movie_type: row.get(2)?,
+                title_vi: row.get(3)?,
+                title_en: row.get(4)?,
+                year: row.get(5)?,
+                quality: row.get(6)?,
+                score: row.get(7)?,
+                genres,
+                poster: row.get(9)?,
+                backdrop: row.get(10)?,
+                total_episodes: row.get(11)?,
+            })
+        })?;
+
+        let mut map: std::collections::HashMap<String, MovieSummary> = std::collections::HashMap::new();
+        for r in rows {
+            let item = r?;
+            map.insert(item.slug.clone(), item);
+        }
+
+        // Return movies strictly in the requested input order of slugs
+        let mut ordered = Vec::new();
+        for slug in &clean_slugs {
+            if let Some(movie) = map.remove(slug) {
+                ordered.push(movie);
+            }
+        }
+
+        Ok(ordered)
+    }
+
     pub fn get_recommendations(&self, slug: &str, limit: usize) -> anyhow::Result<Vec<MovieSummary>> {
         let max_items = limit.clamp(1, 24);
         let movie_opt = self.get_movie_by_slug(slug)?;

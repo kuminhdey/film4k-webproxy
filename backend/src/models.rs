@@ -177,6 +177,16 @@ pub struct RecommendationsResponse {
     pub recommendations: Vec<MovieSummary>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct BySlugsQuery {
+    pub slugs: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct BySlugsResponse {
+    pub movies: Vec<MovieSummary>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MoviesResponse {
     pub movies: Vec<MovieSummary>,
