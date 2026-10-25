@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
@@ -10,6 +10,9 @@ import { MovieDetailPage } from './components/MovieDetailPage';
 import { WatchPage } from './components/WatchPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { MovieSummary, MoviesResponse } from './types';
+import { Loader2 } from 'lucide-react';
+
+const PAGE_LIMIT = 48;
 
 interface RouteState {
   view: 'home' | 'movie' | 'watch' | 'admin';
@@ -52,8 +55,9 @@ function parseCurrentRoute(): RouteState {
 export const App: React.FC = () => {
   const [route, setRoute] = useState<RouteState>(parseCurrentRoute);
   const [movies, setMovies] = useState<MovieSummary[]>([]);
-  const [, setTotal] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   const [sort, setSort] = useState('latest');
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,36 +88,74 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Fetch movies from API
-  const fetchMovies = () => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (activeTab === 'movie' || activeTab === 'tv') {
-      params.set('type', activeTab);
-    }
-    if (searchQuery.trim()) {
-      params.set('search', searchQuery.trim());
-    }
-    params.set('limit', '100');
+  // Build query params helper
+  const buildParams = useCallback(
+    (offset: number, search?: string, type?: string) => {
+      const params = new URLSearchParams();
+      const tabType = type ?? activeTab;
+      const q = search !== undefined ? search : searchQuery;
+      if (tabType === 'movie' || tabType === 'tv') {
+        params.set('type', tabType);
+      }
+      if (q.trim()) {
+        params.set('search', q.trim());
+      }
+      params.set('limit', String(PAGE_LIMIT));
+      params.set('offset', String(offset));
+      return params;
+    },
+    [activeTab, searchQuery]
+  );
 
+  // Fetch initial page (replaces current list)
+  const fetchMovies = useCallback(
+    (search?: string, type?: string) => {
+      setLoading(true);
+      const params = buildParams(0, search, type);
+      fetch(`/api/movies?${params.toString()}`)
+        .then((res) => {
+          if (!res.ok) throw new Error('Network response was not ok');
+          return res.json();
+        })
+        .then((data: MoviesResponse) => {
+          setMovies(data.movies || []);
+          setTotal(data.total || 0);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error('Failed to fetch movies:', err);
+          setLoading(false);
+        });
+    },
+    [buildParams]
+  );
+
+  // "Load More" – appends to current list
+  const fetchMore = useCallback(() => {
+    if (loadingMore || loading) return;
+    setLoadingMore(true);
+    const params = buildParams(movies.length);
     fetch(`/api/movies?${params.toString()}`)
       .then((res) => {
         if (!res.ok) throw new Error('Network response was not ok');
         return res.json();
       })
       .then((data: MoviesResponse) => {
-        setMovies(data.movies || []);
+        setMovies((prev) => [...prev, ...(data.movies || [])]);
         setTotal(data.total || 0);
-        setLoading(false);
+        setLoadingMore(false);
       })
       .catch((err) => {
-        console.error('Failed to fetch movies:', err);
-        setLoading(false);
+        console.error('Failed to fetch more movies:', err);
+        setLoadingMore(false);
       });
-  };
+  }, [loadingMore, loading, movies.length, buildParams]);
 
+  // When activeTab or searchQuery changes → reset to page 1
   useEffect(() => {
-    fetchMovies();
+    setMovies([]);
+    fetchMovies(searchQuery, activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, searchQuery]);
 
   // Client-side filtering & sorting
@@ -176,12 +218,17 @@ export const App: React.FC = () => {
   const isFilteredView = Boolean(
     searchQuery.trim() ||
       selectedGenre ||
+      activeTab === 'movie' ||
+      activeTab === 'tv' ||
       activeTab === 'explore' ||
       activeTab === 'genres' ||
       activeTab === 'television' ||
       activeTab === 'sports' ||
       activeTab === 'favourites'
   );
+
+  const hasMore = movies.length < total;
+  const allLoaded = !loading && movies.length >= total && total > 0;
 
   if (route.view === 'admin') {
     return <AdminDashboard onNavigate={navigateTo} />;
@@ -277,83 +324,187 @@ export const App: React.FC = () => {
                           fontWeight: 500,
                         }}
                       >
-                        ({filteredMovies.length} phim)
+                        (Đang hiển thị {filteredMovies.length.toLocaleString()}{total > 0 ? ` / ${total.toLocaleString()}` : ''} phim)
                       </span>
                     </h2>
                   </div>
 
                   {loading ? (
                     <div style={{ color: 'var(--muted)', padding: '40px 0', textAlign: 'center' }}>
-                      Đang nạp dữ liệu phim...
+                      <Loader2
+                        size={24}
+                        style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginBottom: '8px' }}
+                      />
+                      <div>Đang nạp dữ liệu phim...</div>
                     </div>
                   ) : filteredMovies.length === 0 ? (
                     <div style={{ color: 'var(--muted)', padding: '40px 0', textAlign: 'center' }}>
                       Không tìm thấy phim phù hợp với bộ lọc hiện tại.
                     </div>
                   ) : (
-                    <div className="catalog-grid">
-                      {filteredMovies.map((movie) => {
-                        const displayTitle = movie.title_vi || movie.title_en || 'Phim';
-                        const year = movie.year || 2026;
-                        const genre =
-                          movie.genres && movie.genres.length > 0 ? movie.genres[0] : 'Phim 4K';
-                        const score = movie.score ? movie.score.toFixed(1) : '8.0';
-                        const res = movie.quality || '1080p';
+                    <>
+                      <div className="catalog-grid">
+                        {filteredMovies.map((movie) => {
+                          const displayTitle = movie.title_vi || movie.title_en || 'Phim';
+                          const year = movie.year || 2026;
+                          const genre =
+                            movie.genres && movie.genres.length > 0 ? movie.genres[0] : 'Phim 4K';
+                          const score = movie.score ? movie.score.toFixed(1) : '8.0';
+                          const res = movie.quality || '1080p';
 
-                        return (
-                          <div className="hov" key={movie.slug}>
-                            <a
-                              className="card"
-                              href={`/movie/${movie.slug}`}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                handleCardClick(movie);
-                              }}
-                            >
-                              <div className="thumb">
-                                <img
-                                  alt={displayTitle}
-                                  loading="lazy"
-                                  decoding="async"
-                                  src={
-                                    movie.poster ||
-                                    'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg'
-                                  }
+                          return (
+                            <div className="hov" key={movie.slug}>
+                              <a
+                                className="card"
+                                href={`/movie/${movie.slug}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  handleCardClick(movie);
+                                }}
+                              >
+                                <div className="thumb">
+                                  <img
+                                    alt={displayTitle}
+                                    loading="lazy"
+                                    decoding="async"
+                                    src={
+                                      movie.poster ||
+                                      'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg'
+                                    }
+                                  />
+                                  <span
+                                    className="play"
+                                    aria-hidden="true"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      handlePlayClick(movie);
+                                    }}
+                                  >
+                                    ▶
+                                  </span>
+                                  <span className="card-res">{res}</span>
+                                  <span className="card-vi">TM|PD</span>
+                                  <span className="card-score">
+                                    <b aria-hidden="true">★</b>
+                                    {score}
+                                  </span>
+                                  {movie.total_episodes && movie.total_episodes > 1 && (
+                                    <span className="card-eps">
+                                      {movie.total_episodes >= 10
+                                        ? `Full ${movie.total_episodes}/${movie.total_episodes}`
+                                        : `${movie.total_episodes} Tập`}
+                                    </span>
+                                  )}
+                                </div>
+                                <h3>{displayTitle}</h3>
+                                <p>
+                                  {year} · {genre}
+                                </p>
+                              </a>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Load More / All Loaded Footer */}
+                      <div
+                        style={{
+                          marginTop: '32px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '12px',
+                          paddingBottom: '24px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            color: 'var(--muted, #8b95ad)',
+                          }}
+                        >
+                          Đang hiển thị{' '}
+                          <span style={{ color: '#fff', fontWeight: 600 }}>
+                            {movies.length.toLocaleString()}
+                          </span>{' '}
+                          /{' '}
+                          <span style={{ color: '#f5c518', fontWeight: 600 }}>
+                            {total.toLocaleString()}
+                          </span>{' '}
+                          phim
+                        </div>
+
+                        {hasMore && (
+                          <button
+                            type="button"
+                            onClick={fetchMore}
+                            disabled={loadingMore}
+                            style={{
+                              background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.15) 0%, rgba(181, 7, 16, 0.25) 100%)',
+                              border: '1px solid rgba(229, 9, 20, 0.5)',
+                              color: '#fff',
+                              padding: '12px 32px',
+                              borderRadius: '10px',
+                              fontSize: '14px',
+                              fontWeight: 600,
+                              cursor: loadingMore ? 'not-allowed' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              transition: 'all 0.2s',
+                              opacity: loadingMore ? 0.7 : 1,
+                            }}
+                          >
+                            {loadingMore ? (
+                              <>
+                                <Loader2
+                                  size={16}
+                                  style={{ animation: 'spin 1s linear infinite' }}
                                 />
+                                <span>Đang tải thêm...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>🎬</span>
+                                <span>Tải thêm phim</span>
                                 <span
-                                  className="play"
-                                  aria-hidden="true"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    handlePlayClick(movie);
+                                  style={{
+                                    fontSize: '12px',
+                                    color: 'rgba(255,255,255,0.6)',
+                                    fontWeight: 400,
                                   }}
                                 >
-                                  ▶
+                                  ({(total - movies.length).toLocaleString()} phim còn lại)
                                 </span>
-                                <span className="card-res">{res}</span>
-                                <span className="card-vi">TM|PD</span>
-                                <span className="card-score">
-                                  <b aria-hidden="true">★</b>
-                                  {score}
-                                </span>
-                                {movie.total_episodes && movie.total_episodes > 1 && (
-                                  <span className="card-eps">
-                                    {movie.total_episodes >= 10
-                                      ? `Full ${movie.total_episodes}/${movie.total_episodes}`
-                                      : `${movie.total_episodes} Tập`}
-                                  </span>
-                                )}
-                              </div>
-                              <h3>{displayTitle}</h3>
-                              <p>
-                                {year} · {genre}
-                              </p>
-                            </a>
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {allLoaded && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              fontSize: '13px',
+                              color: '#10b981',
+                              background: 'rgba(16, 185, 129, 0.08)',
+                              border: '1px solid rgba(16, 185, 129, 0.2)',
+                              borderRadius: '10px',
+                              padding: '10px 20px',
+                            }}
+                          >
+                            <span>✅</span>
+                            <span>
+                              Đã tải hết toàn bộ{' '}
+                              <strong>{total.toLocaleString()}</strong> phim trong kho 4K Cinema
+                            </span>
                           </div>
-                        );
-                      })}
-                    </div>
+                        )}
+                      </div>
+                    </>
                   )}
                 </section>
               ) : (
@@ -397,6 +548,91 @@ export const App: React.FC = () => {
                       onViewAll={() => setActiveTab('movie')}
                     />
                   )}
+
+                  {/* Home Load-More footer */}
+                  {(hasMore || allLoaded) && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '24px 0 32px',
+                      }}
+                    >
+                      <div style={{ fontSize: '13px', color: 'var(--muted, #8b95ad)' }}>
+                        Đang hiển thị{' '}
+                        <span style={{ color: '#fff', fontWeight: 600 }}>
+                          {movies.length.toLocaleString()}
+                        </span>{' '}
+                        /{' '}
+                        <span style={{ color: '#f5c518', fontWeight: 600 }}>
+                          {total.toLocaleString()}
+                        </span>{' '}
+                        phim
+                      </div>
+
+                      {hasMore && (
+                        <button
+                          type="button"
+                          onClick={fetchMore}
+                          disabled={loadingMore}
+                          style={{
+                            background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.15) 0%, rgba(181, 7, 16, 0.25) 100%)',
+                            border: '1px solid rgba(229, 9, 20, 0.5)',
+                            color: '#fff',
+                            padding: '12px 32px',
+                            borderRadius: '10px',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            cursor: loadingMore ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            transition: 'all 0.2s',
+                            opacity: loadingMore ? 0.7 : 1,
+                          }}
+                        >
+                          {loadingMore ? (
+                            <>
+                              <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                              <span>Đang tải thêm...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>🎬</span>
+                              <span>Xem thêm phim</span>
+                              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', fontWeight: 400 }}>
+                                ({(total - movies.length).toLocaleString()} phim còn lại)
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {allLoaded && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '13px',
+                            color: '#10b981',
+                            background: 'rgba(16, 185, 129, 0.08)',
+                            border: '1px solid rgba(16, 185, 129, 0.2)',
+                            borderRadius: '10px',
+                            padding: '10px 20px',
+                          }}
+                        >
+                          <span>✅</span>
+                          <span>
+                            Đã tải hết toàn bộ{' '}
+                            <strong>{total.toLocaleString()}</strong> phim trong kho 4K Cinema
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -423,4 +659,3 @@ export const App: React.FC = () => {
 };
 
 export default App;
-

@@ -23,6 +23,10 @@ import {
   ExternalLink,
   Loader2,
   Radio,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import { AdminStats, AdminLogEntry, MovieSummary, MoviesResponse } from '../types';
 
@@ -87,6 +91,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'cached' | 'uncached'>('all');
   const [clearingCacheSlug, setClearingCacheSlug] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [jumpPageInput, setJumpPageInput] = useState('');
 
   // Live clock
   const [currentTimeStr, setCurrentTimeStr] = useState(new Date().toLocaleTimeString('vi-VN'));
@@ -204,16 +211,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   };
 
   // Fetch Movies list
-  const fetchMovies = async () => {
+  const fetchMovies = async (
+    page = currentPage,
+    limit = pageSize,
+    search = searchQuery,
+    type = filterType
+  ) => {
     setMoviesLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set('limit', '100');
-      if (searchQuery.trim()) {
-        params.set('search', searchQuery.trim());
+      params.set('page', String(page));
+      params.set('limit', String(limit));
+      if (search.trim()) {
+        params.set('search', search.trim());
       }
-      if (filterType === 'movie' || filterType === 'tv') {
-        params.set('type', filterType);
+      if (type === 'movie' || type === 'tv') {
+        params.set('type', type);
       }
 
       const res = await fetch(`/api/movies?${params.toString()}`);
@@ -229,12 +242,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
   };
 
+  // Total pages
+  const totalPages = Math.max(1, Math.ceil(moviesTotal / pageSize));
+
+  // Generate page numbers array for pagination bar
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (currentPage > 3) {
+        pages.push('...');
+      }
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      if (currentPage < totalPages - 2) {
+        pages.push('...');
+      }
+      pages.push(totalPages);
+    }
+    return pages;
+  };
+
   // Polling stats
   useEffect(() => {
     if (!token) return;
 
     fetchStats();
-    fetchMovies();
 
     // Poll stats frequently if crawler is active, or periodically when idle
     const pollInterval = stats.crawler_is_running ? 2000 : 8000;
@@ -245,14 +283,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     return () => clearInterval(interval);
   }, [token, stats.crawler_is_running]);
 
-  // Re-fetch movies when search or filter changes
+  // Re-fetch movies when search, filter, page or pageSize changes
   useEffect(() => {
     if (!token) return;
     const timeout = setTimeout(() => {
-      fetchMovies();
-    }, 300);
+      fetchMovies(currentPage, pageSize, searchQuery, filterType);
+    }, 250);
     return () => clearTimeout(timeout);
-  }, [searchQuery, filterType, token]);
+  }, [searchQuery, filterType, currentPage, pageSize, token]);
 
   // Crawler Controls
   const handleStartFullCrawl = async () => {
@@ -1444,7 +1482,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setFilterType(tab.id)}
+                  onClick={() => {
+                    setFilterType(tab.id);
+                    setCurrentPage(1);
+                  }}
                   style={{
                     background: filterType === tab.id ? 'rgba(245, 197, 24, 0.2)' : 'rgba(255, 255, 255, 0.05)',
                     border: `1px solid ${filterType === tab.id ? '#f5c518' : 'rgba(255, 255, 255, 0.1)'}`,
@@ -1477,7 +1518,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
               placeholder="Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug..."
               style={{
                 width: '100%',
@@ -1504,7 +1548,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               Không tìm thấy phim phù hợp với từ khóa tìm kiếm.
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <>
+              <div style={{ overflowX: 'auto' }}>
               <table
                 style={{
                   width: '100%',
@@ -1531,7 +1576,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredMovies.slice(0, 50).map((m) => {
+                  {filteredMovies.map((m) => {
                     const isClearing = clearingCacheSlug === m.slug;
                     return (
                       <tr
@@ -1674,6 +1719,244 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls Bar */}
+            <div
+              style={{
+                marginTop: '20px',
+                paddingTop: '16px',
+                borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px',
+                fontSize: '13px',
+                color: '#8b95ad',
+              }}
+            >
+              {/* Left: Info text & Page Size Selector */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <div style={{ color: '#cbd5e1' }}>
+                  Hiển thị trang <span style={{ color: '#fff', fontWeight: 600 }}>{currentPage}</span> /{' '}
+                  <span style={{ color: '#fff', fontWeight: 600 }}>{totalPages}</span> (Tổng cộng{' '}
+                  <span style={{ color: '#f5c518', fontWeight: 600 }}>{moviesTotal.toLocaleString()}</span> phim)
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>Hiển thị:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    style={{
+                      background: 'rgba(10, 14, 23, 0.8)',
+                      color: '#cbd5e1',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: '6px',
+                      padding: '5px 10px',
+                      fontSize: '12px',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value={25}>25 phim</option>
+                    <option value={50}>50 phim</option>
+                    <option value={100}>100 phim</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Right: Page Navigation Buttons & Jump to Page */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                {/* Trang đầu */}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage <= 1}
+                  title="Trang đầu"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: currentPage <= 1 ? '#475569' : '#cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <ChevronsLeft size={14} />
+                  <span>Trang đầu</span>
+                </button>
+
+                {/* Trang trước */}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  title="Trang trước"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: currentPage <= 1 ? '#475569' : '#cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <ChevronLeft size={14} />
+                  <span>Trang trước</span>
+                </button>
+
+                {/* Page numbers [1, 2, 3 ... N] */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {getPageNumbers().map((p, idx) => {
+                    if (p === '...') {
+                      return (
+                        <span key={`ellipsis-${idx}`} style={{ padding: '0 4px', color: '#64748b' }}>
+                          ...
+                        </span>
+                      );
+                    }
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={`page-${p}`}
+                        type="button"
+                        onClick={() => setCurrentPage(Number(p))}
+                        style={{
+                          background: isCurrent ? 'rgba(245, 197, 24, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${isCurrent ? '#f5c518' : 'rgba(255, 255, 255, 0.1)'}`,
+                          color: isCurrent ? '#f5c518' : '#cbd5e1',
+                          borderRadius: '6px',
+                          minWidth: '32px',
+                          height: '32px',
+                          fontSize: '12px',
+                          fontWeight: isCurrent ? 700 : 500,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '0 6px',
+                        }}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Trang sau */}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  title="Trang sau"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: currentPage >= totalPages ? '#475569' : '#cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>Trang sau</span>
+                  <ChevronRight size={14} />
+                </button>
+
+                {/* Trang cuối */}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage >= totalPages}
+                  title="Trang cuối"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: currentPage >= totalPages ? '#475569' : '#cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>Trang cuối</span>
+                  <ChevronsRight size={14} />
+                </button>
+
+                {/* Jump to page */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const p = parseInt(jumpPageInput.trim(), 10);
+                    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+                      setCurrentPage(p);
+                      setJumpPageInput('');
+                    }
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}
+                >
+                  <span style={{ fontSize: '12px', color: '#8b95ad' }}>Đến:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={jumpPageInput}
+                    onChange={(e) => setJumpPageInput(e.target.value)}
+                    placeholder={String(currentPage)}
+                    style={{
+                      width: '48px',
+                      height: '32px',
+                      background: 'rgba(10, 14, 23, 0.8)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: '6px',
+                      color: '#fff',
+                      textAlign: 'center',
+                      fontSize: '12px',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      color: '#fff',
+                      borderRadius: '6px',
+                      padding: '0 8px',
+                      height: '32px',
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Chuyển
+                  </button>
+                </form>
+              </div>
+            </div>
+            </>
           )}
         </div>
       </main>
