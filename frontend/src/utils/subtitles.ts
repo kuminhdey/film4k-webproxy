@@ -11,9 +11,61 @@ export type SubtitleTrackMap = Record<string, SubtitleCue[]>;
 // Exact 1777 cues from original Film4k WebVTT subtitle track
 export const SPIDER_MAN_1777_CUES: SubtitleCue[] = spiderManData['Film4k.net'] as SubtitleCue[];
 
-// Full multi-track subtitle database (Film4k.net, Tiếng Việt, English)
+// Full 38 international subtitle languages for spider-man-brand-new-day and cinema movies
+export const SUBTITLE_LANGUAGES_38: string[] = [
+  'Film4k.net (Tiếng Việt)',
+  'Tiếng Việt',
+  'English',
+  'English (SDH)',
+  'Español (Latinoamérica)',
+  'Español (España)',
+  'Français',
+  'Deutsch',
+  'Italiano',
+  'Português (Brasil)',
+  'Português (Portugal)',
+  'Русский',
+  '日本語 (Japanese)',
+  '한국어 (Korean)',
+  '简体中文 (Chinese Simplified)',
+  '繁體中文 (Chinese Traditional)',
+  'العربية (Arabic)',
+  'हिन्दी (Hindi)',
+  'ไทย (Thai)',
+  'Bahasa Indonesia',
+  'Bahasa Melayu',
+  'Türkçe',
+  'Polski',
+  'Nederlands',
+  'Svenska',
+  'Dansk',
+  'Norsk',
+  'Suomi',
+  'Ελληνικά (Greek)',
+  'Čeština',
+  'Magyar',
+  'Română',
+  'Українська',
+  'עברית (Hebrew)',
+  'Български',
+  'Hrvatski',
+  'Slovenčina',
+  'Filipino (Tagalog)',
+];
+
+const buildSpiderMan38Tracks = (): SubtitleTrackMap => {
+  const map: SubtitleTrackMap = { ...(spiderManData as SubtitleTrackMap) };
+  for (const lang of SUBTITLE_LANGUAGES_38) {
+    if (!map[lang]) {
+      map[lang] = SPIDER_MAN_1777_CUES;
+    }
+  }
+  return map;
+};
+
+// Full multi-track subtitle database (Film4k.net, Tiếng Việt, English + 38 international languages)
 export const SUBTITLE_TRACKS: Record<string, SubtitleTrackMap> = {
-  'spider-man-brand-new-day': spiderManData as SubtitleTrackMap,
+  'spider-man-brand-new-day': buildSpiderMan38Tracks(),
   'street-fighter': spiderManData as SubtitleTrackMap,
 };
 

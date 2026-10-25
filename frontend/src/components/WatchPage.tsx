@@ -78,9 +78,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string | null>(null);
 
   // Audio state (Dynamic from movie.audio_tracks & hls.audioTracks)
-  const [audioTracks, setAudioTracks] = useState<{ id: number | string; name: string }[]>([]);
+  const [audioTracks, setAudioTracks] = useState<{ id: number | string; name: string }[]>([
+    { id: 0, name: 'ENG (Stereo)' },
+    { id: 1, name: 'ENG (Dolby Atmos 5.1)' },
+    { id: 2, name: 'ViE-AI Thuyết minh tiếng Việt' },
+  ]);
   const [activeAudioTrack, setActiveAudioTrack] = useState<number | string>(0);
-  const [activeAudioName, setActiveAudioName] = useState<string>('Âm thanh mặc định');
+  const [activeAudioName, setActiveAudioName] = useState<string>('ENG (Stereo)');
 
   // Streaming Stats & Bitrate & FPS & Dropped frames & Buffer length (Stats for nerds)
   const [fps, setFps] = useState<number>(24);
