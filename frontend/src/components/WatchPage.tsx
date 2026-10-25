@@ -93,6 +93,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     sec: 45,
     isCdn: true,
   });
+  const [streamNotice, setStreamNotice] = useState<string | null>(null);
 
   // HLS Qualities (Normalized 2.39:1 scope defaults: 1920x800 -> 1080p HD, 3832x1600 -> 1600p 4K)
   const [qualities, setQualities] = useState<QualityLevel[]>([
@@ -625,16 +626,26 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         video.play().catch(() => {});
       });
 
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
-        if (hls.levels[data.level]) {
+      hls.on(Hls.Events.LEVEL_SWITCHING, (_, data) => {
+        if (hls.levels && hls.levels[data.level]) {
           const lvl = hls.levels[data.level];
           const info = getQualityDisplayInfo(lvl.height, lvl.width);
           setAutoQualityLabel(info.label);
-          if (activeQuality === -1) {
-            setActiveResolution(info.resolution);
-            if (lvl.bitrate) {
-              setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
-            }
+          setActiveResolution(info.resolution);
+          if (lvl.bitrate) {
+            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
+          }
+        }
+      });
+
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+        if (hls.levels && hls.levels[data.level]) {
+          const lvl = hls.levels[data.level];
+          const info = getQualityDisplayInfo(lvl.height, lvl.width);
+          setAutoQualityLabel(info.label);
+          setActiveResolution(info.resolution);
+          if (lvl.bitrate) {
+            setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
           }
         }
       });
@@ -668,8 +679,27 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       });
 
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHING, (_, data) => {
+        if (hls.audioTracks && hls.audioTracks[data.id]) {
+          const track = hls.audioTracks[data.id];
+          const name = track.name || track.lang || `Track ${data.id + 1}`;
+          setActiveAudioTrack(data.id);
+          setActiveAudioName(name);
+        }
+      });
+
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_, data) => {
+        if (hls.audioTracks && hls.audioTracks[data.id]) {
+          const track = hls.audioTracks[data.id];
+          const name = track.name || track.lang || `Track ${data.id + 1}`;
+          setActiveAudioTrack(data.id);
+          setActiveAudioName(name);
+        }
+      });
+
       // Live Bandwidth estimation from Hls.js
       hls.on(Hls.Events.FRAG_LOADED, () => {
+        setStreamNotice(null);
         if (hls.bandwidthEstimate && hls.bandwidthEstimate > 0) {
           const speed = (hls.bandwidthEstimate / 1000000).toFixed(2);
           setStreamStats((prev) => ({
@@ -679,17 +709,51 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       });
 
+      let retryCount = 0;
+      const MAX_RETRIES = 3;
+
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
+        const is403 = data.response && data.response.code === 403;
+        if (data.fatal || is403) {
+          setStreamNotice('Đang làm mới luồng phát...');
+
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
+              if (retryCount < MAX_RETRIES) {
+                retryCount++;
+                setTimeout(() => {
+                  if (hlsRef.current) {
+                    hlsRef.current.startLoad();
+                  }
+                }, 1000);
+              } else {
+                retryCount = 0;
+                setTimeout(() => {
+                  if (hlsRef.current) {
+                    hlsRef.current.loadSource(streamUrl);
+                    hlsRef.current.startLoad();
+                  }
+                }, 1500);
+              }
               break;
+
             case Hls.ErrorTypes.MEDIA_ERROR:
               hls.recoverMediaError();
               break;
+
             default:
-              hls.destroy();
+              if (is403) {
+                setTimeout(() => {
+                  if (hlsRef.current) {
+                    const freshUrl = `${streamUrl}&_retry=${Date.now()}`;
+                    hlsRef.current.loadSource(freshUrl);
+                    hlsRef.current.startLoad();
+                  }
+                }, 1000);
+              } else {
+                hls.destroy();
+                setStreamNotice('Lỗi kết nối luồng phát. Vui lòng chuyển sang máy chủ khác.');
+              }
               break;
           }
         }
@@ -817,10 +881,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
   const handleSelectQuality = (id: number) => {
     if (hlsRef.current) {
-      hlsRef.current.currentLevel = id;
+      if (id >= 0) {
+        hlsRef.current.currentLevel = id;
+        hlsRef.current.loadLevel = id;
+      } else {
+        hlsRef.current.currentLevel = -1;
+        hlsRef.current.loadLevel = -1;
+      }
     }
     setActiveQuality(id);
-    if (id !== -1) {
+    if (id >= 0) {
       const q = qualities.find((item) => item.id === id);
       if (q) {
         const info = getQualityDisplayInfo(q.height, q.width);
@@ -840,17 +910,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           setActiveBitrate(`${(lvl.bitrate / 1000000).toFixed(1)} Mbps`);
         }
       } else {
-        if (activeQuality !== -1) {
-          const prevQ = qualities.find((q) => q.id === activeQuality);
-          if (prevQ) {
-            const info = getQualityDisplayInfo(prevQ.height, prevQ.width);
-            setAutoQualityLabel(info.label);
-            setActiveResolution(info.resolution);
+        const sorted = sortQualitiesDescending(qualities);
+        const top = sorted[0];
+        if (top) {
+          const info = getQualityDisplayInfo(top.height, top.width);
+          setAutoQualityLabel(info.label);
+          setActiveResolution(info.resolution);
+          if (top.bitrate) {
+            setActiveBitrate(`${(top.bitrate / 1000000).toFixed(1)} Mbps`);
           }
-        } else {
-          const nextLabel = autoQualityLabel === '1080p' ? '1600p' : '1080p';
-          setAutoQualityLabel(nextLabel);
-          setActiveResolution(nextLabel === '1600p' ? '3832x1600' : '1920x800');
         }
       }
     }
@@ -858,12 +926,18 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   };
 
   const handleSelectAudio = (id: number | string, trackName?: string) => {
-    const numId = typeof id === 'number' ? id : parseInt(id, 10);
-    if (!isNaN(numId) && hlsRef.current && hlsRef.current.audioTracks && numId < hlsRef.current.audioTracks.length) {
+    const numId = typeof id === 'number' ? id : parseInt(String(id), 10);
+    if (
+      !isNaN(numId) &&
+      hlsRef.current &&
+      hlsRef.current.audioTracks &&
+      numId >= 0 &&
+      numId < hlsRef.current.audioTracks.length
+    ) {
       hlsRef.current.audioTrack = numId;
     }
     setActiveAudioTrack(id);
-    const targetName = trackName || (audioTracks.find((t) => t.id === id)?.name) || `Track ${id}`;
+    const targetName = trackName || audioTracks.find((t) => t.id === id)?.name || `Track ${id}`;
     setActiveAudioName(targetName);
     setSettingsMenu('main');
   };
@@ -1104,6 +1178,44 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <span style={{ color: '#e11d2e' }}>4k</span>
             <span style={{ color: '#8b95ad', fontSize: '15px', fontWeight: 600 }}>.Net</span>
           </div>
+
+          {/* Stream Recovery / Refresh Notice */}
+          {streamNotice && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '20px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(17, 22, 34, 0.94)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                border: '1px solid rgba(225, 29, 46, 0.45)',
+                borderRadius: '30px',
+                padding: '7px 20px',
+                color: '#fff',
+                fontSize: '13px',
+                fontWeight: 600,
+                zIndex: 30,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                pointerEvents: 'none',
+              }}
+            >
+              <div
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: '#e11d2e',
+                  boxShadow: '0 0 8px #e11d2e',
+                }}
+              />
+              <span>{streamNotice}</span>
+            </div>
+          )}
 
           {/* 2. TOP-LEFT STATS BUTTON: ~ THỐNG KÊ */}
           <button
