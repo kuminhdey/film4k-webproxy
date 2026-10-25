@@ -1,6 +1,12 @@
 @import './film4k.css';
 @import './film4k_videojs.css';
 
+/* Suppress default native browser subtitle box so custom high-contrast Cinema UI overlay renders cleanly */
+video::cue {
+  display: none !important;
+  opacity: 0 !important;
+}
+
 /* Ensure root body adheres to Film4k theme */
 html, body {
   background: var(--bg, #07090f);

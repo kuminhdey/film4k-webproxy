@@ -157,12 +157,22 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     ];
   }, [movie?.slug]);
 
-  // Flexible subtitle tracks from movie.subtitles, currentEpisode.subtitles, HLS manifest, or local tracks
+  // Flexible subtitle tracks from HLS manifest, movie.subtitles, currentEpisode.subtitles, or local tracks
   const availableSubtitleOptions: SubtitleTrackOption[] = useMemo(() => {
     const list: SubtitleTrackOption[] = [];
     const seen = new Set<string>();
 
-    // 1. Movie level subtitles from DB
+    // 1. Manifest subtitles from HLS (Authoritative from stream)
+    hlsSubtitleTracks.forEach((st) => {
+      if (!seen.has(st.label)) {
+        seen.add(st.label);
+        list.push(st);
+      }
+    });
+
+    const hasHlsTracks = hlsSubtitleTracks.length > 0;
+
+    // 2. Movie level subtitles from DB (skip placeholder /api/subtitles/ if HLS stream tracks exist)
     if (movie?.subtitles && Array.isArray(movie.subtitles)) {
       movie.subtitles.forEach((s, idx) => {
         if (typeof s === 'string') {
@@ -173,6 +183,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         } else if (s && typeof s === 'object') {
           const label = s.label || s.name || s.lang || s.language || `Phụ đề ${idx + 1}`;
           const url = s.url || s.file || s.src;
+          // Skip placeholder /api/subtitles/ if HLS stream tracks exist
+          if (hasHlsTracks && url && url.startsWith('/api/subtitles/')) {
+            return;
+          }
           if (!seen.has(label)) {
             seen.add(label);
             list.push({ id: `movie-sub-${idx}`, label, url });
@@ -181,7 +195,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       });
     }
 
-    // 2. Episode level subtitles from DB
+    // 3. Episode level subtitles from DB
     if (currentEpisode?.subtitles && Array.isArray(currentEpisode.subtitles)) {
       currentEpisode.subtitles.forEach((s, idx) => {
         if (typeof s === 'string') {
@@ -192,6 +206,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         } else if (s && typeof s === 'object') {
           const label = s.label || s.name || s.lang || s.language || `Tập ${currentEpisode.episode} Sub ${idx + 1}`;
           const url = s.url || s.file || s.src;
+          if (hasHlsTracks && url && url.startsWith('/api/subtitles/')) {
+            return;
+          }
           if (!seen.has(label)) {
             seen.add(label);
             list.push({ id: `ep-sub-${idx}`, label, url });
@@ -200,16 +217,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       });
     }
 
-    // 3. Manifest subtitles from HLS
-    hlsSubtitleTracks.forEach((st) => {
-      if (!seen.has(st.label)) {
-        seen.add(st.label);
-        list.push(st);
-      }
-    });
-
-    // 4. Predefined sample/bundled tracks (e.g. spider-man)
-    if (SUBTITLE_TRACKS[slug]) {
+    // 4. Predefined sample/bundled tracks (strictly for spider-man)
+    if (slug === 'spider-man-brand-new-day' && SUBTITLE_TRACKS[slug]) {
       Object.keys(SUBTITLE_TRACKS[slug]).forEach((k) => {
         if (!seen.has(k)) {
           seen.add(k);
@@ -395,45 +404,155 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     };
   }, [isPlaying]);
 
-  // Load subtitle cues when selectedCaption changes
+  // Helper to extract active cue text directly from HTMLVideoElement.textTracks
+  const getActiveCueTextFromVideo = (): string | null => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return null;
+    for (let i = 0; i < video.textTracks.length; i++) {
+      const tt = video.textTracks[i];
+      if (tt.mode === 'showing' || tt.mode === 'hidden') {
+        if (tt.activeCues && tt.activeCues.length > 0) {
+          const cue = tt.activeCues[0] as VTTCue;
+          if (cue && cue.text) {
+            return cue.text;
+          }
+        }
+      }
+    }
+    return null;
+  };
+
+  // Load subtitle cues when selectedCaption changes & 2-way sync with video.textTracks
   useEffect(() => {
+    const video = videoRef.current;
+
+    // When turning off ('Tắt'): set all subtitle textTracks to 'disabled', hls.subtitleTrack = -1, and clear overlay text
     if (selectedCaption === 'Tắt' || !selectedCaption) {
       setActiveCues(null);
       setCurrentSubtitleText(null);
       if (hlsRef.current) {
         hlsRef.current.subtitleTrack = -1;
       }
+      if (video && video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          video.textTracks[i].mode = 'disabled';
+        }
+      }
       return;
     }
 
     const track = availableSubtitleOptions.find((t) => t.label === selectedCaption);
+
+    // 2-way sync with TextTracks: loop through video.textTracks, set selected to 'showing', others to 'hidden'
+    if (video && video.textTracks) {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        const tt = video.textTracks[i];
+        const isMatched =
+          track &&
+          ((track.hlsTrackId !== undefined && i === track.hlsTrackId) ||
+            tt.label === track.label ||
+            tt.language === track.label);
+        tt.mode = isMatched ? 'showing' : 'hidden';
+      }
+    }
+
     if (!track) {
       if (SUBTITLE_TRACKS[slug] && SUBTITLE_TRACKS[slug][selectedCaption]) {
         setActiveCues(SUBTITLE_TRACKS[slug][selectedCaption]);
+      } else if (slug === 'spider-man-brand-new-day' && SAMPLE_SUBTITLES[slug]) {
+        setActiveCues(SAMPLE_SUBTITLES[slug]);
       } else {
-        const fb = SAMPLE_SUBTITLES[slug];
-        setActiveCues(fb || null);
+        setActiveCues(null);
       }
       return;
     }
 
-    if (track.url) {
-      loadVttTrack(track.url).then((cues) => {
-        setActiveCues(cues);
-      });
-    } else if (track.hlsTrackId !== undefined && hlsRef.current) {
+    // When track is from HLS, set hlsRef.current.subtitleTrack = track.hlsTrackId and fetch .vtt cues for custom Cinema UI
+    if (track.hlsTrackId !== undefined && hlsRef.current) {
       hlsRef.current.subtitleTrack = track.hlsTrackId;
-      hlsRef.current.subtitleDisplay = false;
       if (track.url) {
-        loadVttTrack(track.url).then((cues) => setActiveCues(cues));
+        loadVttTrack(track.url).then((cues) => {
+          if (cues && cues.length > 0) {
+            setActiveCues(cues);
+          }
+        });
       }
+    } else if (track.url) {
+      loadVttTrack(track.url).then((cues) => {
+        if (cues && cues.length > 0) {
+          setActiveCues(cues);
+        } else {
+          setActiveCues(null);
+        }
+      });
     } else if (SUBTITLE_TRACKS[slug] && SUBTITLE_TRACKS[slug][track.label]) {
       setActiveCues(SUBTITLE_TRACKS[slug][track.label]);
+    } else if (slug === 'spider-man-brand-new-day' && SAMPLE_SUBTITLES[slug]) {
+      setActiveCues(SAMPLE_SUBTITLES[slug]);
     } else {
-      const fb = SAMPLE_SUBTITLES[slug];
-      setActiveCues(fb || null);
+      setActiveCues(null);
     }
   }, [selectedCaption, availableSubtitleOptions, slug]);
+
+  // Listen to cuechange on HTMLVideoElement.textTracks when Hls.js manages text tracks
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleCueChange = (e: Event) => {
+      if (selectedCaption === 'Tắt' || !selectedCaption) return;
+      // If activeCues is already loaded via loadVttTrack, let findCueBinarySearch take precedence
+      if (activeCues && activeCues.length > 0) return;
+
+      const track = e.target as TextTrack | null;
+      if (track && track.activeCues && track.activeCues.length > 0) {
+        const cue = track.activeCues[0] as VTTCue;
+        if (cue && cue.text) {
+          setCurrentSubtitleText(cue.text);
+        }
+      } else {
+        let anyActive = false;
+        if (video.textTracks) {
+          for (let i = 0; i < video.textTracks.length; i++) {
+            const tt = video.textTracks[i];
+            if (tt.activeCues && tt.activeCues.length > 0) {
+              const c = tt.activeCues[0] as VTTCue;
+              if (c && c.text) {
+                setCurrentSubtitleText(c.text);
+                anyActive = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!anyActive) {
+          setCurrentSubtitleText(null);
+        }
+      }
+    };
+
+    const tracks = video.textTracks;
+    if (!tracks) return;
+
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].addEventListener('cuechange', handleCueChange);
+    }
+
+    const handleTrackAdded = (e: TrackEvent) => {
+      if (e.track) {
+        e.track.addEventListener('cuechange', handleCueChange);
+      }
+    };
+
+    tracks.addEventListener('addtrack', handleTrackAdded);
+
+    return () => {
+      for (let i = 0; i < tracks.length; i++) {
+        tracks[i].removeEventListener('cuechange', handleCueChange);
+      }
+      tracks.removeEventListener('addtrack', handleTrackAdded);
+    };
+  }, [selectedCaption, activeCues]);
 
   // Update subtitles via O(log N) binary search based on current time
   useEffect(() => {
@@ -447,7 +566,26 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       return;
     }
     const text = getSubtitleForTime(slug, currentTime, selectedCaption);
-    setCurrentSubtitleText(text);
+    if (text) {
+      setCurrentSubtitleText(text);
+    } else {
+      // If no text from getSubtitleForTime and no activeCues, check direct Hls text tracks
+      const video = videoRef.current;
+      let hlsCueText: string | null = null;
+      if (video && video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          const tt = video.textTracks[i];
+          if (tt.mode !== 'disabled' && tt.activeCues && tt.activeCues.length > 0) {
+            const c = tt.activeCues[0] as VTTCue;
+            if (c && c.text) {
+              hlsCueText = c.text;
+              break;
+            }
+          }
+        }
+      }
+      setCurrentSubtitleText(hlsCueText);
+    }
   }, [slug, currentTime, selectedCaption, activeCues]);
 
   // Update dropped frames, buffer length, and live dimensions for Stats for Nerds
@@ -528,8 +666,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         if (data.subtitles && data.subtitles.length > 0) {
           const firstSub = data.subtitles[0];
           initialCaption = typeof firstSub === 'string' ? firstSub : firstSub.label || firstSub.name || 'Phụ đề 1';
-        } else if (SUBTITLE_TRACKS[slug]) {
-          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Film4k.net';
+        } else if (slug === 'spider-man-brand-new-day' && SUBTITLE_TRACKS[slug]) {
+          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Film4k.net (Tiếng Việt)';
         }
         setSelectedCaption(initialCaption);
 
@@ -589,6 +727,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         backBufferLength: 90,
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
+        renderTextTracksNatively: true,
       });
 
       hlsRef.current = hls;
@@ -700,6 +839,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             url: tr.url,
           }));
           setHlsSubtitleTracks(subs);
+        }
+      });
+
+      hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, (_, data) => {
+        if (data.details && data.details.fragments && data.details.fragments.length > 0) {
+          const fragUrl = data.details.fragments[0].url;
+          if (fragUrl) {
+            loadVttTrack(fragUrl).then((cues) => {
+              if (cues && cues.length > 0) {
+                setActiveCues(cues);
+              }
+            });
+          }
         }
       });
 
@@ -816,6 +968,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     if (!videoRef.current) return;
     const cur = videoRef.current.currentTime;
     setCurrentTime(cur);
+
+    // Read activeCues directly from video.textTracks on timeupdate if activeCues not loaded yet
+    if (selectedCaption !== 'Tắt' && (!activeCues || activeCues.length === 0)) {
+      const textFromVideo = getActiveCueTextFromVideo();
+      if (textFromVideo) {
+        setCurrentSubtitleText(textFromVideo);
+      }
+    }
 
     if (videoRef.current.buffered.length > 0) {
       const bufEnd = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
@@ -2216,8 +2376,6 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     if (selectedCaption === 'Tắt') {
                       if (availableSubtitleOptions.length > 0) {
                         setSelectedCaption(availableSubtitleOptions[0].label);
-                      } else {
-                        setSelectedCaption('Film4k.net');
                       }
                     } else {
                       setSelectedCaption('Tắt');

@@ -66,13 +66,11 @@ const buildSpiderMan38Tracks = (): SubtitleTrackMap => {
 // Full multi-track subtitle database (Film4k.net, Tiếng Việt, English + 38 international languages)
 export const SUBTITLE_TRACKS: Record<string, SubtitleTrackMap> = {
   'spider-man-brand-new-day': buildSpiderMan38Tracks(),
-  'street-fighter': spiderManData as SubtitleTrackMap,
 };
 
-// Fallback sample subtitles mapped by slug
+// Fallback sample subtitles mapped by slug (strictly per movie, no fallback to other movies)
 export const SAMPLE_SUBTITLES: Record<string, SubtitleCue[]> = {
   'spider-man-brand-new-day': SPIDER_MAN_1777_CUES,
-  'street-fighter': SPIDER_MAN_1777_CUES,
 };
 
 /**
@@ -109,12 +107,13 @@ export function getAvailableSubtitleTracks(slug: string): string[] {
   if (tracks) {
     return Object.keys(tracks);
   }
-  return ['Film4k.net', 'Tiếng Việt', 'English'];
+  return [];
 }
 
 /**
  * Returns the active subtitle text string for the current video playback time.
  * Synchronized with video time (no loop / cycle hacks), using binary search.
+ * Strictly avoids falling back to Spider-Man cues on other movies.
  */
 export function getSubtitleForTime(
   slug: string,
@@ -133,7 +132,15 @@ export function getSubtitleForTime(
   }
 
   if (!cues || cues.length === 0) {
-    cues = SAMPLE_SUBTITLES[slug] || SPIDER_MAN_1777_CUES;
+    if (slug === 'spider-man-brand-new-day') {
+      cues = SAMPLE_SUBTITLES['spider-man-brand-new-day'] || SPIDER_MAN_1777_CUES;
+    } else {
+      cues = SAMPLE_SUBTITLES[slug];
+    }
+  }
+
+  if (!cues || cues.length === 0) {
+    return null;
   }
 
   const match = findCueBinarySearch(cues, currentTime);
@@ -197,16 +204,65 @@ export function parseVTT(vttContent: string): SubtitleCue[] {
 const vttUrlCache = new Map<string, SubtitleCue[]>();
 
 /**
- * Loads a remote WebVTT file and caches its parsed cues.
+ * Loads a remote WebVTT or HLS subtitle playlist (.m3u8) file and caches its parsed cues.
+ * Supports parsing m3u8 playlist to discover and fetch underlying .vtt segment.
  */
 export async function loadVttTrack(url: string): Promise<SubtitleCue[]> {
+  if (!url) return [];
   if (vttUrlCache.has(url)) {
     return vttUrlCache.get(url)!;
   }
   try {
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      if (res.status !== 404) {
+        console.warn(`Failed to fetch subtitle from ${url}: HTTP ${res.status}`);
+      }
+      return [];
+    }
     const text = await res.text();
+
+    // Check if the content is an HLS playlist (.m3u8) or starts with #EXTM3U
+    if (text.trim().startsWith('#EXTM3U') || url.toLowerCase().includes('.m3u8')) {
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      // Look for a line pointing to a .vtt file or a URI segment (not starting with #)
+      let vttLine = lines.find((l) => !l.startsWith('#') && l.toLowerCase().includes('.vtt'));
+      if (!vttLine) {
+        vttLine = lines.find((l) => !l.startsWith('#'));
+      }
+
+      if (vttLine) {
+        let targetVttUrl = vttLine;
+        try {
+          targetVttUrl = new URL(vttLine, url).toString();
+        } catch {
+          // Keep vttLine as is if URL resolution fails
+        }
+
+        if (vttUrlCache.has(targetVttUrl)) {
+          const cachedCues = vttUrlCache.get(targetVttUrl)!;
+          vttUrlCache.set(url, cachedCues);
+          return cachedCues;
+        }
+
+        const vttRes = await fetch(targetVttUrl);
+        if (!vttRes.ok) {
+          if (vttRes.status !== 404) {
+            console.warn(`Failed to fetch target VTT from ${targetVttUrl}: HTTP ${vttRes.status}`);
+          }
+          return [];
+        }
+
+        const vttContent = await vttRes.text();
+        const cues = parseVTT(vttContent);
+        vttUrlCache.set(targetVttUrl, cues);
+        vttUrlCache.set(url, cues);
+        return cues;
+      }
+      return [];
+    }
+
+    // Direct WebVTT content
     const cues = parseVTT(text);
     vttUrlCache.set(url, cues);
     return cues;
