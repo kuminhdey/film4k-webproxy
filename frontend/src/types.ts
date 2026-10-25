@@ -97,6 +97,16 @@ export interface MoviesResponse {
   offset: number;
 }
 
+export interface HomeResponse {
+  hero?: MovieSummary[];
+  top?: MovieSummary[];
+  newSeries?: MovieSummary[];
+  newMovies?: MovieSummary[];
+  list: MovieSummary[];
+  total: number;
+  genres?: string[];
+}
+
 export interface AdminStats {
   total_movies: number;
   total_series: number;

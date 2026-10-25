@@ -9,7 +9,7 @@ import { MobileNav } from './components/MobileNav';
 import { MovieDetailPage } from './components/MovieDetailPage';
 import { WatchPage } from './components/WatchPage';
 import { AdminDashboard } from './components/AdminDashboard';
-import { MovieSummary, MoviesResponse } from './types';
+import { MovieSummary, MoviesResponse, HomeResponse } from './types';
 import { Loader2 } from 'lucide-react';
 
 const PAGE_LIMIT = 48;
@@ -56,6 +56,7 @@ export const App: React.FC = () => {
   const [route, setRoute] = useState<RouteState>(parseCurrentRoute);
   const [movies, setMovies] = useState<MovieSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [homeData, setHomeData] = useState<HomeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
@@ -130,6 +131,32 @@ export const App: React.FC = () => {
     [buildParams]
   );
 
+  // Fetch Home curated layout (/api/home matching web gốc)
+  const fetchHome = useCallback(() => {
+    setLoading(true);
+    fetch('/api/home')
+      .then((res) => {
+        if (!res.ok) throw new Error(`Home endpoint returned status ${res.status}`);
+        return res.json();
+      })
+      .then((data: HomeResponse) => {
+        const list = Array.isArray(data.list)
+          ? data.list
+          : Array.isArray((data as any).movies)
+          ? (data as any).movies
+          : [];
+        setHomeData(data);
+        setMovies(list);
+        setTotal(typeof data.total === 'number' ? data.total : list.length);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.warn('/api/home not ready or failed, falling back to /api/movies:', err);
+        setHomeData(null);
+        fetchMovies('', 'all');
+      });
+  }, [fetchMovies]);
+
   // "Load More" – appends to current list
   const fetchMore = useCallback(() => {
     if (loadingMore || loading) return;
@@ -151,12 +178,25 @@ export const App: React.FC = () => {
       });
   }, [loadingMore, loading, movies.length, buildParams]);
 
-  // When activeTab or searchQuery changes → reset to page 1
+  // When activeTab, searchQuery, or filters change → load appropriate data
   useEffect(() => {
     setMovies([]);
-    fetchMovies(searchQuery, activeTab);
+    const isDefaultHome =
+      route.view === 'home' &&
+      !searchQuery.trim() &&
+      !selectedGenre &&
+      activeTab === 'all' &&
+      selectedResolution === 'all' &&
+      selectedCountry === 'all';
+
+    if (isDefaultHome) {
+      fetchHome();
+    } else {
+      setHomeData(null);
+      fetchMovies(searchQuery, activeTab);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, searchQuery]);
+  }, [activeTab, searchQuery, selectedGenre, selectedResolution, selectedCountry, route.view]);
 
   // Client-side filtering & sorting
   const filteredMovies = useMemo(() => {
@@ -185,27 +225,39 @@ export const App: React.FC = () => {
     return result;
   }, [movies, selectedGenre, selectedResolution, sort]);
 
-  // Featured movies for HeroBanner
+  // Featured movies for HeroBanner (priority: data.hero -> backdrop pool -> slice)
   const heroMovies = useMemo(() => {
+    if (homeData?.hero && homeData.hero.length > 0) {
+      return homeData.hero;
+    }
     const pool = movies.filter((m) => m.backdrop);
     return pool.length > 0 ? pool.slice(0, 5) : movies.slice(0, 5);
-  }, [movies]);
+  }, [homeData?.hero, movies]);
 
-  // Top 10 movies for TopRail
+  // Top 10 movies for TopRail (priority: data.top -> sort score)
   const top10Movies = useMemo(() => {
+    if (homeData?.top && homeData.top.length > 0) {
+      return homeData.top;
+    }
     const sorted = [...movies].sort((a, b) => (b.score || 0) - (a.score || 0));
     return sorted.slice(0, 10);
-  }, [movies]);
+  }, [homeData?.top, movies]);
 
-  // TV Series for MovieRail
+  // TV Series for MovieRail (priority: data.newSeries -> filter tv)
   const seriesMovies = useMemo(() => {
+    if (homeData?.newSeries && homeData.newSeries.length > 0) {
+      return homeData.newSeries;
+    }
     return movies.filter((m) => m.movie_type === 'tv' || (m.total_episodes && m.total_episodes > 1));
-  }, [movies]);
+  }, [homeData?.newSeries, movies]);
 
-  // Single Feature Movies for MovieRail
+  // Single Feature Movies for MovieRail (priority: data.newMovies -> filter movie)
   const singleMovies = useMemo(() => {
+    if (homeData?.newMovies && homeData.newMovies.length > 0) {
+      return homeData.newMovies;
+    }
     return movies.filter((m) => m.movie_type === 'movie' || !m.total_episodes || m.total_episodes <= 1);
-  }, [movies]);
+  }, [homeData?.newMovies, movies]);
 
   const handleCardClick = (movie: MovieSummary) => {
     navigateTo(`/movie/${movie.slug}`);
@@ -218,6 +270,8 @@ export const App: React.FC = () => {
   const isFilteredView = Boolean(
     searchQuery.trim() ||
       selectedGenre ||
+      selectedCountry !== 'all' ||
+      selectedResolution !== 'all' ||
       activeTab === 'movie' ||
       activeTab === 'tv' ||
       activeTab === 'explore' ||
