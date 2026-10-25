@@ -309,6 +309,19 @@ async fn test_api_movies_pagination_and_filters() {
         assert!(!second_page_slugs.contains(slug));
     }
 
+    // 3b. Pagination via page parameter: limit = 2, page = 2 (should calculate offset = 2)
+    let resp = client
+        .get(format!("{}/api/movies?limit=2&page=2", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: MoviesResponse = resp.json().await.unwrap();
+    assert_eq!(data.limit, 2);
+    assert_eq!(data.offset, 2);
+    let page2_slugs: Vec<String> = data.movies.iter().map(|m| m.slug.clone()).collect();
+    assert_eq!(page2_slugs, second_page_slugs);
+
     // 4. Search text (English title)
     let resp = client
         .get(format!("{}/api/movies?search=inception", base_url))

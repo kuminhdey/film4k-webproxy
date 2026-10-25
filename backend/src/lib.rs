@@ -184,7 +184,13 @@ pub async fn list_movies(
     Query(query): Query<MoviesQuery>,
 ) -> Result<Json<MoviesResponse>, (StatusCode, String)> {
     let limit = query.limit.unwrap_or(24).clamp(1, 100);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let offset = query.offset.unwrap_or_else(|| {
+        if let Some(p) = query.page {
+            (p - 1).max(0) * limit
+        } else {
+            0
+        }
+    }).max(0);
 
     match state.db.get_movies(
         query.search.as_deref(),

@@ -154,6 +154,7 @@ pub struct MoviesQuery {
     pub movie_type: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub page: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
