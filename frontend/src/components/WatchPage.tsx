@@ -42,6 +42,20 @@ export interface SubtitleTrackOption {
   hlsTrackId?: number;
 }
 
+export interface SubtitleSettings {
+  fontSize: 'small' | 'medium' | 'large';
+  fontColor: string;
+  bgStyle: 'outline' | 'semi' | 'solid';
+}
+
+const DEFAULT_SUBTITLE_SETTINGS: SubtitleSettings = {
+  fontSize: 'medium',
+  fontColor: '#ffffff',
+  bgStyle: 'outline',
+};
+
+const SUBTITLE_SETTINGS_STORAGE_KEY = 'bofilm_subtitle_settings';
+
 interface WatchPageProps {
   slug: string;
   initialEpisode?: number;
@@ -78,6 +92,76 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [selectedCaption, setSelectedCaption] = useState<string>('Tắt');
   const [activeCues, setActiveCues] = useState<SubtitleCue[] | null>(null);
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string | null>(null);
+
+  // Subtitle appearance settings (Font size, Color, Background style)
+  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings>(() => {
+    try {
+      const saved = localStorage.getItem(SUBTITLE_SETTINGS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          fontSize: ['small', 'medium', 'large'].includes(parsed.fontSize) ? parsed.fontSize : 'medium',
+          fontColor: parsed.fontColor || '#ffffff',
+          bgStyle: ['outline', 'semi', 'solid'].includes(parsed.bgStyle) ? parsed.bgStyle : 'outline',
+        };
+      }
+    } catch (e) {
+      console.warn('Failed to parse subtitle settings from localStorage', e);
+    }
+    return DEFAULT_SUBTITLE_SETTINGS;
+  });
+
+  const updateSubtitleSettings = (updates: Partial<SubtitleSettings>) => {
+    setSubtitleSettings((prev) => {
+      const next = { ...prev, ...updates };
+      try {
+        localStorage.setItem(SUBTITLE_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+      } catch (e) {
+        console.warn('Failed to save subtitle settings to localStorage', e);
+      }
+      return next;
+    });
+  };
+
+  const subtitleFontSize = useMemo(() => {
+    switch (subtitleSettings.fontSize) {
+      case 'small':
+        return 'clamp(15px, 1.8vw, 18px)';
+      case 'large':
+        return 'clamp(24px, 3.2vw, 30px)';
+      case 'medium':
+      default:
+        return 'clamp(19px, 2.4vw, 24px)';
+    }
+  }, [subtitleSettings.fontSize]);
+
+  const subtitleBgProps = useMemo(() => {
+    switch (subtitleSettings.bgStyle) {
+      case 'solid':
+        return {
+          backgroundColor: '#000000',
+          padding: '4px 14px',
+          borderRadius: '6px',
+          textShadow: 'none',
+        };
+      case 'semi':
+        return {
+          backgroundColor: 'rgba(0, 0, 0, 0.60)',
+          padding: '4px 14px',
+          borderRadius: '6px',
+          textShadow: '0 1px 2px rgba(0, 0, 0, 0.85)',
+        };
+      case 'outline':
+      default:
+        return {
+          backgroundColor: 'transparent',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          textShadow:
+            '-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 3px 6px rgba(0,0,0,0.95), 0 0 6px #000',
+        };
+    }
+  }, [subtitleSettings.bgStyle]);
 
   // Audio state (Dynamic from movie.audio_tracks & hls.audioTracks)
   const [audioTracks, setAudioTracks] = useState<{ id: number | string; name: string }[]>([
@@ -1867,16 +1951,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             >
               <span
                 style={{
-                  color: '#ffffff',
-                  fontSize: 'clamp(20px, 2.4vw, 30px)',
+                  color: subtitleSettings.fontColor,
+                  fontSize: subtitleFontSize,
                   fontWeight: 650,
                   lineHeight: 1.35,
                   display: 'inline-block',
                   whiteSpace: 'pre-line',
-                  textShadow:
-                    '-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 3px 6px rgba(0,0,0,0.95), 0 0 6px #000',
                   letterSpacing: '0.01em',
                   fontFamily: 'var(--font-body, "Inter", -apple-system, BlinkMacSystemFont, sans-serif)',
+                  transition: 'all 0.15s ease',
+                  ...subtitleBgProps,
                 }}
                 dangerouslySetInnerHTML={{ __html: currentSubtitleText }}
               />
@@ -1893,8 +1977,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 position: 'absolute',
                 bottom: '72px',
                 right: '24px',
-                width: '280px',
-                maxHeight: 'min(420px, calc(100vh - 120px))',
+                width: settingsMenu === 'captions' ? '300px' : '280px',
+                maxHeight: 'min(480px, calc(100vh - 120px))',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
@@ -1907,6 +1991,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 boxShadow: '0 20px 48px -8px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.12)',
                 color: '#fff',
                 fontSize: '13.5px',
+                transition: 'width 0.2s ease',
               }}
             >
               {/* Main Settings Menu */}
@@ -2458,108 +2543,304 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '340px',
+                      maxHeight: '410px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '2px',
+                      gap: '4px',
                     }}
                   >
-                    {/* Off / Tắt option */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedCaption('Tắt');
-                        setSettingsMenu('main');
-                      }}
+                    {/* Bounded list of subtitle languages */}
+                    <div
+                      className="cinema-menu-scroll"
                       style={{
-                        minHeight: '40px',
-                        background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.10)' : 'none',
-                        border: 'none',
-                        color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light, #b4bdd0)',
-                        padding: '9px 14px',
+                        maxHeight: '135px',
+                        overflowY: 'auto',
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        cursor: 'pointer',
-                        borderRadius: '8px',
-                        fontWeight: selectedCaption === 'Tắt' ? 700 : 500,
-                        transition: 'background 0.15s ease, color 0.15s ease',
-                        width: '100%',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (selectedCaption !== 'Tắt') {
-                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-                          e.currentTarget.style.color = '#fff';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedCaption !== 'Tắt') {
-                          e.currentTarget.style.background = 'none';
-                          e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
-                        }
+                        flexDirection: 'column',
+                        gap: '2px',
+                        paddingRight: '2px',
                       }}
                     >
-                      <span>Tắt {availableSubtitleOptions.length === 0 ? '(Không có phụ đề)' : ''}</span>
-                      {selectedCaption === 'Tắt' && <Check size={16} color="#fff" />}
-                    </button>
+                      {/* Off / Tắt option */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCaption('Tắt')}
+                        style={{
+                          minHeight: '36px',
+                          background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.10)' : 'none',
+                          border: 'none',
+                          color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light, #b4bdd0)',
+                          padding: '7px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          borderRadius: '8px',
+                          fontWeight: selectedCaption === 'Tắt' ? 700 : 500,
+                          transition: 'background 0.15s ease, color 0.15s ease',
+                          width: '100%',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (selectedCaption !== 'Tắt') {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                            e.currentTarget.style.color = '#fff';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (selectedCaption !== 'Tắt') {
+                            e.currentTarget.style.background = 'none';
+                            e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                          }
+                        }}
+                      >
+                        <span>Tắt {availableSubtitleOptions.length === 0 ? '(Không có phụ đề)' : ''}</span>
+                        {selectedCaption === 'Tắt' && <Check size={16} color="#fff" />}
+                      </button>
 
-                    {/* Available Subtitle Tracks from DB, Episodes, and Manifest */}
-                    {availableSubtitleOptions.map((opt) => {
-                      const isSelected = selectedCaption === opt.label;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCaption(opt.label);
-                            setSettingsMenu('main');
-                          }}
+                      {/* Available Subtitle Tracks from DB, Episodes, and Manifest */}
+                      {availableSubtitleOptions.map((opt) => {
+                        const isSelected = selectedCaption === opt.label;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setSelectedCaption(opt.label)}
+                            style={{
+                              minHeight: '36px',
+                              background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
+                              border: 'none',
+                              color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
+                              padding: '7px 12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              cursor: 'pointer',
+                              borderRadius: '8px',
+                              fontWeight: isSelected ? 700 : 500,
+                              transition: 'background 0.15s ease, color 0.15s ease',
+                              width: '100%',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                                e.currentTarget.style.color = '#fff';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'none';
+                                e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
+                              }
+                            }}
+                          >
+                            <span
+                              style={{
+                                maxWidth: '210px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                textAlign: 'left',
+                              }}
+                            >
+                              {opt.label}
+                            </span>
+                            {isSelected && <Check size={16} color="#fff" style={{ flexShrink: 0 }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.08)', margin: '4px 4px 6px' }} />
+
+                    {/* 🎨 Tùy chỉnh hiển thị phụ đề */}
+                    <div style={{ padding: '2px 4px 6px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          color: '#e4b049',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <span>🎨 Tùy chỉnh hiển thị phụ đề</span>
+                      </div>
+
+                      {/* Kích thước chữ */}
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--muted-light, #b4bdd0)', marginBottom: '5px', fontWeight: 600 }}>
+                          Kích thước chữ
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                          {[
+                            { id: 'small', label: 'Nhỏ (18px)' },
+                            { id: 'medium', label: 'Chuẩn (24px)' },
+                            { id: 'large', label: 'Lớn (30px)' },
+                          ].map((sizeOpt) => {
+                            const isSelected = subtitleSettings.fontSize === sizeOpt.id;
+                            return (
+                              <button
+                                key={sizeOpt.id}
+                                type="button"
+                                onClick={() => updateSubtitleSettings({ fontSize: sizeOpt.id as any })}
+                                style={{
+                                  padding: '6px 2px',
+                                  fontSize: '11px',
+                                  fontWeight: isSelected ? 700 : 500,
+                                  color: isSelected ? '#0d1117' : 'var(--muted-light, #b4bdd0)',
+                                  background: isSelected ? '#e4b049' : 'rgba(255, 255, 255, 0.06)',
+                                  border: isSelected ? '1px solid #e4b049' : '1px solid rgba(255, 255, 255, 0.08)',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  textAlign: 'center',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {sizeOpt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Màu sắc chữ */}
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--muted-light, #b4bdd0)', marginBottom: '5px', fontWeight: 600 }}>
+                          Màu sắc chữ
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                          {[
+                            { color: '#ffffff', label: '⚪ Trắng' },
+                            { color: '#e4b049', label: '🥑 Vàng Bơ' },
+                            { color: '#aeea00', label: '🟡 Xanh Neon' },
+                          ].map((colorOpt) => {
+                            const isSelected = subtitleSettings.fontColor === colorOpt.color;
+                            return (
+                              <button
+                                key={colorOpt.color}
+                                type="button"
+                                onClick={() => updateSubtitleSettings({ fontColor: colorOpt.color })}
+                                style={{
+                                  padding: '6px 2px',
+                                  fontSize: '11px',
+                                  fontWeight: isSelected ? 700 : 500,
+                                  color: isSelected ? '#0d1117' : 'var(--muted-light, #b4bdd0)',
+                                  background: isSelected ? '#e4b049' : 'rgba(255, 255, 255, 0.06)',
+                                  border: isSelected ? '1px solid #e4b049' : '1px solid rgba(255, 255, 255, 0.08)',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  textAlign: 'center',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {colorOpt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Kiểu nền */}
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--muted-light, #b4bdd0)', marginBottom: '5px', fontWeight: 600 }}>
+                          Kiểu nền
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                          {[
+                            { id: 'outline', label: 'Viền đen' },
+                            { id: 'semi', label: 'Nền đen mờ' },
+                            { id: 'solid', label: 'Hộp đen đặc' },
+                          ].map((bgOpt) => {
+                            const isSelected = subtitleSettings.bgStyle === bgOpt.id;
+                            return (
+                              <button
+                                key={bgOpt.id}
+                                type="button"
+                                onClick={() => updateSubtitleSettings({ bgStyle: bgOpt.id as any })}
+                                style={{
+                                  padding: '6px 2px',
+                                  fontSize: '11px',
+                                  fontWeight: isSelected ? 700 : 500,
+                                  color: isSelected ? '#0d1117' : 'var(--muted-light, #b4bdd0)',
+                                  background: isSelected ? '#e4b049' : 'rgba(255, 255, 255, 0.06)',
+                                  border: isSelected ? '1px solid #e4b049' : '1px solid rgba(255, 255, 255, 0.08)',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  textAlign: 'center',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {bgOpt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Live Preview Box */}
+                      <div style={{ marginTop: '2px' }}>
+                        <div
                           style={{
-                            minHeight: '40px',
-                            background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
-                            border: 'none',
-                            color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
-                            padding: '9px 14px',
+                            fontSize: '11px',
+                            color: 'var(--muted-light, #b4bdd0)',
+                            marginBottom: '6px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Khung xem trước trực quan
+                        </div>
+                        <div
+                          style={{
+                            borderRadius: '8px',
+                            padding: '12px 8px',
+                            minHeight: '52px',
+                            background: 'radial-gradient(ellipse at center, #1e293b 0%, #0a0f1d 100%)',
+                            border: '1px solid rgba(255, 255, 255, 0.12)',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'space-between',
-                            cursor: 'pointer',
-                            borderRadius: '8px',
-                            fontWeight: isSelected ? 700 : 500,
-                            transition: 'background 0.15s ease, color 0.15s ease',
-                            width: '100%',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSelected) {
-                              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-                              e.currentTarget.style.color = '#fff';
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSelected) {
-                              e.currentTarget.style.background = 'none';
-                              e.currentTarget.style.color = 'var(--muted-light, #b4bdd0)';
-                            }
+                            justifyContent: 'center',
+                            textAlign: 'center',
+                            overflow: 'hidden',
                           }}
                         >
                           <span
                             style={{
-                              maxWidth: '210px',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              textAlign: 'left',
+                              color: subtitleSettings.fontColor,
+                              fontSize:
+                                subtitleSettings.fontSize === 'small'
+                                  ? '13px'
+                                  : subtitleSettings.fontSize === 'large'
+                                  ? '18px'
+                                  : '15px',
+                              fontWeight: 650,
+                              lineHeight: 1.35,
+                              display: 'inline-block',
+                              backgroundColor:
+                                subtitleSettings.bgStyle === 'solid'
+                                  ? '#000000'
+                                  : subtitleSettings.bgStyle === 'semi'
+                                  ? 'rgba(0, 0, 0, 0.60)'
+                                  : 'transparent',
+                              padding: subtitleSettings.bgStyle === 'outline' ? '2px 4px' : '3px 10px',
+                              borderRadius: subtitleSettings.bgStyle === 'outline' ? '0' : '4px',
+                              textShadow:
+                                subtitleSettings.bgStyle === 'outline'
+                                  ? '-1.2px -1.2px 0 #000, 1.2px -1.2px 0 #000, -1.2px 1.2px 0 #000, 1.2px 1.2px 0 #000, 0 2px 4px rgba(0,0,0,0.9)'
+                                  : '0 1px 2px rgba(0,0,0,0.8)',
+                              fontFamily: 'var(--font-body, "Inter", -apple-system, BlinkMacSystemFont, sans-serif)',
+                              transition: 'all 0.15s ease',
                             }}
                           >
-                            {opt.label}
+                            🥑 Phụ đề mẫu Bơ Film
                           </span>
-                          {isSelected && <Check size={16} color="#fff" style={{ flexShrink: 0 }} />}
-                        </button>
-                      );
-                    })}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
