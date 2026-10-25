@@ -97,3 +97,25 @@ export interface MoviesResponse {
   offset: number;
 }
 
+export interface AdminStats {
+  total_movies: number;
+  total_series: number;
+  total_single: number;
+  cached_m3u8_count: number;
+  crawler_is_running: boolean;
+  crawler_progress_percent: number;
+  crawler_processed: number;
+  crawler_total: number;
+  crawler_current_movie?: string;
+  crawler_last_run?: string;
+  crawler_last_status?: string;
+}
+
+export interface AdminLogEntry {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+

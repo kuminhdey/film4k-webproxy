@@ -840,6 +840,45 @@ async fn test_admin_crawler_control_and_stop() {
     assert_eq!(stop_resp.status(), StatusCode::OK);
     let stop_val: serde_json::Value = stop_resp.json().await.unwrap();
     assert_eq!(stop_val["success"], true);
+
+    // 4. Test frontend crawler start, update, warmup endpoints
+    let start_resp = client
+        .post(format!("{}/api/admin/crawler/start", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_val: serde_json::Value = start_resp.json().await.unwrap();
+    assert_eq!(start_val["mode"], "full");
+
+    let _ = client
+        .post(format!("{}/api/admin/crawler/stop", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await;
+
+    let update_resp = client
+        .post(format!("{}/api/admin/crawler/update", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(update_resp.status(), StatusCode::OK);
+
+    let _ = client
+        .post(format!("{}/api/admin/crawler/stop", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await;
+
+    let warmup_resp = client
+        .post(format!("{}/api/admin/crawler/warmup", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(warmup_resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -867,6 +906,25 @@ async fn test_admin_cache_clear() {
     assert_eq!(clear_slug_val["success"], true);
     assert_eq!(clear_slug_val["cleared_slug"], "test-admin-clear");
     assert!(!cache_dir.exists());
+
+    // 1b. Test clear via URL parameter /api/admin/cache/clear/:slug
+    let path_cache_dir = std::path::PathBuf::from("data/playlists/test-admin-path-clear");
+    tokio::fs::create_dir_all(&path_cache_dir).await.unwrap();
+    tokio::fs::write(path_cache_dir.join("master.m3u8"), "#EXTM3U\n").await.unwrap();
+    assert!(path_cache_dir.exists());
+
+    let clear_path_resp = client
+        .post(format!("{}/api/admin/cache/clear/test-admin-path-clear", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(clear_path_resp.status(), StatusCode::OK);
+    let clear_path_val: serde_json::Value = clear_path_resp.json().await.unwrap();
+    assert_eq!(clear_path_val["success"], true);
+    assert_eq!(clear_path_val["cleared_slug"], "test-admin-path-clear");
+    assert!(!path_cache_dir.exists());
 
     // 2. Clear all cache
     let cache_all_dir = std::path::PathBuf::from("data/playlists/all-test-clear");

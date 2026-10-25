@@ -67,9 +67,13 @@ pub fn create_app(state: AppState) -> Router {
         .route("/crawler/trigger", post(trigger_crawler))
         .route("/admin/login", post(admin::admin_login))
         .route("/admin/stats", get(admin::admin_stats))
+        .route("/admin/crawler/start", post(admin::admin_crawler_start))
+        .route("/admin/crawler/update", post(admin::admin_crawler_update))
+        .route("/admin/crawler/warmup", post(admin::admin_crawler_warmup))
         .route("/admin/crawler/trigger", post(admin::admin_crawler_trigger))
         .route("/admin/crawler/stop", post(admin::admin_crawler_stop))
-        .route("/admin/cache/clear", post(admin::admin_cache_clear));
+        .route("/admin/cache/clear", post(admin::admin_cache_clear))
+        .route("/admin/cache/clear/:slug", post(admin::admin_cache_clear_slug));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -111,6 +115,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/television", get(spa_page_handler))
         .route("/sports", get(spa_page_handler))
         .route("/mylist", get(spa_page_handler))
+        .route("/admin", get(spa_page_handler))
+        .route("/admin/*rest", get(spa_page_handler))
         .fallback_service(serve_dir)
         .layer(cors)
         .with_state(state)

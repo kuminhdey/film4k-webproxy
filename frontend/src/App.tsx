@@ -8,16 +8,24 @@ import { MovieRail } from './components/MovieRail';
 import { MobileNav } from './components/MobileNav';
 import { MovieDetailPage } from './components/MovieDetailPage';
 import { WatchPage } from './components/WatchPage';
+import { AdminDashboard } from './components/AdminDashboard';
 import { MovieSummary, MoviesResponse } from './types';
 
 interface RouteState {
-  view: 'home' | 'movie' | 'watch';
+  view: 'home' | 'movie' | 'watch' | 'admin';
   slug?: string;
   episode?: number;
 }
 
 function parseCurrentRoute(): RouteState {
   const path = window.location.pathname;
+
+  // Admin route: /admin or /admin/*
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    return {
+      view: 'admin',
+    };
+  }
 
   // Watch route: /watch/:slug or /watch/:slug/:ep
   const watchMatch = path.match(/^\/watch\/([^/]+)(?:\/(\d+))?/);
@@ -174,6 +182,10 @@ export const App: React.FC = () => {
       activeTab === 'sports' ||
       activeTab === 'favourites'
   );
+
+  if (route.view === 'admin') {
+    return <AdminDashboard onNavigate={navigateTo} />;
+  }
 
   return (
     <div className="shell">
