@@ -71,6 +71,10 @@ impl PlaylistCache {
         }
     }
 
+    pub fn base_dir(&self) -> PathBuf {
+        self.base_dir.clone()
+    }
+
     pub fn slug_dir(&self, slug: &str) -> PathBuf {
         self.base_dir.join(slug)
     }

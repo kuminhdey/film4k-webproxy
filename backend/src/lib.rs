@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod crawler;
 pub mod db;
 pub mod models;
@@ -16,6 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::error;
 
+pub use admin::AdminService;
 pub use playlist_cache::{
     handle_stream_file, handle_stream_master, PlaylistCache, PlaylistCacheService, StreamParams,
 };
@@ -29,6 +31,7 @@ pub struct AppState {
     pub db: Database,
     pub crawler: CrawlerService,
     pub playlist_cache: PlaylistCacheService,
+    pub admin: AdminService,
 }
 
 impl AppState {
@@ -37,11 +40,17 @@ impl AppState {
             db,
             crawler,
             playlist_cache: PlaylistCacheService::default(),
+            admin: AdminService::new(),
         }
     }
 
     pub fn with_playlist_cache(mut self, playlist_cache: PlaylistCacheService) -> Self {
         self.playlist_cache = playlist_cache;
+        self
+    }
+
+    pub fn with_admin(mut self, admin: AdminService) -> Self {
+        self.admin = admin;
         self
     }
 }
@@ -55,7 +64,12 @@ pub fn create_app(state: AppState) -> Router {
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
         .route("/stream/:slug/:file", get(handle_stream_file))
         .route("/crawler/status", get(get_crawler_status))
-        .route("/crawler/trigger", post(trigger_crawler));
+        .route("/crawler/trigger", post(trigger_crawler))
+        .route("/admin/login", post(admin::admin_login))
+        .route("/admin/stats", get(admin::admin_stats))
+        .route("/admin/crawler/trigger", post(admin::admin_crawler_trigger))
+        .route("/admin/crawler/stop", post(admin::admin_crawler_stop))
+        .route("/admin/cache/clear", post(admin::admin_cache_clear));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

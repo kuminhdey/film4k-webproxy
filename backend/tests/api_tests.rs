@@ -734,3 +734,155 @@ https://p16-ad-site-sign-sg.tiktokcdn.com/chunk_audio_01.image?lk3s=6d71dd51&x-e
     // Clean up test directory
     let _ = tokio::fs::remove_dir_all(&playlist_dir).await;
 }
+
+#[tokio::test]
+async fn test_admin_login_and_auth_middleware() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Login with invalid password
+    let bad_login = client
+        .post(format!("{}/api/admin/login", base_url))
+        .json(&serde_json::json!({
+            "password": "wrong_password_123"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(bad_login.status(), StatusCode::UNAUTHORIZED);
+    let bad_val: serde_json::Value = bad_login.json().await.unwrap();
+    assert_eq!(bad_val["success"], false);
+
+    // 2. Login with valid password (default 'film4k@admin2026')
+    let good_login = client
+        .post(format!("{}/api/admin/login", base_url))
+        .json(&serde_json::json!({
+            "password": "film4k@admin2026"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(good_login.status(), StatusCode::OK);
+    let good_val: serde_json::Value = good_login.json().await.unwrap();
+    assert_eq!(good_val["success"], true);
+    let token = good_val["token"].as_str().expect("Token should be present");
+    assert!(token.starts_with("adm_"));
+
+    // 3. GET /api/admin/stats without authentication -> 401 Unauthorized
+    let unauth_stats = client
+        .get(format!("{}/api/admin/stats", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_stats.status(), StatusCode::UNAUTHORIZED);
+
+    // 4. GET /api/admin/stats with Bearer token -> 200 OK
+    let auth_stats = client
+        .get(format!("{}/api/admin/stats", base_url))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(auth_stats.status(), StatusCode::OK);
+    let stats_val: serde_json::Value = auth_stats.json().await.unwrap();
+    assert_eq!(stats_val["success"], true);
+    assert!(stats_val["total_movies"].as_i64().unwrap() >= 2);
+    assert!(stats_val["total_series"].as_i64().unwrap() >= 1);
+    assert!(stats_val["crawler_status"]["is_running"].is_boolean());
+    assert!(stats_val["disk_usage"]["human_readable"].is_string());
+
+    // 5. GET /api/admin/stats with X-Admin-Key header -> 200 OK
+    let key_stats = client
+        .get(format!("{}/api/admin/stats", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(key_stats.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_admin_crawler_control_and_stop() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Unauthenticated trigger -> 401 Unauthorized
+    let unauth = client
+        .post(format!("{}/api/admin/crawler/trigger", base_url))
+        .json(&serde_json::json!({ "mode": "latest" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. Trigger crawler via X-Admin-Key
+    let trigger_resp = client
+        .post(format!("{}/api/admin/crawler/trigger", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .json(&serde_json::json!({ "mode": "latest" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(trigger_resp.status(), StatusCode::OK);
+    let trigger_val: serde_json::Value = trigger_resp.json().await.unwrap();
+    assert_eq!(trigger_val["mode"], "latest");
+
+    // 3. Stop crawler via X-Admin-Key
+    let stop_resp = client
+        .post(format!("{}/api/admin/crawler/stop", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stop_resp.status(), StatusCode::OK);
+    let stop_val: serde_json::Value = stop_resp.json().await.unwrap();
+    assert_eq!(stop_val["success"], true);
+}
+
+#[tokio::test]
+async fn test_admin_cache_clear() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    // Prepare mock cache directory
+    let cache_dir = std::path::PathBuf::from("data/playlists/test-admin-clear");
+    tokio::fs::create_dir_all(&cache_dir).await.unwrap();
+    tokio::fs::write(cache_dir.join("master.m3u8"), "#EXTM3U\n").await.unwrap();
+    assert!(cache_dir.exists());
+
+    // 1. Clear specific slug cache
+    let clear_slug_resp = client
+        .post(format!("{}/api/admin/cache/clear", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .json(&serde_json::json!({ "slug": "test-admin-clear" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(clear_slug_resp.status(), StatusCode::OK);
+    let clear_slug_val: serde_json::Value = clear_slug_resp.json().await.unwrap();
+    assert_eq!(clear_slug_val["success"], true);
+    assert_eq!(clear_slug_val["cleared_slug"], "test-admin-clear");
+    assert!(!cache_dir.exists());
+
+    // 2. Clear all cache
+    let cache_all_dir = std::path::PathBuf::from("data/playlists/all-test-clear");
+    tokio::fs::create_dir_all(&cache_all_dir).await.unwrap();
+    tokio::fs::write(cache_all_dir.join("v0.m3u8"), "#EXTINF\n").await.unwrap();
+
+    let clear_all_resp = client
+        .post(format!("{}/api/admin/cache/clear", base_url))
+        .header("X-Admin-Key", "film4k@admin2026")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(clear_all_resp.status(), StatusCode::OK);
+    let clear_all_val: serde_json::Value = clear_all_resp.json().await.unwrap();
+    assert_eq!(clear_all_val["success"], true);
+    assert!(!cache_all_dir.exists());
+}

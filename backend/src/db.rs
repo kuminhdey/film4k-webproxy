@@ -491,6 +491,20 @@ impl Database {
             Ok(false)
         }
     }
+
+    pub fn get_stats(&self) -> anyhow::Result<(i64, i64, i64)> {
+        let conn = self.conn.lock().unwrap();
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM movies", [], |r| r.get(0))
+            .unwrap_or(0);
+        let movies: i64 = conn
+            .query_row("SELECT COUNT(*) FROM movies WHERE movie_type = 'movie'", [], |r| r.get(0))
+            .unwrap_or(0);
+        let series: i64 = conn
+            .query_row("SELECT COUNT(*) FROM movies WHERE movie_type = 'tv'", [], |r| r.get(0))
+            .unwrap_or(0);
+        Ok((total, movies, series))
+    }
 }
 
 
