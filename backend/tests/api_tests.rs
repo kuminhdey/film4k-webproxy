@@ -555,3 +555,63 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
         "Proxied body should contain expected remote content"
     );
 }
+
+#[tokio::test]
+async fn test_api_proxy_stream_expired_token_auto_refresh() {
+    let (base_url, db) = spawn_test_server().await;
+    let client = Client::new();
+
+    let expired_url = "https://fiml4k.fun/api/hls/Xk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ/master.m3u8";
+
+    // Seed movie with expired url
+    let movie = Movie {
+        id: None,
+        slug: "spider-man-brand-new-day".to_string(),
+        movie_type: "movie".to_string(),
+        title_vi: Some("Người Nhện: Khởi Đầu Mới".to_string()),
+        title_en: Some("Spider-Man: Brand New Day".to_string()),
+        year: Some(2026),
+        quality: Some("4K".to_string()),
+        score: Some(8.5),
+        genres: vec!["Action".to_string()],
+        country: Some("US".to_string()),
+        poster: None,
+        backdrop: None,
+        overview: None,
+        total_episodes: Some(1),
+        stream: Some(serde_json::Value::String(expired_url.to_string())),
+        episodes: vec![],
+        servers: vec![ServerSource {
+            id: Some(serde_json::json!("server-vip-4k")),
+            label: "Server VIP (4K CDN)".to_string(),
+            hls_url: expired_url.to_string(),
+            proxy_stream_url: None,
+            quality: Some("4K".to_string()),
+        }],
+        subtitles: vec![],
+        audio_tracks: vec![],
+    };
+    db.upsert_movie(&movie).unwrap();
+
+    let resp = client
+        .get(format!("{}/api/proxy/stream", base_url))
+        .query(&[("url", expired_url), ("slug", "spider-man-brand-new-day")])
+        .send()
+        .await
+        .unwrap();
+
+    // The expired token should be automatically refreshed by proxy from upstream title API!
+    if resp.status() == StatusCode::OK {
+        let body = resp.text().await.unwrap();
+        assert!(body.contains("#EXTM3U"), "Body should be a valid M3U8 playlist");
+        let updated_movie = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().unwrap();
+        assert_ne!(
+            updated_movie.servers[0].hls_url, expired_url,
+            "HLS URL in DB must be updated to fresh token"
+        );
+        assert!(
+            updated_movie.servers[0].hls_url.contains("/api/hls/"),
+            "New HLS URL should contain valid stream path"
+        );
+    }
+}

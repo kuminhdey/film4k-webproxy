@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::Query,
+    extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -8,8 +8,10 @@ use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
 use std::sync::LazyLock;
-use tracing::error;
+use tracing::{error, info, warn};
 use url::Url;
+
+use crate::AppState;
 
 static URI_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"URI="([^"]+)""#).unwrap());
 
@@ -18,6 +20,8 @@ pub struct ProxyQuery {
     pub url: String,
     #[serde(default)]
     pub keep_cdn: Option<String>,
+    #[serde(default)]
+    pub slug: Option<String>,
 }
 
 pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
@@ -135,7 +139,76 @@ pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn:
     new_lines.join("\n")
 }
 
+pub fn create_m3u8_response(rewritten: String) -> Response {
+    let mut resp = Response::new(Body::from(rewritten));
+    let headers_mut = resp.headers_mut();
+    headers_mut.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.apple.mpegurl; charset=utf-8"),
+    );
+    headers_mut.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers_mut.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, HEAD, OPTIONS"),
+    );
+    headers_mut.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    headers_mut.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+    );
+    resp
+}
+
+/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug
+pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
+    let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
+
+    let resp = client
+        .get(&title_api_url)
+        .header(header::REFERER, "https://film4k.net/")
+        .header(
+            header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+        )
+        .header(header::ACCEPT, "application/json, text/plain, */*")
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        warn!("Upstream title API returned status {} for slug {}", resp.status(), slug);
+        return None;
+    }
+
+    let json_val: serde_json::Value = resp.json().await.ok()?;
+    let hls_path = json_val
+        .get("movie")
+        .and_then(|m| m.get("hlsUrl"))
+        .and_then(|h| h.as_str())?;
+
+    let full_hls = if hls_path.starts_with('/') {
+        format!("https://fiml4k.fun{}", hls_path)
+    } else {
+        hls_path.to_string()
+    };
+
+    Some(full_hls)
+}
+
 pub async fn handle_stream_proxy(
+    State(state): State<AppState>,
     Query(query): Query<ProxyQuery>,
     headers: HeaderMap,
 ) -> Response {
@@ -154,6 +227,27 @@ pub async fn handle_stream_proxy(
         .as_deref()
         .map(|v| v == "1" || v == "true")
         .unwrap_or(true); // Default to keep_cdn=true for high speed direct CDN
+
+    let detected_slug: Option<String> = query.slug.clone().or_else(|| {
+        // 1. From Referer header: e.g. /watch/{slug} or /movie/{slug}
+        if let Some(ref_val) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) {
+            if let Some(pos) = ref_val.find("/watch/") {
+                let rest = &ref_val[pos + 7..];
+                let slug_candidate = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or("");
+                if !slug_candidate.is_empty() {
+                    return Some(slug_candidate.to_string());
+                }
+            } else if let Some(pos) = ref_val.find("/movie/") {
+                let rest = &ref_val[pos + 7..];
+                let slug_candidate = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or("");
+                if !slug_candidate.is_empty() {
+                    return Some(slug_candidate.to_string());
+                }
+            }
+        }
+        // 2. From Database search by token / stream URL
+        state.db.find_slug_by_stream_url(target_str)
+    });
 
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -207,33 +301,69 @@ pub async fn handle_stream_proxy(
         || content_type.contains("application/x-mpegURL")
         || content_type.contains("vnd.apple.mpegurl");
 
-    if is_m3u8 {
+    if is_m3u8 || status == StatusCode::FORBIDDEN {
         match upstream_resp.text().await {
             Ok(body_text) => {
+                let is_expired = status == StatusCode::FORBIDDEN
+                    || body_text.contains("Invalid or expired token")
+                    || body_text.contains("expired token");
+
+                if is_expired {
+                    warn!(
+                        "Upstream stream token expired (status: {}, slug: {:?}, url: {}). Auto-refreshing...",
+                        status, detected_slug, target_str
+                    );
+                    if let Some(ref slug) = detected_slug {
+                        if let Some(fresh_hls) = fetch_upstream_title_hls(slug).await {
+                            if fresh_hls != target_str {
+                                info!(
+                                    "Successfully retrieved fresh stream token for {}: {} -> {}",
+                                    slug, target_str, fresh_hls
+                                );
+                                let _ = state.db.update_movie_stream(slug, &fresh_hls);
+
+                                if let Ok(fresh_url) = Url::parse(&fresh_hls) {
+                                    let retry_req = client
+                                        .get(fresh_url.as_str())
+                                        .header(header::REFERER, "https://film4k.net/")
+                                        .header(
+                                            header::USER_AGENT,
+                                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+                                        )
+                                        .header(header::ACCEPT, "*/*");
+
+                                    if let Ok(retry_resp) = retry_req.send().await {
+                                        if retry_resp.status().is_success() {
+                                            if let Ok(fresh_body) = retry_resp.text().await {
+                                                let rewritten = rewrite_m3u8(
+                                                    &fresh_body,
+                                                    &fresh_url,
+                                                    "/api/proxy/stream",
+                                                    keep_cdn,
+                                                );
+                                                return create_m3u8_response(rewritten);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if status == StatusCode::FORBIDDEN {
+                        return (StatusCode::FORBIDDEN, body_text).into_response();
+                    }
+                }
+
+                if is_m3u8 && status.is_success() {
+                    let rewritten = rewrite_m3u8(&body_text, &parsed_url, "/api/proxy/stream", keep_cdn);
+                    return create_m3u8_response(rewritten);
+                } else if !status.is_success() {
+                    return (status, body_text).into_response();
+                }
+
                 let rewritten = rewrite_m3u8(&body_text, &parsed_url, "/api/proxy/stream", keep_cdn);
-                let mut resp = Response::new(Body::from(rewritten));
-                let headers_mut = resp.headers_mut();
-                headers_mut.insert(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/vnd.apple.mpegurl; charset=utf-8"),
-                );
-                headers_mut.insert(
-                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                    HeaderValue::from_static("*"),
-                );
-                headers_mut.insert(
-                    header::ACCESS_CONTROL_ALLOW_METHODS,
-                    HeaderValue::from_static("GET, HEAD, OPTIONS"),
-                );
-                headers_mut.insert(
-                    header::ACCESS_CONTROL_ALLOW_HEADERS,
-                    HeaderValue::from_static("*"),
-                );
-                headers_mut.insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-                );
-                resp
+                create_m3u8_response(rewritten)
             }
             Err(err) => {
                 error!("Failed to read m3u8 upstream body: {}", err);

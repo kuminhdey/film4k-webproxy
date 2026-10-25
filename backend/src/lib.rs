@@ -33,8 +33,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/movies/:slug", get(get_movie))
         .route("/proxy/stream", get(handle_stream_proxy))
         .route("/crawler/status", get(get_crawler_status))
-        .route("/crawler/trigger", post(trigger_crawler))
-        .with_state(state.clone());
+        .route("/crawler/trigger", post(trigger_crawler));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -78,6 +77,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/mylist", get(spa_page_handler))
         .fallback_service(serve_dir)
         .layer(cors)
+        .with_state(state)
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -85,6 +85,7 @@ pub fn create_app(state: AppState) -> Router {
 pub struct RootQuery {
     pub url: Option<String>,
     pub keep_cdn: Option<String>,
+    pub slug: Option<String>,
 }
 
 pub async fn health_check() -> &'static str {
@@ -118,6 +119,7 @@ pub async fn spa_page_handler() -> axum::response::Response {
 }
 
 pub async fn root_handler(
+    State(state): State<AppState>,
     Query(query): Query<RootQuery>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
@@ -126,8 +128,9 @@ pub async fn root_handler(
             let proxy_query = proxy::ProxyQuery {
                 url: url.clone(),
                 keep_cdn: query.keep_cdn.clone(),
+                slug: query.slug.clone(),
             };
-            return handle_stream_proxy(Query(proxy_query), headers).await.into_response();
+            return handle_stream_proxy(State(state), Query(proxy_query), headers).await.into_response();
         }
     }
 
