@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
-import { saveWatchProgress, getMovieProgress } from '../utils/watchProgress';
+import { saveWatchProgress, getMovieProgress, removeWatchProgress } from '../utils/watchProgress';
 import {
   getSubtitleForTime,
   findCueBinarySearch,
@@ -135,8 +135,73 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [countdown, setCountdown] = useState<number | null>(null);
   const [resumeToast, setResumeToast] = useState<string | null>(null);
   const hasResumedRef = useRef<boolean>(false);
+  const hasShownResumeToastRef = useRef<boolean>(false);
+  const resumeToastTimerRef = useRef<number | null>(null);
   const lastSavedTimeRef = useRef<number>(0);
   const countdownDismissedRef = useRef<boolean>(false);
+
+  // Check if URL specifies start=0 or restart=1
+  const isStartFromBeginning = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('start') === '0' || params.get('restart') === '1';
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Show Avocado Resume Toast notice
+  const applyResumeToast = (timeInSeconds: number) => {
+    if (hasShownResumeToastRef.current || isStartFromBeginning) return;
+    hasShownResumeToastRef.current = true;
+    const mins = Math.floor(timeInSeconds / 60);
+    const secs = Math.floor(timeInSeconds % 60);
+    const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    setResumeToast(`🥑 Đang tiếp tục phát từ phút ${timeFormatted}`);
+    if (resumeToastTimerRef.current) {
+      clearTimeout(resumeToastTimerRef.current);
+    }
+    resumeToastTimerRef.current = window.setTimeout(() => {
+      setResumeToast(null);
+    }, 6000);
+  };
+
+  // Immediate restart playback from 00:00
+  const handleRestartFromBeginning = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+    }
+    setCurrentTime(0);
+    lastSavedTimeRef.current = 0;
+    if (resumeToastTimerRef.current) {
+      clearTimeout(resumeToastTimerRef.current);
+      resumeToastTimerRef.current = null;
+    }
+    setResumeToast(null);
+    removeWatchProgress(movie?.slug || slug, currentEpisode?.episode);
+  };
+
+  // Immediate save progress helper (Threshold: >= 10s)
+  const flushSaveProgress = () => {
+    if (videoRef.current && (movie || slug)) {
+      const cur = videoRef.current.currentTime || 0;
+      const dur = videoRef.current.duration || duration || 0;
+      if (cur < 10) return;
+      lastSavedTimeRef.current = cur;
+      saveWatchProgress({
+        slug: movie?.slug || slug,
+        title: movie?.title_vi || movie?.title_en || 'Phim',
+        title_en: movie?.title_en,
+        poster: movie?.poster,
+        backdrop: movie?.backdrop,
+        episode: currentEpisode?.episode,
+        currentTime: cur,
+        duration: dur,
+        movie_type: movie?.type,
+      });
+    }
+  };
 
   // Compute next episode if series
   const nextEpisode = useMemo(() => {
@@ -161,9 +226,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   // Reset resume and countdown flags when switching episode or movie
   useEffect(() => {
     hasResumedRef.current = false;
+    hasShownResumeToastRef.current = false;
     lastSavedTimeRef.current = 0;
     countdownDismissedRef.current = false;
     setCountdown(null);
+    if (resumeToastTimerRef.current) {
+      clearTimeout(resumeToastTimerRef.current);
+      resumeToastTimerRef.current = null;
+    }
+    setResumeToast(null);
   }, [slug, currentEpisode?.episode]);
 
   // Countdown timer effect for Auto Next Episode
@@ -184,29 +255,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     return () => clearTimeout(timer);
   }, [countdown, nextEpisode]);
 
-  // Save progress on beforeunload and component unmount
+  // Save progress immediately on beforeunload and component unmount
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (videoRef.current && movie && (videoRef.current.duration || duration) > 0) {
-        saveWatchProgress({
-          slug: movie.slug,
-          title: movie.title_vi || movie.title_en || 'Phim',
-          title_en: movie.title_en,
-          poster: movie.poster,
-          backdrop: movie.backdrop,
-          episode: currentEpisode?.episode,
-          currentTime: videoRef.current.currentTime,
-          duration: videoRef.current.duration || duration,
-          movie_type: movie.type,
-        });
-      }
+      flushSaveProgress();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      handleBeforeUnload();
+      flushSaveProgress();
     };
-  }, [movie, currentEpisode, duration]);
+  }, [movie, slug, currentEpisode, duration]);
 
   // Click-outside listener to close settings popup
   useEffect(() => {
@@ -884,10 +943,29 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           }));
           setHlsSubtitleTracks(subs);
         }
+
+        // Seek on MANIFEST_PARSED: handle server switch or resume playback
+        let targetSeekTime = 0;
         if (savedSeekTimeRef.current > 0) {
-          video.currentTime = savedSeekTimeRef.current;
+          targetSeekTime = savedSeekTimeRef.current;
           savedSeekTimeRef.current = 0;
+        } else if (!hasResumedRef.current && !isStartFromBeginning) {
+          const saved = getMovieProgress(slug, currentEpisode?.episode);
+          const dur = video.duration || duration || 0;
+          if (saved && saved.currentTime >= 10 && (dur <= 0 || saved.currentTime < dur * 0.95)) {
+            targetSeekTime = saved.currentTime;
+          }
         }
+
+        if (targetSeekTime > 0) {
+          video.currentTime = targetSeekTime;
+          setCurrentTime(targetSeekTime);
+          if (targetSeekTime >= 10 && !isStartFromBeginning) {
+            applyResumeToast(targetSeekTime);
+          }
+          hasResumedRef.current = true;
+        }
+
         video.play().catch(() => {});
       });
 
@@ -1070,20 +1148,22 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       setBufferedPercent(Math.min(100, (bufEnd / total) * 100));
     }
 
-    // Throttle save watch progress every 5 seconds
-    if (Math.abs(cur - lastSavedTimeRef.current) >= 5 && dur > 0 && movie) {
-      lastSavedTimeRef.current = cur;
-      saveWatchProgress({
-        slug: movie.slug,
-        title: movie.title_vi || movie.title_en || 'Phim',
-        title_en: movie.title_en,
-        poster: movie.poster,
-        backdrop: movie.backdrop,
-        episode: currentEpisode?.episode,
-        currentTime: cur,
-        duration: dur,
-        movie_type: movie.type,
-      });
+    // Throttle save watch progress every 5 seconds (Threshold >= 10s)
+    if (cur >= 10 && dur > 0 && (movie || slug)) {
+      if (lastSavedTimeRef.current === 0 || Math.abs(cur - lastSavedTimeRef.current) >= 5) {
+        lastSavedTimeRef.current = cur;
+        saveWatchProgress({
+          slug: movie?.slug || slug,
+          title: movie?.title_vi || movie?.title_en || 'Phim',
+          title_en: movie?.title_en,
+          poster: movie?.poster,
+          backdrop: movie?.backdrop,
+          episode: currentEpisode?.episode,
+          currentTime: cur,
+          duration: dur,
+          movie_type: movie?.type,
+        });
+      }
     }
 
     // Auto next episode countdown trigger (35s before end of video)
@@ -1113,20 +1193,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       }
 
-      // Resume playback check
-      if (!hasResumedRef.current) {
-        hasResumedRef.current = true;
+      // Resume playback check: seek if not resumed yet or if video.currentTime reset to 0
+      if (!isStartFromBeginning) {
         const saved = getMovieProgress(slug, currentEpisode?.episode);
-        if (saved && saved.currentTime > 10 && saved.currentTime < dur * 0.95) {
-          videoRef.current.currentTime = saved.currentTime;
-          setCurrentTime(saved.currentTime);
-          const mins = Math.floor(saved.currentTime / 60);
-          const secs = Math.floor(saved.currentTime % 60);
-          const timeFormatted = `${mins}:${String(secs).padStart(2, '0')}`;
-          setResumeToast(`🥑 Đang tiếp tục phát từ phút ${timeFormatted}`);
-          setTimeout(() => {
-            setResumeToast(null);
-          }, 4000);
+        if (saved && saved.currentTime >= 10 && (dur <= 0 || saved.currentTime < dur * 0.95)) {
+          if (!hasResumedRef.current || videoRef.current.currentTime < 1) {
+            videoRef.current.currentTime = saved.currentTime;
+            setCurrentTime(saved.currentTime);
+            applyResumeToast(saved.currentTime);
+            hasResumedRef.current = true;
+          }
         }
       }
     }
@@ -1137,36 +1213,27 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     if (autoNextEnabled && nextEpisode && !countdownDismissedRef.current) {
       setCountdown(10);
     }
-    if (movie && videoRef.current && videoRef.current.duration > 0) {
-      saveWatchProgress({
-        slug: movie.slug,
-        title: movie.title_vi || movie.title_en || 'Phim',
-        title_en: movie.title_en,
-        poster: movie.poster,
-        backdrop: movie.backdrop,
-        episode: currentEpisode?.episode,
-        currentTime: videoRef.current.duration,
-        duration: videoRef.current.duration,
-        movie_type: movie.type,
-      });
+    if (videoRef.current && (movie || slug)) {
+      const dur = videoRef.current.duration || duration || 0;
+      if (dur >= 10) {
+        saveWatchProgress({
+          slug: movie?.slug || slug,
+          title: movie?.title_vi || movie?.title_en || 'Phim',
+          title_en: movie?.title_en,
+          poster: movie?.poster,
+          backdrop: movie?.backdrop,
+          episode: currentEpisode?.episode,
+          currentTime: dur,
+          duration: dur,
+          movie_type: movie?.type,
+        });
+      }
     }
   };
 
   const handlePause = () => {
     setIsPlaying(false);
-    if (movie && videoRef.current && videoRef.current.duration > 0) {
-      saveWatchProgress({
-        slug: movie.slug,
-        title: movie.title_vi || movie.title_en || 'Phim',
-        title_en: movie.title_en,
-        poster: movie.poster,
-        backdrop: movie.backdrop,
-        episode: currentEpisode?.episode,
-        currentTime: videoRef.current.currentTime,
-        duration: videoRef.current.duration,
-        movie_type: movie.type,
-      });
-    }
+    flushSaveProgress();
   };
 
   const handleVideoClick = () => {
@@ -1536,7 +1603,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             playsInline
           />
 
-          {/* Resume Playback Toast */}
+          {/* Resume Playback Toast with Restart Button */}
           {resumeToast && (
             <div
               style={{
@@ -1544,25 +1611,56 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 top: '20px',
                 left: '50%',
                 transform: 'translateX(-50%)',
-                background: 'rgba(10, 21, 12, 0.94)',
+                background: 'rgba(10, 21, 12, 0.95)',
                 backdropFilter: 'blur(16px)',
                 WebkitBackdropFilter: 'blur(16px)',
                 border: '1px solid #aeea00',
                 borderRadius: '30px',
-                padding: '8px 22px',
+                padding: '6px 10px 6px 18px',
                 color: '#fcfdf7',
                 fontSize: '13.5px',
                 fontWeight: 700,
                 zIndex: 35,
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                gap: '12px',
                 boxShadow: '0 8px 24px rgba(0,0,0,0.8), 0 0 16px rgba(174, 234, 0, 0.35)',
-                pointerEvents: 'none',
+                pointerEvents: 'auto',
                 animation: 'fadeIn 0.25s ease',
               }}
             >
               <span>{resumeToast}</span>
+              <button
+                type="button"
+                onClick={handleRestartFromBeginning}
+                style={{
+                  background: 'rgba(174, 234, 0, 0.16)',
+                  border: '1px solid rgba(174, 234, 0, 0.55)',
+                  color: '#aeea00',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  transition: 'all 0.15s ease',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#aeea00';
+                  e.currentTarget.style.color = '#0a150c';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(174, 234, 0, 0.16)';
+                  e.currentTarget.style.color = '#aeea00';
+                }}
+                title="Tua lại xem từ đầu (00:00)"
+              >
+                <span>↺</span>
+                <span>Xem lại từ đầu</span>
+              </button>
             </div>
           )}
 

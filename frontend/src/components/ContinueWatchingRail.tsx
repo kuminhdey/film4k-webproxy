@@ -17,8 +17,17 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
   useEffect(() => {
     loadItems();
     const handleUpdate = () => loadItems();
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'bofilm_continue_watching') {
+        loadItems();
+      }
+    };
     window.addEventListener('bofilm_progress_updated', handleUpdate);
-    return () => window.removeEventListener('bofilm_progress_updated', handleUpdate);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('bofilm_progress_updated', handleUpdate);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   if (items.length === 0) {
@@ -36,10 +45,20 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
     e.stopPropagation();
     e.preventDefault();
     removeWatchProgress(item.slug, item.episode);
+    setItems((prev) =>
+      prev.filter((it) => !(it.slug === item.slug && (item.episode === undefined || it.episode === item.episode)))
+    );
   };
 
   return (
-    <section className="row-sec continue-watching-section" style={{ marginTop: '28px', marginBottom: '16px' }}>
+    <section
+      className="row-sec continue-watching-section"
+      style={{
+        marginTop: '28px',
+        marginBottom: '16px',
+        animation: 'fadeIn 0.25s ease',
+      }}
+    >
       <div
         className="head"
         style={{

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bookmark, Check } from 'lucide-react';
 import { Movie, MovieSummary } from '../types';
 import { isInMyList, toggleMyList } from '../utils/myList';
+import { getMovieProgress, removeWatchProgress, WatchProgressItem } from '../utils/watchProgress';
 
 interface MovieDetailPageProps {
   slug: string;
@@ -15,6 +16,27 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
   const [error, setError] = useState<string | null>(null);
   const [inMyList, setInMyList] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [savedProgress, setSavedProgress] = useState<WatchProgressItem | null>(null);
+
+  useEffect(() => {
+    const checkProgress = () => {
+      if (slug) {
+        const p = getMovieProgress(slug);
+        if (p && p.currentTime >= 10) {
+          setSavedProgress(p);
+        } else {
+          setSavedProgress(null);
+        }
+      }
+    };
+    checkProgress();
+    window.addEventListener('bofilm_progress_updated', checkProgress);
+    window.addEventListener('storage', checkProgress);
+    return () => {
+      window.removeEventListener('bofilm_progress_updated', checkProgress);
+      window.removeEventListener('storage', checkProgress);
+    };
+  }, [slug]);
 
   useEffect(() => {
     if (movie) {
@@ -375,24 +397,91 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
 
             {/* Action CTA Buttons */}
             <div className="title-cta" style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => onNavigate(`/watch/${movie.slug}`)}
-                style={{
-                  padding: '12px 28px',
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                }}
-              >
-                <span>▶</span>
-                <span>Phát ngay (4K UHD)</span>
-              </button>
+              {savedProgress ? (
+                <>
+                  {(() => {
+                    const mins = Math.floor(savedProgress.currentTime / 60);
+                    const secs = Math.floor(savedProgress.currentTime % 60);
+                    const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                    const continuePath =
+                      savedProgress.episode && savedProgress.episode > 1
+                        ? `/watch/${movie.slug}/${savedProgress.episode}`
+                        : `/watch/${movie.slug}`;
+                    const restartPath =
+                      savedProgress.episode && savedProgress.episode > 1
+                        ? `/watch/${movie.slug}/${savedProgress.episode}?start=0`
+                        : `/watch/${movie.slug}?start=0`;
+
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => onNavigate(continuePath)}
+                          style={{
+                            padding: '12px 26px',
+                            fontSize: '15px',
+                            fontWeight: 700,
+                            borderRadius: '12px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                          }}
+                        >
+                          <span>▶</span>
+                          <span>Tiếp tục xem (phút {timeFormatted})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => {
+                            removeWatchProgress(movie.slug, savedProgress.episode);
+                            onNavigate(restartPath);
+                          }}
+                          style={{
+                            padding: '12px 20px',
+                            fontSize: '14px',
+                            fontWeight: 700,
+                            borderRadius: '12px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            borderColor: '#aeea00',
+                            color: '#aeea00',
+                            background: 'rgba(174, 234, 0, 0.08)',
+                          }}
+                          title="Xem lại phim từ đầu (00:00)"
+                        >
+                          <span>↺</span>
+                          <span>Xem từ đầu</span>
+                        </button>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onNavigate(`/watch/${movie.slug}`)}
+                  style={{
+                    padding: '12px 28px',
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    borderRadius: '12px',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <span>▶</span>
+                  <span>Phát ngay (4K UHD)</span>
+                </button>
+              )}
 
               <button
                 type="button"

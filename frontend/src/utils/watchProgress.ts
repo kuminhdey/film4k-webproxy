@@ -28,7 +28,9 @@ export function getWatchProgress(): WatchProgressItem[] {
     if (!raw) return [];
     const list: WatchProgressItem[] = JSON.parse(raw);
     if (!Array.isArray(list)) return [];
-    return list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return list
+      .filter((item) => item && typeof item.currentTime === 'number' && item.currentTime >= 10)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   } catch (err) {
     console.error('Error reading watch progress from localStorage:', err);
     return [];
@@ -43,8 +45,8 @@ export function getMovieProgress(slug: string, episode?: number): WatchProgressI
   return (
     list.find((item) => {
       if (item.slug !== slug) return false;
-      if (episode !== undefined && item.episode !== undefined) {
-        return item.episode === episode;
+      if (episode !== undefined) {
+        return item.episode === episode || (episode === 1 && (item.episode === undefined || item.episode === 1));
       }
       return true;
     }) || null
@@ -53,7 +55,7 @@ export function getMovieProgress(slug: string, episode?: number): WatchProgressI
 
 /**
  * Save or update watch progress
- * - Ignores if currentTime < 10 (short test click)
+ * - Ignores if currentTime < 10 (short test click under 10s)
  * - Removes if currentTime / duration > 0.95 (finished movie)
  * - Limits to 20 most recent items
  */
