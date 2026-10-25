@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Film, Search, Tv, Clapperboard, Sparkles } from 'lucide-react';
+import { Search, Tv, Clapperboard, Sparkles } from 'lucide-react';
 
 interface NavbarProps {
   activeTab: string;
@@ -34,15 +34,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           onSearch('');
         }}
       >
-        <div style={{ background: '#e50914', borderRadius: '8px', padding: '6px', display: 'flex' }}>
-          <Film size={22} color="#ffffff" />
-        </div>
-        <div>
-          <span style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.03em', color: '#fff' }}>
-            FILM<span style={{ color: '#e50914' }}>4K</span>
+        <img
+          src="/logo.png"
+          alt="Bơ Film"
+          className="h-9 w-auto object-contain drop-shadow"
+          style={{ height: '36px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
+            <span style={{ color: '#aeea00' }}>Bơ</span>
+            <span style={{ color: '#fcfdf7' }}>Film</span>
           </span>
-          <span style={{ fontSize: '0.65rem', marginLeft: '6px', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px', color: '#9494a8' }}>
-            CINEMA
+          <span style={{ fontSize: '0.65rem', background: 'rgba(174, 234, 0, 0.15)', border: '1px solid rgba(174, 234, 0, 0.3)', padding: '2px 6px', borderRadius: '4px', color: '#aeea00', fontWeight: 700 }}>
+            4K CINEMA
           </span>
         </div>
       </div>
@@ -52,9 +56,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={() => onTabChange('all')}
           style={{
-            background: activeTab === 'all' ? 'rgba(229, 9, 20, 0.15)' : 'transparent',
-            color: activeTab === 'all' ? '#ff4d58' : '#9494a8',
-            border: activeTab === 'all' ? '1px solid rgba(229, 9, 20, 0.4)' : '1px solid transparent',
+            background: activeTab === 'all' ? 'rgba(174, 234, 0, 0.15)' : 'transparent',
+            color: activeTab === 'all' ? '#aeea00' : '#94a896',
+            border: activeTab === 'all' ? '1px solid rgba(174, 234, 0, 0.4)' : '1px solid transparent',
             borderRadius: '8px',
             padding: '6px 14px',
             cursor: 'pointer',
@@ -73,9 +77,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={() => onTabChange('movie')}
           style={{
-            background: activeTab === 'movie' ? 'rgba(229, 9, 20, 0.15)' : 'transparent',
-            color: activeTab === 'movie' ? '#ff4d58' : '#9494a8',
-            border: activeTab === 'movie' ? '1px solid rgba(229, 9, 20, 0.4)' : '1px solid transparent',
+            background: activeTab === 'movie' ? 'rgba(174, 234, 0, 0.15)' : 'transparent',
+            color: activeTab === 'movie' ? '#aeea00' : '#94a896',
+            border: activeTab === 'movie' ? '1px solid rgba(174, 234, 0, 0.4)' : '1px solid transparent',
             borderRadius: '8px',
             padding: '6px 14px',
             cursor: 'pointer',
@@ -94,9 +98,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={() => onTabChange('tv')}
           style={{
-            background: activeTab === 'tv' ? 'rgba(229, 9, 20, 0.15)' : 'transparent',
-            color: activeTab === 'tv' ? '#ff4d58' : '#9494a8',
-            border: activeTab === 'tv' ? '1px solid rgba(229, 9, 20, 0.4)' : '1px solid transparent',
+            background: activeTab === 'tv' ? 'rgba(174, 234, 0, 0.15)' : 'transparent',
+            color: activeTab === 'tv' ? '#aeea00' : '#94a896',
+            border: activeTab === 'tv' ? '1px solid rgba(174, 234, 0, 0.4)' : '1px solid transparent',
             borderRadius: '8px',
             padding: '6px 14px',
             cursor: 'pointer',

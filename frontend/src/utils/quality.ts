@@ -28,7 +28,7 @@ export function getQualityDisplayInfo(height: number, width?: number): QualityDi
     return {
       label: '1600p',
       badge: '4K',
-      badgeColor: '#e11d2e',
+      badgeColor: 'var(--accent, #aeea00)',
       sortWeight: 1600,
       resolution: `${w}x${height}`,
     };
@@ -40,7 +40,7 @@ export function getQualityDisplayInfo(height: number, width?: number): QualityDi
     return {
       label: `${height}p`,
       badge: '4K',
-      badgeColor: '#e11d2e',
+      badgeColor: 'var(--accent, #aeea00)',
       sortWeight: 2160,
       resolution: `${w}x${height}`,
     };

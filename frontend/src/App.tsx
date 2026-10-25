@@ -250,7 +250,7 @@ export const App: React.FC = () => {
           }
         }}
         onQuickCode={() => alert('Chức năng Ghép nối TV / Quick Code Login')}
-        onSignIn={() => alert('Đăng nhập tài khoản Film4k')}
+        onSignIn={() => alert('Đăng nhập tài khoản Bơ Film')}
         onPairDevice={() => alert('Ghép nối thiết bị TV')}
         onSettings={() => alert('Cài đặt giao diện và hệ thống')}
       />
@@ -272,8 +272,8 @@ export const App: React.FC = () => {
             navigateTo('/');
           }}
           onPairClick={() => alert('Ghép nối TV / Device')}
-          onAppClick={() => alert('Ứng dụng Film4k cho Android TV & Mobile')}
-          onSignInClick={() => alert('Đăng nhập Film4k')}
+          onAppClick={() => alert('Ứng dụng Bơ Film cho Android TV & Mobile')}
+          onSignInClick={() => alert('Đăng nhập Bơ Film')}
         />
 
         {/* View Switcher based on current URL route */}
@@ -286,8 +286,9 @@ export const App: React.FC = () => {
             onNavigate={navigateTo}
           />
         ) : (
-          <main className="wrap">
-            <div className="home">
+          <>
+            <main className="wrap">
+              <div className="home">
               {/* Filter Bar */}
               <FilterBar
                 sort={sort}
@@ -441,17 +442,18 @@ export const App: React.FC = () => {
                             onClick={fetchMore}
                             disabled={loadingMore}
                             style={{
-                              background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.15) 0%, rgba(181, 7, 16, 0.25) 100%)',
-                              border: '1px solid rgba(229, 9, 20, 0.5)',
-                              color: '#fff',
+                              background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.15) 0%, rgba(132, 204, 22, 0.25) 100%)',
+                              border: '1px solid rgba(174, 234, 0, 0.5)',
+                              color: '#fcfdf7',
                               padding: '12px 32px',
                               borderRadius: '10px',
                               fontSize: '14px',
-                              fontWeight: 600,
+                              fontWeight: 700,
                               cursor: loadingMore ? 'not-allowed' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               gap: '8px',
+                              boxShadow: '0 4px 18px rgba(174, 234, 0, 0.25)',
                               transition: 'all 0.2s',
                               opacity: loadingMore ? 0.7 : 1,
                             }}
@@ -578,17 +580,18 @@ export const App: React.FC = () => {
                           onClick={fetchMore}
                           disabled={loadingMore}
                           style={{
-                            background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.15) 0%, rgba(181, 7, 16, 0.25) 100%)',
-                            border: '1px solid rgba(229, 9, 20, 0.5)',
-                            color: '#fff',
+                            background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.15) 0%, rgba(132, 204, 22, 0.25) 100%)',
+                            border: '1px solid rgba(174, 234, 0, 0.5)',
+                            color: '#fcfdf7',
                             padding: '12px 32px',
                             borderRadius: '10px',
                             fontSize: '14px',
-                            fontWeight: 600,
+                            fontWeight: 700,
                             cursor: loadingMore ? 'not-allowed' : 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '8px',
+                            boxShadow: '0 4px 18px rgba(174, 234, 0, 0.25)',
                             transition: 'all 0.2s',
                             opacity: loadingMore ? 0.7 : 1,
                           }}
@@ -637,7 +640,42 @@ export const App: React.FC = () => {
               )}
             </div>
           </main>
-        )}
+
+          {/* Footer */}
+          <footer
+            style={{
+              borderTop: '1px solid #1e3f28',
+              background: '#070e08',
+              padding: '36px 24px 48px',
+              marginTop: '48px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <img
+                  src="/logo.png"
+                  alt="Bơ Film"
+                  style={{ height: '32px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
+                />
+                <span style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
+                  <span style={{ color: '#aeea00' }}>Bơ</span>
+                  <span style={{ color: '#fcfdf7' }}>Film</span>
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '14px', color: '#cbd8cb', fontWeight: 600 }}>
+                Bơ Film - Rạp chiếu phim 4K Cinema chất lượng cao
+              </p>
+              <p style={{ margin: 0, fontSize: '12px', color: '#94a896', maxWidth: '600px', lineHeight: 1.6 }}>
+                Trải nghiệm xem phim 4K UHD siêu nét, âm thanh vòm Dolby Atmos đa kênh và phụ đề song ngữ Vietsub mượt mà hàng đầu.
+              </p>
+              <div style={{ fontSize: '11px', color: 'rgba(148, 168, 150, 0.6)', marginTop: '8px' }}>
+                © 2026 Bơ Film Cinema. All rights reserved.
+              </div>
+            </div>
+          </footer>
+        </>
+      )}
       </div>
 
       {/* 3. Mobile Bottom Navigation */}

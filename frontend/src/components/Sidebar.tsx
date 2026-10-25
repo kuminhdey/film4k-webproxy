@@ -26,9 +26,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
           e.preventDefault();
           onTabChange('all');
         }}
+        style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}
       >
-        <img className="side-logo" alt="" width="26" height="26" src="/logo-64.png" />
-        Film4k
+        <img
+          src="/logo.png"
+          alt="Bơ Film"
+          className="h-9 w-auto object-contain drop-shadow"
+          style={{ height: '36px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
+        />
+        <span style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
+          <span style={{ color: '#aeea00' }}>Bơ</span>
+          <span style={{ color: '#fcfdf7' }}>Film</span>
+        </span>
       </a>
 
       <ul className="side-list">

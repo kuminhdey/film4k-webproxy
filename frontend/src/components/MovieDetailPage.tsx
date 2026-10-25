@@ -59,7 +59,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
           }}
         />
         <div style={{ color: 'var(--muted)', textAlign: 'center', padding: '20px' }}>
-          Đang nạp chi tiết phim từ Film4k CDN...
+          Đang nạp chi tiết phim từ Bơ Film CDN...
         </div>
       </div>
     );

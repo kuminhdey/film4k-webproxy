@@ -534,7 +534,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
                     style={{
                       width: `${osd.percent}%`,
                       height: '100%',
-                      background: 'var(--accent, #e11d2e)',
+                      background: 'var(--accent, #aeea00)',
                       borderRadius: '2px',
                     }}
                   />
@@ -715,7 +715,7 @@ export const PlayerModal: React.FC<PlayerModalProps> = ({ slug, onClose }) => {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <Tv size={18} color="var(--accent, #e11d2e)" />
+              <Tv size={18} color="var(--accent, #aeea00)" />
               <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#fff', margin: 0 }}>
                 Danh sách tập ({movie.episodes.length})
               </h3>

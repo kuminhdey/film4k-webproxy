@@ -38,8 +38,18 @@ export const Header: React.FC<HeaderProps> = ({
             e.preventDefault();
             onBrandClick?.();
           }}
+          style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}
         >
-          Film4k
+          <img
+            src="/logo.png"
+            alt="Bơ Film"
+            className="h-9 w-auto object-contain drop-shadow"
+            style={{ height: '36px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
+          />
+          <span style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
+            <span style={{ color: '#aeea00' }}>Bơ</span>
+            <span style={{ color: '#fcfdf7' }}>Film</span>
+          </span>
         </a>
 
         <form className="search" onSubmit={handleSubmit}>
@@ -59,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <a
           className="app-soon"
-          title="Tải ứng dụng Film4k"
+          title="Tải ứng dụng Bơ Film"
           href="/app"
           onClick={(e) => {
             e.preventDefault();

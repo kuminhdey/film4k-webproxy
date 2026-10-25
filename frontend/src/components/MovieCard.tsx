@@ -101,16 +101,17 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick }) => {
           </span>
           <div
             style={{
-              background: '#e50914',
+              background: 'var(--accent, #aeea00)',
               borderRadius: '50%',
               width: '28px',
               height: '28px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(174, 234, 0, 0.4)',
             }}
           >
-            <Play size={14} fill="#fff" style={{ marginLeft: '2px' }} />
+            <Play size={14} fill="#070e08" color="#070e08" style={{ marginLeft: '2px' }} />
           </div>
         </div>
       </div>

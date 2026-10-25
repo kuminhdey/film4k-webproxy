@@ -70,7 +70,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       id: 'log-1',
       timestamp: new Date().toLocaleTimeString('vi-VN'),
       level: 'info',
-      message: 'Hệ thống Quản Trị Film4k Cinema đã khởi động.',
+      message: 'Hệ thống Quản Trị Bơ Film Cinema đã khởi động.',
     },
     {
       id: 'log-2',
@@ -475,24 +475,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
             <div
               style={{
-                width: '64px',
-                height: '64px',
+                width: '68px',
+                height: '68px',
                 margin: '0 auto 16px',
-                borderRadius: '16px',
-                background: 'linear-gradient(135deg, rgba(229, 9, 20, 0.2), rgba(245, 197, 24, 0.2))',
-                border: '1px solid rgba(245, 197, 24, 0.4)',
+                borderRadius: '18px',
+                background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.2), rgba(245, 197, 24, 0.2))',
+                border: '1px solid rgba(174, 234, 0, 0.4)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                boxShadow: '0 8px 24px rgba(229, 9, 20, 0.3)',
+                boxShadow: '0 8px 24px rgba(174, 234, 0, 0.3)',
               }}
             >
-              <Shield size={32} color="#f5c518" />
+              <img src="/logo.png" alt="Bơ Film" style={{ width: '44px', height: '44px', objectFit: 'contain' }} />
             </div>
-            <h1 style={{ fontSize: '22px', fontWeight: 700, margin: '0 0 6px', color: '#fff' }}>
-              Film4k Cinema Admin
+            <h1 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 6px', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <span style={{ color: '#aeea00' }}>Bơ</span>
+              <span style={{ color: '#fcfdf7' }}>Film</span>
+              <span style={{ color: '#cbd8cb', fontWeight: 600 }}>Admin</span>
             </h1>
-            <p style={{ fontSize: '13px', color: '#8b95ad', margin: 0, lineHeight: 1.5 }}>
+            <p style={{ fontSize: '13px', color: '#94a896', margin: 0, lineHeight: 1.5 }}>
               Cổng quản trị bảo mật • Điều khiển Crawler & Cache Playlist M3U8
             </p>
           </div>
@@ -596,18 +598,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               style={{
                 width: '100%',
                 height: '46px',
-                background: 'linear-gradient(135deg, #e50914 0%, #b20710 100%)',
+                background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
                 border: 'none',
                 borderRadius: '10px',
-                color: '#fff',
+                color: '#070e08',
                 fontSize: '14px',
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: authLoading ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                boxShadow: '0 6px 20px rgba(229, 9, 20, 0.4)',
+                boxShadow: '0 6px 20px rgba(174, 234, 0, 0.4)',
                 transition: 'all 0.2s',
               }}
             >
@@ -720,34 +722,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             }}
             onClick={() => onNavigate('/')}
           >
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'linear-gradient(135deg, #e50914, #f5c518)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 2px 10px rgba(229, 9, 20, 0.4)',
-              }}
-            >
-              <Shield size={18} color="#fff" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="Bơ Film"
+              style={{ width: '34px', height: '34px', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
+            />
             <div>
-              <span style={{ fontSize: '16px', fontWeight: 700, color: '#fff', letterSpacing: '0.2px' }}>
-                Film4k Admin
+              <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
+                <span style={{ color: '#aeea00' }}>Bơ</span>
+                <span style={{ color: '#fcfdf7' }}>Film</span>
+                <span style={{ color: '#cbd8cb', fontWeight: 600 }}>Admin</span>
               </span>
               <span
                 style={{
                   marginLeft: '8px',
                   fontSize: '11px',
-                  fontWeight: 600,
-                  background: 'rgba(245, 197, 24, 0.15)',
-                  color: '#f5c518',
+                  fontWeight: 700,
+                  background: 'rgba(174, 234, 0, 0.15)',
+                  color: '#aeea00',
                   padding: '2px 8px',
                   borderRadius: '12px',
-                  border: '1px solid rgba(245, 197, 24, 0.3)',
+                  border: '1px solid rgba(174, 234, 0, 0.3)',
                 }}
               >
                 PRO CONTROL
@@ -1147,19 +1142,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 width: `${Math.min(100, Math.max(2, stats.crawler_progress_percent))}%`,
                 height: '100%',
                 background: stats.crawler_is_running
-                  ? 'linear-gradient(90deg, #e50914, #f5c518)'
+                  ? 'linear-gradient(90deg, #aeea00, #c6ff00)'
                   : '#10b981',
                 borderRadius: '6px',
                 transition: 'width 0.4s ease-out',
-                boxShadow: stats.crawler_is_running ? '0 0 12px rgba(229, 9, 20, 0.5)' : 'none',
+                boxShadow: stats.crawler_is_running ? '0 0 12px rgba(174, 234, 0, 0.5)' : 'none',
               }}
             />
           </div>
 
           {stats.crawler_is_running && stats.crawler_current_movie && (
             <div style={{ marginTop: '10px', fontSize: '12px', color: '#8b95ad', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Radio size={14} color="#f5c518" className="animate-pulse" />
-              <span>Đang xử lý phim: <code style={{ color: '#f5c518' }}>{stats.crawler_current_movie}</code></span>
+              <Radio size={14} color="#aeea00" className="animate-pulse" />
+              <span>Đang xử lý phim: <code style={{ color: '#aeea00' }}>{stats.crawler_current_movie}</code></span>
             </div>
           )}
         </div>
@@ -1188,18 +1183,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               style={{
                 background: stats.crawler_is_running
                   ? 'rgba(255, 255, 255, 0.05)'
-                  : 'linear-gradient(135deg, #e50914 0%, #b20710 100%)',
+                  : 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
                 border: 'none',
-                color: stats.crawler_is_running ? '#64748b' : '#fff',
+                color: stats.crawler_is_running ? '#64748b' : '#070e08',
                 padding: '11px 20px',
                 borderRadius: '10px',
                 fontSize: '13px',
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: stats.crawler_is_running ? 'none' : '0 4px 16px rgba(229, 9, 20, 0.35)',
+                boxShadow: stats.crawler_is_running ? 'none' : '0 4px 16px rgba(174, 234, 0, 0.35)',
                 transition: 'all 0.2s',
               }}
             >
@@ -1336,7 +1331,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   color: '#8b95ad',
                 }}
               >
-                film4k-crawler-daemon.log — bash — 80x24
+                bofilm-crawler-daemon.log — bash — 80x24
               </span>
             </div>
 
@@ -2039,18 +2034,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 type="button"
                 onClick={handleStartFullCrawl}
                 style={{
-                  background: 'linear-gradient(135deg, #e50914 0%, #b20710 100%)',
+                  background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
                   border: 'none',
-                  color: '#fff',
+                  color: '#070e08',
                   padding: '9px 20px',
                   borderRadius: '8px',
                   fontSize: '13px',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  boxShadow: '0 4px 14px rgba(229, 9, 20, 0.4)',
+                  boxShadow: '0 4px 14px rgba(174, 234, 0, 0.4)',
                 }}
               >
                 <Play size={14} fill="currentColor" />

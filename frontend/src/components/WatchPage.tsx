@@ -667,7 +667,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           const firstSub = data.subtitles[0];
           initialCaption = typeof firstSub === 'string' ? firstSub : firstSub.label || firstSub.name || 'Phụ đề 1';
         } else if (slug === 'spider-man-brand-new-day' && SUBTITLE_TRACKS[slug]) {
-          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Film4k.net (Tiếng Việt)';
+          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Bơ Film (Tiếng Việt)';
         }
         setSelectedCaption(initialCaption);
 
@@ -1365,7 +1365,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             playsInline
           />
 
-          {/* 1. TOP-RIGHT WATERMARK: Film4k.Net */}
+          {/* 1. TOP-RIGHT WATERMARK: Bơ Film 4K */}
           <div
             style={{
               position: 'absolute',
@@ -1378,11 +1378,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               pointerEvents: 'none',
               zIndex: 20,
               textShadow: '0 2px 8px rgba(0,0,0,0.9)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
             }}
           >
-            <span style={{ color: '#fff' }}>Film</span>
-            <span style={{ color: '#e11d2e' }}>4k</span>
-            <span style={{ color: '#8b95ad', fontSize: '15px', fontWeight: 600 }}>.Net</span>
+            <img
+              src="/logo.png"
+              alt="Bơ Film"
+              style={{ height: '24px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 6px rgba(174, 234, 0, 0.4))' }}
+            />
+            <span style={{ color: '#aeea00' }}>Bơ</span>
+            <span style={{ color: '#fcfdf7' }}>Film</span>
+            <span style={{ color: '#aeea00', fontSize: '15px', fontWeight: 700, marginLeft: '2px' }}>4K</span>
           </div>
 
           {/* Stream Recovery / Refresh Notice */}
@@ -1393,13 +1401,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 top: '20px',
                 left: '50%',
                 transform: 'translateX(-50%)',
-                background: 'rgba(17, 22, 34, 0.94)',
+                background: 'rgba(10, 21, 12, 0.94)',
                 backdropFilter: 'blur(16px)',
                 WebkitBackdropFilter: 'blur(16px)',
-                border: '1px solid rgba(225, 29, 46, 0.45)',
+                border: '1px solid rgba(174, 234, 0, 0.45)',
                 borderRadius: '30px',
                 padding: '7px 20px',
-                color: '#fff',
+                color: '#fcfdf7',
                 fontSize: '13px',
                 fontWeight: 600,
                 zIndex: 30,
@@ -1415,8 +1423,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: '#e11d2e',
-                  boxShadow: '0 0 8px #e11d2e',
+                  background: '#aeea00',
+                  boxShadow: '0 0 8px #aeea00',
                 }}
               />
               <span>{streamNotice}</span>
@@ -2273,7 +2281,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     bottom: 0,
                     left: 0,
                     width: `${progressPercent}%`,
-                    background: 'var(--accent, #e11d2e)',
+                    background: 'var(--accent, #aeea00)',
                   }}
                 />
               </div>
@@ -2288,8 +2296,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   width: '12px',
                   height: '12px',
                   borderRadius: '50%',
-                  background: 'var(--accent, #e11d2e)',
-                  boxShadow: '0 0 8px rgba(225, 29, 46, 0.8)',
+                  background: 'var(--accent, #aeea00)',
+                  boxShadow: '0 0 10px rgba(174, 234, 0, 0.8), 0 0 4px rgba(198, 255, 0, 0.9)',
                   pointerEvents: 'none',
                 }}
               />
@@ -2354,7 +2362,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       width: '68px',
                       height: '4px',
                       cursor: 'pointer',
-                      accentColor: 'var(--accent, #e11d2e)',
+                      accentColor: 'var(--accent, #aeea00)',
                     }}
                   />
                 </div>

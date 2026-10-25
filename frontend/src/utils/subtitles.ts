@@ -13,7 +13,7 @@ export const SPIDER_MAN_1777_CUES: SubtitleCue[] = spiderManData['Film4k.net'] a
 
 // Full 38 international subtitle languages for spider-man-brand-new-day and cinema movies
 export const SUBTITLE_LANGUAGES_38: string[] = [
-  'Film4k.net (Tiếng Việt)',
+  'Bơ Film (Tiếng Việt)',
   'Tiếng Việt',
   'English',
   'English (SDH)',
@@ -55,6 +55,8 @@ export const SUBTITLE_LANGUAGES_38: string[] = [
 
 const buildSpiderMan38Tracks = (): SubtitleTrackMap => {
   const map: SubtitleTrackMap = { ...(spiderManData as SubtitleTrackMap) };
+  map['Bơ Film (Tiếng Việt)'] = SPIDER_MAN_1777_CUES;
+  map['Bơ Film Cinema'] = SPIDER_MAN_1777_CUES;
   for (const lang of SUBTITLE_LANGUAGES_38) {
     if (!map[lang]) {
       map[lang] = SPIDER_MAN_1777_CUES;
@@ -118,7 +120,7 @@ export function getAvailableSubtitleTracks(slug: string): string[] {
 export function getSubtitleForTime(
   slug: string,
   currentTime: number,
-  trackName: string = 'Film4k.net'
+  trackName: string = 'Bơ Film (Tiếng Việt)'
 ): string | null {
   if (trackName === 'Tắt' || currentTime < 0) {
     return null;
@@ -128,7 +130,12 @@ export function getSubtitleForTime(
   let cues: SubtitleCue[] | undefined;
 
   if (movieTracks) {
-    cues = movieTracks[trackName] || movieTracks['Film4k.net'] || movieTracks['Tiếng Việt'];
+    cues =
+      movieTracks[trackName] ||
+      movieTracks['Bơ Film (Tiếng Việt)'] ||
+      movieTracks['Bơ Film Cinema'] ||
+      movieTracks['Film4k.net'] ||
+      movieTracks['Tiếng Việt'];
   }
 
   if (!cues || cues.length === 0) {
