@@ -3,7 +3,7 @@ use webproxy_backend::{
     crawler::CrawlerService,
     create_app,
     db::Database,
-    models::{AudioTrack, Episode, Movie, MoviesResponse, ServerSource, Source, SubtitleTrack},
+    models::{AudioTrack, Episode, HomeResponse, Movie, MoviesResponse, ServerSource, Source, SubtitleTrack},
     proxy::is_valid_remote_url,
     AppState,
 };
@@ -956,4 +956,67 @@ async fn test_admin_cache_clear() {
     let clear_all_val: serde_json::Value = clear_all_resp.json().await.unwrap();
     assert_eq!(clear_all_val["success"], true);
     assert!(!cache_all_dir.exists());
+}
+
+#[tokio::test]
+async fn test_api_home_endpoint() {
+    let (base_url, db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Initial GET /api/home (before external fetch, generates fallback from DB)
+    let resp = client
+        .get(format!("{}/api/home", base_url))
+        .send()
+        .await
+        .expect("Failed to call /api/home");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let home: HomeResponse = resp.json().await.expect("Failed to parse HomeResponse JSON");
+
+    assert!(!home.hero.is_empty());
+    assert!(!home.top.is_empty());
+    assert!(!home.new_series.is_empty());
+    assert!(!home.new_movies.is_empty());
+    assert!(!home.list.is_empty());
+    assert!(!home.genres.is_empty());
+    assert!(home.total > 0);
+    assert_eq!(home.page, 1);
+
+    // 2. Validate exact JSON keys returned by the API
+    let raw_val: serde_json::Value = client
+        .get(format!("{}/api/home", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let obj = raw_val.as_object().expect("Home response should be JSON object");
+    assert!(obj.contains_key("hero"));
+    assert!(obj.contains_key("top"));
+    assert!(obj.contains_key("newSeries"));
+    assert!(obj.contains_key("newMovies"));
+    assert!(obj.contains_key("list"));
+    assert!(obj.contains_key("genres"));
+    assert!(obj.contains_key("total"));
+    assert!(obj.contains_key("more"));
+    assert!(obj.contains_key("page"));
+
+    // 3. Test caching snapshot and immediate response
+    let mut custom_home = home.clone();
+    custom_home.total = 9999;
+    db.save_home_cache(&custom_home).expect("Save home cache");
+
+    let cached_resp: HomeResponse = client
+        .get(format!("{}/api/home", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    // Should return the cached total
+    assert_eq!(cached_resp.total, 9999);
 }

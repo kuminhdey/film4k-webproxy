@@ -3,12 +3,12 @@ use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{info, warn};
 
 use crate::db::Database;
-use crate::models::{Episode, Movie, ServerSource, Source};
+use crate::models::{Episode, HomeResponse, Movie, MovieSummary, ServerSource, Source};
 use crate::playlist_cache::PlaylistCacheService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +34,7 @@ pub struct CrawlerService {
     status: Arc<Mutex<CrawlerStatus>>,
     logs: Arc<Mutex<VecDeque<String>>>,
     stop_requested: Arc<AtomicBool>,
+    home_cache: Arc<RwLock<Option<HomeResponse>>>,
 }
 
 impl CrawlerService {
@@ -42,6 +43,8 @@ impl CrawlerService {
             .get_movies(None, None, None, 1, 0)
             .map(|(_, count)| count)
             .unwrap_or(0);
+
+        let cached_home = db.get_home_cache().ok().flatten();
 
         Self {
             db,
@@ -62,6 +65,7 @@ impl CrawlerService {
             })),
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(60))),
             stop_requested: Arc::new(AtomicBool::new(false)),
+            home_cache: Arc::new(RwLock::new(cached_home)),
         }
     }
 
@@ -138,11 +142,206 @@ impl CrawlerService {
 
             loop {
                 interval.tick().await;
-                info!("⏰ Scheduled crawler tick triggered (every {}h)", interval_hours);
-                service.add_log(format!("⏰ Scheduled sync triggered (mode: latest, interval: {}h)", interval_hours));
+                info!("⏰ Scheduled periodic crawl & home sync triggered (every {}h)", interval_hours);
+                service.add_log(format!("⏰ Scheduled sync triggered (interval: {}h)", interval_hours));
+
+                // 1. Hourly homepage sync
+                if let Err(e) = service.fetch_and_update_home().await {
+                    warn!("Scheduled fetch_and_update_home error: {}", e);
+                    service.add_log(format!("⚠️ Scheduled home sync error: {}", e));
+                }
+
+                // 2. Scheduled crawl for latest movies
                 service.run_crawl_mode("latest").await;
             }
         });
+    }
+
+    pub fn get_home(&self) -> HomeResponse {
+        if let Ok(guard) = self.home_cache.read() {
+            if let Some(ref h) = *guard {
+                return h.clone();
+            }
+        }
+        if let Ok(Some(cached)) = self.db.get_home_cache() {
+            if let Ok(mut guard) = self.home_cache.write() {
+                *guard = Some(cached.clone());
+            }
+            return cached;
+        }
+        if let Ok(fallback) = self.db.generate_fallback_home() {
+            return fallback;
+        }
+        HomeResponse::default()
+    }
+
+    pub fn set_home_cache(&self, home: HomeResponse) {
+        let _ = self.db.save_home_cache(&home);
+        if let Ok(mut guard) = self.home_cache.write() {
+            *guard = Some(home);
+        }
+    }
+
+    pub fn is_home_cache_stale_or_empty(&self) -> bool {
+        match self.db.get_home_cache_age_seconds() {
+            Ok(Some(age)) => age >= 3600,
+            _ => true,
+        }
+    }
+
+    pub fn check_and_trigger_initial_sync(&self) {
+        if self.is_home_cache_stale_or_empty() {
+            info!("🔄 Cache is empty or stale (>1h). Triggering initial home crawl...");
+            self.add_log("🔄 Initial home sync triggered on startup".to_string());
+            let service = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = service.fetch_and_update_home().await {
+                    warn!("Initial home crawl failed: {}", e);
+                    service.add_log(format!("⚠️ Initial home crawl failed: {}", e));
+                }
+            });
+        } else {
+            info!("✅ Home cache is fresh (<1h), initial crawl skipped");
+            self.add_log("✅ Home cache is fresh (<1h)".to_string());
+        }
+    }
+
+    pub async fn fetch_and_update_home(&self) -> anyhow::Result<HomeResponse> {
+        let primary_url = std::env::var("FILM4K_HOME_URL")
+            .unwrap_or_else(|_| "https://film4k.net/api/home".to_string());
+        let fallback_url = std::env::var("FIML4K_HOME_URL")
+            .unwrap_or_else(|_| "https://fiml4k.fun/api/home".to_string());
+
+        let user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        let referer = "https://film4k.net/";
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(12))
+            .build()?;
+
+        self.add_log(format!("🌐 Fetching homepage from primary: {}", primary_url));
+
+        let resp_res = client
+            .get(&primary_url)
+            .header(header::REFERER, referer)
+            .header(header::USER_AGENT, user_agent)
+            .header(header::ACCEPT, "application/json, text/plain, */*")
+            .send()
+            .await;
+
+        let resp = match resp_res {
+            Ok(r) if r.status().is_success() => r,
+            err => {
+                warn!("Primary home URL ({}) failed: {:?}. Retrying fallback URL ({})...", primary_url, err, fallback_url);
+                self.add_log(format!("⚠️ Primary {} failed, trying fallback: {}", primary_url, fallback_url));
+                client
+                    .get(&fallback_url)
+                    .header(header::REFERER, referer)
+                    .header(header::USER_AGENT, user_agent)
+                    .header(header::ACCEPT, "application/json, text/plain, */*")
+                    .send()
+                    .await?
+            }
+        };
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Home endpoint returned HTTP status {}", resp.status());
+        }
+
+        let val: serde_json::Value = resp.json().await?;
+        self.fetch_and_update_home_from_value(&val)
+    }
+
+    pub fn fetch_and_update_home_from_value(&self, val: &serde_json::Value) -> anyhow::Result<HomeResponse> {
+        let parse_section = |section_arr: Option<&Vec<serde_json::Value>>| -> Vec<MovieSummary> {
+            let mut summaries = Vec::new();
+            if let Some(items) = section_arr {
+                for item in items {
+                    if let Some(movie) = parse_home_movie_item(item) {
+                        let _ = self.db.upsert_movie(&movie);
+                        let summary = self
+                            .db
+                            .get_movie_summary_by_slug(&movie.slug)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| MovieSummary {
+                                id: 0,
+                                slug: movie.slug.clone(),
+                                movie_type: movie.movie_type.clone(),
+                                title_vi: movie.title_vi.clone(),
+                                title_en: movie.title_en.clone(),
+                                year: movie.year,
+                                quality: movie.quality.clone(),
+                                score: movie.score,
+                                genres: movie.genres.clone(),
+                                poster: movie.poster.clone(),
+                                backdrop: movie.backdrop.clone(),
+                                total_episodes: movie.total_episodes,
+                            });
+                        summaries.push(summary);
+                    }
+                }
+            }
+            summaries
+        };
+
+        let hero = parse_section(val.get("hero").and_then(|v| v.as_array()));
+        let top = parse_section(val.get("top").and_then(|v| v.as_array()));
+        let new_series = parse_section(val.get("newSeries").and_then(|v| v.as_array()));
+        let new_movies = parse_section(val.get("newMovies").and_then(|v| v.as_array()));
+        let list = parse_section(val.get("list").and_then(|v| v.as_array()));
+
+        let genres: Vec<String> = val
+            .get("genres")
+            .and_then(|g| g.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let total: i64 = val
+            .get("total")
+            .and_then(|t| t.as_i64())
+            .unwrap_or_else(|| {
+                self.db.get_stats().map(|(t, _, _)| t).unwrap_or(0)
+            });
+
+        let more = val.get("more").and_then(|m| m.as_bool()).unwrap_or(true);
+        let page = val.get("page").and_then(|p| p.as_u64()).unwrap_or(1) as usize;
+
+        let home_response = HomeResponse {
+            hero,
+            top,
+            new_series,
+            new_movies,
+            list,
+            genres,
+            total,
+            more,
+            page,
+        };
+
+        // 1. Cache snapshot into SQLite Database
+        self.db.save_home_cache(&home_response)?;
+
+        // 2. Cache snapshot into memory for immediate GET /api/home returns
+        if let Ok(mut guard) = self.home_cache.write() {
+            *guard = Some(home_response.clone());
+        }
+
+        self.add_log(format!(
+            "🔥 [Home Sync] Cached home snapshot: {} hero, {} top, {} new series, {} new movies, {} list items (Total: {})",
+            home_response.hero.len(),
+            home_response.top.len(),
+            home_response.new_series.len(),
+            home_response.new_movies.len(),
+            home_response.list.len(),
+            home_response.total,
+        ));
+
+        Ok(home_response)
     }
 
     pub async fn fetch_sitemap_slugs(&self) -> anyhow::Result<Vec<String>> {
@@ -375,6 +574,108 @@ pub fn parse_sitemap_slugs(xml: &str) -> Vec<String> {
         }
     }
     slugs
+}
+
+pub fn parse_home_movie_item(m: &serde_json::Value) -> Option<Movie> {
+    let slug = m.get("slug").and_then(|s| s.as_str())?.to_string();
+    if slug.is_empty() {
+        return None;
+    }
+
+    let media_type = m
+        .get("mediaType")
+        .or_else(|| m.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("movie")
+        .to_string();
+
+    let title_vi = m
+        .get("title")
+        .and_then(|t| t.get("vi").or_else(|| t.get("en")))
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("title").and_then(|t| t.as_str()))
+        .or_else(|| m.get("title_vi").and_then(|t| t.as_str()))
+        .unwrap_or(&slug)
+        .to_string();
+
+    let title_en = m
+        .get("title")
+        .and_then(|t| t.get("en"))
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("title_en").and_then(|t| t.as_str()))
+        .map(|s| s.to_string());
+
+    let year = m.get("year").and_then(|y| y.as_i64()).map(|y| y as i32);
+    let quality = m
+        .get("maxRes")
+        .or_else(|| m.get("quality"))
+        .and_then(|q| q.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| Some("1080p".to_string()));
+    let score = m.get("score").and_then(|s| s.as_f64());
+
+    let genres = if let Some(g_obj) = m.get("genres").and_then(|g| g.as_object()) {
+        if let Some(arr) = g_obj.get("vi").or_else(|| g_obj.get("en")).and_then(|a| a.as_array()) {
+            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+        } else {
+            Vec::new()
+        }
+    } else if let Some(arr) = m.get("genres").and_then(|g| g.as_array()) {
+        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+    } else {
+        Vec::new()
+    };
+
+    let country = m
+        .get("country")
+        .and_then(|c| c.get("vi").or_else(|| c.get("en")))
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("country").and_then(|c| c.as_str()))
+        .map(|s| s.to_string());
+
+    let poster = m
+        .get("poster")
+        .and_then(|p| p.get("vi").or_else(|| p.get("en")))
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("poster").and_then(|p| p.as_str()))
+        .map(|s| s.to_string());
+
+    let backdrop = m.get("backdrop").and_then(|b| b.as_str()).map(|s| s.to_string());
+
+    let overview = m
+        .get("overview")
+        .and_then(|o| o.get("vi").or_else(|| o.get("en")))
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("overview").and_then(|o| o.as_str()))
+        .map(|s| s.to_string());
+
+    let total_episodes = m
+        .get("epTotal")
+        .or_else(|| m.get("totalEpisodes"))
+        .and_then(|e| e.as_i64())
+        .map(|e| e as i32);
+
+    Some(Movie {
+        id: m.get("_id").cloned(),
+        slug,
+        movie_type: media_type,
+        title_vi: Some(title_vi),
+        title_en,
+        year,
+        quality,
+        score,
+        genres,
+        country,
+        poster,
+        backdrop,
+        overview,
+        total_episodes,
+        stream: None,
+        episodes: Vec::new(),
+        servers: Vec::new(),
+        subtitles: Vec::new(),
+        audio_tracks: Vec::new(),
+    })
 }
 
 pub fn parse_title_json_to_movie(slug: &str, val: &serde_json::Value) -> Option<Movie> {
@@ -637,5 +938,147 @@ mod tests {
         assert_eq!(movie.year, Some(1995));
         assert_eq!(movie.movie_type, "movie");
         assert!(movie.stream.is_some());
+    }
+
+    #[test]
+    fn test_parse_home_movie_item() {
+        let item_json = r#"{
+            "_id": "6adbca73dd087d43ae0fd928",
+            "slug": "street-fighter",
+            "backdrop": "https://image.tmdb.org/t/p/w1280/qRN8eqYwG6HPSy0i3fKzuLrUOhp.jpg",
+            "country": { "en": "United States", "vi": "Âu Mỹ" },
+            "genres": { "en": ["Action", "Fantasy"], "vi": ["Phim Hành Động", "Phim Giả Tượng"] },
+            "maxRes": "1080p",
+            "mediaType": "movie",
+            "overview": { "vi": "Chiến binh đường phố đối đầu ác quỷ." },
+            "poster": { "vi": "https://image.tmdb.org/t/p/w500/lnaGK9y2Dw1cwRz8e7X5plvYVdI.jpg" },
+            "score": 6.3,
+            "title": { "en": "Street Fighter", "vi": "Chiến Binh Đường Phố" },
+            "year": 2026
+        }"#;
+        let val: serde_json::Value = serde_json::from_str(item_json).unwrap();
+        let movie = parse_home_movie_item(&val).expect("Should parse home movie item");
+        assert_eq!(movie.slug, "street-fighter");
+        assert_eq!(movie.title_vi.as_deref(), Some("Chiến Binh Đường Phố"));
+        assert_eq!(movie.title_en.as_deref(), Some("Street Fighter"));
+        assert_eq!(movie.year, Some(2026));
+        assert_eq!(movie.score, Some(6.3));
+        assert_eq!(movie.quality.as_deref(), Some("1080p"));
+        assert_eq!(movie.genres, vec!["Phim Hành Động", "Phim Giả Tượng"]);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_and_update_home_from_value() {
+        let db = Database::new_in_memory().unwrap();
+        let crawler = CrawlerService::new(db.clone());
+
+        // Cache initially empty
+        assert!(crawler.is_home_cache_stale_or_empty());
+
+        let home_json = r#"{
+            "hero": [
+                {
+                    "_id": "h1",
+                    "slug": "hero-movie",
+                    "title": { "vi": "Phim Hero", "en": "Hero Movie" },
+                    "mediaType": "movie",
+                    "year": 2025,
+                    "score": 8.5,
+                    "genres": ["Hành Động"],
+                    "poster": "https://example.com/hero.jpg",
+                    "backdrop": "https://example.com/hero_bg.jpg"
+                }
+            ],
+            "top": [
+                {
+                    "_id": "t1",
+                    "slug": "top-movie",
+                    "title": { "vi": "Phim Top", "en": "Top Movie" },
+                    "mediaType": "movie",
+                    "year": 2024,
+                    "score": 9.0,
+                    "genres": ["Kịch Tính"]
+                }
+            ],
+            "newSeries": [
+                {
+                    "_id": "s1",
+                    "slug": "new-series-1",
+                    "title": { "vi": "Bộ Phim Mới", "en": "New Series" },
+                    "mediaType": "tv",
+                    "year": 2025,
+                    "epTotal": 12,
+                    "genres": ["Hoạt Hình"]
+                }
+            ],
+            "newMovies": [
+                {
+                    "_id": "m1",
+                    "slug": "new-cinema-movie",
+                    "title": { "vi": "Phim Chiếu Rạp Mới", "en": "New Cinema Movie" },
+                    "mediaType": "movie",
+                    "year": 2025,
+                    "genres": ["Khoa Học Viễn Tưởng"]
+                }
+            ],
+            "list": [
+                {
+                    "_id": "l1",
+                    "slug": "list-movie",
+                    "title": { "vi": "Phim Danh Sách", "en": "List Movie" },
+                    "mediaType": "movie",
+                    "year": 2023,
+                    "genres": ["Tâm Lý"]
+                }
+            ],
+            "genres": ["Hành Động", "Hoạt Hình", "Kịch Tính"],
+            "total": 3500,
+            "more": true,
+            "page": 1
+        }"#;
+
+        let val: serde_json::Value = serde_json::from_str(home_json).unwrap();
+        let res = crawler.fetch_and_update_home_from_value(&val).expect("Should update home");
+
+        assert_eq!(res.hero.len(), 1);
+        assert_eq!(res.hero[0].slug, "hero-movie");
+        assert_eq!(res.top.len(), 1);
+        assert_eq!(res.top[0].slug, "top-movie");
+        assert_eq!(res.new_series.len(), 1);
+        assert_eq!(res.new_series[0].slug, "new-series-1");
+        assert_eq!(res.new_movies.len(), 1);
+        assert_eq!(res.new_movies[0].slug, "new-cinema-movie");
+        assert_eq!(res.list.len(), 1);
+        assert_eq!(res.list[0].slug, "list-movie");
+        assert_eq!(res.total, 3500);
+        assert!(res.more);
+        assert_eq!(res.page, 1);
+
+        // Verify cached in memory
+        let cached = crawler.get_home();
+        assert_eq!(cached.hero[0].slug, "hero-movie");
+        assert_eq!(cached.new_series[0].slug, "new-series-1");
+
+        // Verify stored in DB
+        let db_movie = db.get_movie_by_slug("hero-movie").unwrap().expect("Should be in DB");
+        assert_eq!(db_movie.title_vi.as_deref(), Some("Phim Hero"));
+
+        // Cache should not be stale now
+        assert!(!crawler.is_home_cache_stale_or_empty());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_live_fetch_and_update_home() {
+        let db = Database::new_in_memory().unwrap();
+        let crawler = CrawlerService::new(db.clone());
+        let res = crawler.fetch_and_update_home().await.expect("Live home fetch should succeed");
+        assert!(!res.hero.is_empty());
+        assert!(!res.top.is_empty());
+        assert!(!res.new_series.is_empty());
+        assert!(!res.new_movies.is_empty());
+        assert!(!res.list.is_empty());
+        assert!(!res.genres.is_empty());
+        assert!(res.total > 0);
     }
 }

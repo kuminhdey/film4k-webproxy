@@ -58,6 +58,7 @@ impl AppState {
 pub fn create_app(state: AppState) -> Router {
     let api_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/home", get(get_home))
         .route("/movies", get(list_movies))
         .route("/movies/:slug", get(get_movie))
         .route("/proxy/stream", get(handle_stream_proxy))
@@ -232,6 +233,10 @@ pub async fn get_movie(
     }
 }
 
+
+pub async fn get_home(State(state): State<AppState>) -> Json<models::HomeResponse> {
+    Json(state.crawler.get_home())
+}
 
 pub async fn get_crawler_status(State(state): State<AppState>) -> Json<crawler::CrawlerStatus> {
     Json(state.crawler.get_status())

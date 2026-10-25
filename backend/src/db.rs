@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use anyhow::Context;
 use tracing::{info, warn};
 
-use crate::models::{AudioTrack, Episode, Movie, MovieSummary, ServerSource, Source, SubtitleTrack};
+use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, ServerSource, Source, SubtitleTrack};
 
 #[derive(Clone)]
 pub struct Database {
@@ -86,6 +86,12 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug);
             CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type);
             CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug);
+
+            CREATE TABLE IF NOT EXISTS home_cache (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data_json TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
             "#,
         )?;
 
@@ -504,6 +510,124 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM movies WHERE movie_type = 'tv'", [], |r| r.get(0))
             .unwrap_or(0);
         Ok((total, movies, series))
+    }
+
+    pub fn save_home_cache(&self, home: &HomeResponse) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let json_str = serde_json::to_string(home)?;
+        conn.execute(
+            r#"
+            INSERT INTO home_cache (id, data_json, updated_at)
+            VALUES (1, ?1, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                data_json = excluded.data_json,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            params![json_str],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_home_cache(&self) -> anyhow::Result<Option<HomeResponse>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data_json FROM home_cache WHERE id = 1")?;
+        let res = stmt.query_row([], |row| {
+            let json_str: String = row.get(0)?;
+            Ok(json_str)
+        });
+        match res {
+            Ok(json_str) => {
+                let home: HomeResponse = serde_json::from_str(&json_str)?;
+                Ok(Some(home))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_home_cache_age_seconds(&self) -> anyhow::Result<Option<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT CAST((strftime('%s', 'now') - strftime('%s', updated_at)) AS INTEGER) FROM home_cache WHERE id = 1")?;
+        let res = stmt.query_row([], |row| {
+            let age: i64 = row.get(0)?;
+            Ok(age)
+        });
+        match res {
+            Ok(age) => Ok(Some(age.max(0) as u64)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_movie_summary_by_slug(&self, slug: &str) -> anyhow::Result<Option<MovieSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
+            FROM movies WHERE slug = ?1
+            "#,
+        )?;
+        let res = stmt.query_row(params![slug], |row| {
+            let genres_raw: String = row.get(8)?;
+            let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+            Ok(MovieSummary {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                movie_type: row.get(2)?,
+                title_vi: row.get(3)?,
+                title_en: row.get(4)?,
+                year: row.get(5)?,
+                quality: row.get(6)?,
+                score: row.get(7)?,
+                genres,
+                poster: row.get(9)?,
+                backdrop: row.get(10)?,
+                total_episodes: row.get(11)?,
+            })
+        });
+        match res {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn generate_fallback_home(&self) -> anyhow::Result<HomeResponse> {
+        let (all_movies, total) = self.get_movies(None, None, None, 24, 0)?;
+        let (top_movies, _) = self.get_movies(None, None, None, 10, 0)?;
+        let (new_series, _) = self.get_movies(None, None, Some("tv"), 12, 0)?;
+        let (new_movies, _) = self.get_movies(None, None, Some("movie"), 12, 0)?;
+        let hero = top_movies.iter().take(5).cloned().collect();
+
+        let mut genres_set = std::collections::BTreeSet::new();
+        for m in &all_movies {
+            for g in &m.genres {
+                genres_set.insert(g.clone());
+            }
+        }
+        let genres = if genres_set.is_empty() {
+            vec![
+                "Hành Động".to_string(),
+                "Phiêu Lưu".to_string(),
+                "Khoa Học Viễn Tưởng".to_string(),
+                "Chính Kịch".to_string(),
+                "Hài Hước".to_string(),
+            ]
+        } else {
+            genres_set.into_iter().collect()
+        };
+
+        Ok(HomeResponse {
+            hero,
+            top: top_movies,
+            new_series,
+            new_movies,
+            list: all_movies,
+            genres,
+            total,
+            more: total > 24,
+            page: 1,
+        })
     }
 }
 

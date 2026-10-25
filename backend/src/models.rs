@@ -165,10 +165,11 @@ pub struct MoviesResponse {
     pub offset: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct MovieSummary {
     pub id: i64,
     pub slug: String,
+    #[serde(alias = "movieType", alias = "mediaType", alias = "type")]
     pub movie_type: String,
     pub title_vi: Option<String>,
     pub title_en: Option<String>,
@@ -178,5 +179,21 @@ pub struct MovieSummary {
     pub genres: Vec<String>,
     pub poster: Option<String>,
     pub backdrop: Option<String>,
+    #[serde(alias = "totalEpisodes", alias = "epTotal")]
     pub total_episodes: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HomeResponse {
+    pub hero: Vec<MovieSummary>,
+    pub top: Vec<MovieSummary>,
+    #[serde(rename = "newSeries")]
+    pub new_series: Vec<MovieSummary>,
+    #[serde(rename = "newMovies")]
+    pub new_movies: Vec<MovieSummary>,
+    pub list: Vec<MovieSummary>,
+    pub genres: Vec<String>,
+    pub total: i64,
+    pub more: bool,
+    pub page: usize,
 }
