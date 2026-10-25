@@ -64,13 +64,27 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('');
   const [selectedCountry, setSelectedCountry] = useState('all');
+  const [selectedYear, setSelectedYear] = useState('all');
   const [selectedResolution, setSelectedResolution] = useState('all');
+  const [selectedTrack, setSelectedTrack] = useState('all');
 
   // Client-side Navigation Handler
   const navigateTo = (path: string) => {
     window.history.pushState({}, '', path);
     setRoute(parseCurrentRoute());
   };
+
+  // Reset all active filters to default
+  const handleResetFilters = useCallback(() => {
+    setSort('latest');
+    setActiveTab('all');
+    setSelectedGenre('');
+    setSelectedCountry('all');
+    setSelectedYear('all');
+    setSelectedResolution('all');
+    setSelectedTrack('all');
+    setSearchQuery('');
+  }, []);
 
   // Listen to browser Back/Forward navigation
   useEffect(() => {
@@ -89,7 +103,7 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Build query params helper
+  // Build query params helper for multi-dimensional filter matrix
   const buildParams = useCallback(
     (offset: number, search?: string, type?: string) => {
       const params = new URLSearchParams();
@@ -101,11 +115,29 @@ export const App: React.FC = () => {
       if (q.trim()) {
         params.set('search', q.trim());
       }
+      if (selectedGenre) {
+        params.set('genre', selectedGenre);
+      }
+      if (selectedCountry && selectedCountry !== 'all') {
+        params.set('country', selectedCountry);
+      }
+      if (selectedYear && selectedYear !== 'all') {
+        params.set('year', selectedYear);
+      }
+      if (selectedResolution && selectedResolution !== 'all') {
+        params.set('quality', selectedResolution);
+      }
+      if (selectedTrack && selectedTrack !== 'all') {
+        params.set('track', selectedTrack);
+      }
+      if (sort && sort !== 'latest') {
+        params.set('sort', sort);
+      }
       params.set('limit', String(PAGE_LIMIT));
       params.set('offset', String(offset));
       return params;
     },
-    [activeTab, searchQuery]
+    [activeTab, searchQuery, selectedGenre, selectedCountry, selectedYear, selectedResolution, selectedTrack, sort]
   );
 
   // Fetch initial page (replaces current list)
@@ -185,9 +217,12 @@ export const App: React.FC = () => {
       route.view === 'home' &&
       !searchQuery.trim() &&
       !selectedGenre &&
-      activeTab === 'all' &&
+      selectedCountry === 'all' &&
+      selectedYear === 'all' &&
       selectedResolution === 'all' &&
-      selectedCountry === 'all';
+      selectedTrack === 'all' &&
+      sort === 'latest' &&
+      activeTab === 'all';
 
     if (isDefaultHome) {
       fetchHome();
@@ -196,7 +231,7 @@ export const App: React.FC = () => {
       fetchMovies(searchQuery, activeTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, searchQuery, selectedGenre, selectedResolution, selectedCountry, route.view]);
+  }, [activeTab, searchQuery, selectedGenre, selectedCountry, selectedYear, selectedResolution, selectedTrack, sort, route.view]);
 
   // Client-side filtering & sorting
   const filteredMovies = useMemo(() => {
@@ -214,6 +249,49 @@ export const App: React.FC = () => {
       );
     }
 
+    if (selectedYear !== 'all') {
+      if (selectedYear === '2020-2021') {
+        result = result.filter((m) => (m.year || 0) >= 2020 && (m.year || 0) <= 2021);
+      } else if (selectedYear === '2015-2019') {
+        result = result.filter((m) => (m.year || 0) >= 2015 && (m.year || 0) <= 2019);
+      } else if (selectedYear === 'before-2015') {
+        result = result.filter((m) => (m.year || 0) < 2015);
+      } else {
+        const yr = parseInt(selectedYear, 10);
+        if (!isNaN(yr)) {
+          result = result.filter((m) => m.year === yr);
+        }
+      }
+    }
+
+    if (selectedCountry !== 'all') {
+      result = result.filter((m) => {
+        const c = (m.country || '').toLowerCase();
+        const t = (m.title_vi || '').toLowerCase() + ' ' + (m.title_en || '').toLowerCase();
+        if (selectedCountry === 'au-my') return c.includes('mỹ') || c.includes('âu') || c.includes('us') || c.includes('uk') || t.includes('mỹ');
+        if (selectedCountry === 'han-quoc') return c.includes('hàn') || c.includes('korea');
+        if (selectedCountry === 'trung-quoc') return c.includes('trung') || c.includes('china');
+        if (selectedCountry === 'nhat-ban') return c.includes('nhật') || c.includes('japan');
+        if (selectedCountry === 'thai-lan') return c.includes('thái') || c.includes('thai');
+        if (selectedCountry === 'viet-nam') return c.includes('việt') || c.includes('vietnam');
+        if (selectedCountry === 'hong-kong') return c.includes('hồng kông') || c.includes('hong kong');
+        if (selectedCountry === 'anh') return c.includes('anh') || c.includes('uk');
+        if (selectedCountry === 'phap') return c.includes('pháp') || c.includes('france');
+        if (selectedCountry === 'an-do') return c.includes('ấn độ') || c.includes('india');
+        return c.includes(selectedCountry);
+      });
+    }
+
+    if (selectedTrack !== 'all') {
+      result = result.filter((m) => {
+        const combined = ((m.title_vi || '') + ' ' + (m.title_en || '') + ' ' + (m.quality || '')).toLowerCase();
+        if (selectedTrack === 'tm') return combined.includes('thuyết minh') || combined.includes('tm') || !combined.includes('raw');
+        if (selectedTrack === 'pd') return combined.includes('phụ đề') || combined.includes('vietsub') || combined.includes('pd');
+        if (selectedTrack === 'lt') return combined.includes('lồng tiếng') || combined.includes('lt');
+        return true;
+      });
+    }
+
     if (sort === 'score') {
       result.sort((a, b) => (b.score || 0) - (a.score || 0));
     } else if (sort === 'year') {
@@ -223,7 +301,7 @@ export const App: React.FC = () => {
     }
 
     return result;
-  }, [movies, selectedGenre, selectedResolution, sort]);
+  }, [movies, selectedGenre, selectedResolution, selectedYear, selectedCountry, selectedTrack, sort]);
 
   // Featured movies for HeroBanner (priority: data.hero -> backdrop pool -> slice)
   const heroMovies = useMemo(() => {
@@ -271,7 +349,10 @@ export const App: React.FC = () => {
     searchQuery.trim() ||
       selectedGenre ||
       selectedCountry !== 'all' ||
+      selectedYear !== 'all' ||
       selectedResolution !== 'all' ||
+      selectedTrack !== 'all' ||
+      sort !== 'latest' ||
       activeTab === 'movie' ||
       activeTab === 'tv' ||
       activeTab === 'explore' ||
@@ -319,6 +400,9 @@ export const App: React.FC = () => {
               navigateTo('/');
             }
           }}
+          onSelectMovie={(slug) => {
+            navigateTo(`/movie/${slug}`);
+          }}
           onBrandClick={() => {
             setActiveTab('all');
             setSearchQuery('');
@@ -353,8 +437,13 @@ export const App: React.FC = () => {
                 onGenreChange={setSelectedGenre}
                 selectedCountry={selectedCountry}
                 onCountryChange={setSelectedCountry}
+                selectedYear={selectedYear}
+                onYearChange={setSelectedYear}
                 selectedResolution={selectedResolution}
                 onResolutionChange={setSelectedResolution}
+                selectedTrack={selectedTrack}
+                onTrackChange={setSelectedTrack}
+                onResetFilters={handleResetFilters}
               />
 
               {/* Filtered Grid or Full Catalog Rails */}

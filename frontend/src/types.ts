@@ -85,6 +85,7 @@ export interface MovieSummary {
   quality?: string;
   score?: number;
   genres: string[];
+  country?: string;
   poster?: string;
   backdrop?: string;
   total_episodes?: number;

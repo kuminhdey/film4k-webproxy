@@ -28,15 +28,54 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
         setMovie(data);
         setLoading(false);
 
-        // Fetch related movies by same genre or general pool
-        fetch('/api/movies?limit=8')
-          .then((r) => r.json())
-          .then((res) => {
-            if (res.movies) {
-              setRelated(res.movies.filter((m: MovieSummary) => m.slug !== slug).slice(0, 6));
+        // Fetch recommendations for this movie (/api/movies/:slug/recommendations with fallback)
+        fetch(`/api/movies/${slug}/recommendations`)
+          .then((r) => {
+            if (!r.ok) throw new Error('Recommendations endpoint error');
+            return r.json();
+          })
+          .then((recData) => {
+            const list: MovieSummary[] = Array.isArray(recData)
+              ? recData
+              : Array.isArray(recData.recommendations)
+              ? recData.recommendations
+              : Array.isArray(recData.movies)
+              ? recData.movies
+              : [];
+            if (list.length > 0) {
+              setRelated(list.filter((m) => m.slug !== slug).slice(0, 12));
+            } else {
+              throw new Error('Empty recommendations');
             }
           })
-          .catch(() => {});
+          .catch(() => {
+            // Fallback: fetch movies by primary genre or general pool
+            const primaryGenre = data.genres && data.genres.length > 0 ? encodeURIComponent(data.genres[0]) : '';
+            const fallbackUrl = primaryGenre
+              ? `/api/movies?genre=${primaryGenre}&limit=12`
+              : `/api/movies?limit=12`;
+
+            fetch(fallbackUrl)
+              .then((r) => r.json())
+              .then((res) => {
+                const items: MovieSummary[] = res.movies || [];
+                const filtered = items.filter((m) => m.slug !== slug).slice(0, 10);
+                if (filtered.length > 0) {
+                  setRelated(filtered);
+                } else if (primaryGenre) {
+                  // Fallback further to general pool if genre filter returned empty
+                  fetch('/api/movies?limit=12')
+                    .then((r2) => r2.json())
+                    .then((res2) => {
+                      if (res2.movies) {
+                        setRelated(res2.movies.filter((m: MovieSummary) => m.slug !== slug).slice(0, 10));
+                      }
+                    })
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {});
+          });
       })
       .catch((err) => {
         console.error('Error fetching movie details:', err);
@@ -387,19 +426,40 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
         </section>
       )}
 
-      {/* 3. Related Movies Section */}
+      {/* 3. Smart Recommendations Rail: Phim tương tự bạn có thể thích */}
       {related.length > 0 && (
-        <section className="wrap row-sec" style={{ marginTop: '40px', marginBottom: '60px' }}>
-          <div className="head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-            <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#fff', margin: 0 }}>
-              Có thể bạn quan tâm
-            </h2>
+        <section className="wrap row-sec" style={{ marginTop: '48px', marginBottom: '64px' }}>
+          <div className="head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div>
+              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#fcfdf7', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Phim tương tự bạn có thể thích</span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#070e08',
+                    background: '#aeea00',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  Gợi ý AI
+                </span>
+              </h2>
+              <p style={{ color: 'var(--muted, #94a896)', fontSize: '13px', margin: '4px 0 0 0' }}>
+                Đề xuất dựa trên thể loại, diễn viên và sở thích xem phim 4K của bạn
+              </p>
+            </div>
           </div>
 
           <div className="catalog-grid">
             {related.map((rel) => {
               const relTitle = rel.title_vi || rel.title_en || 'Phim';
               const relPoster = rel.poster || rel.backdrop || 'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg';
+              const relScore = rel.score ? rel.score.toFixed(1) : '8.0';
+              const relRes = rel.quality || '4K UHD';
               return (
                 <div className="hov" key={rel.slug}>
                   <a
@@ -407,6 +467,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
                     href={`/movie/${rel.slug}`}
                     onClick={(e) => {
                       e.preventDefault();
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
                       onNavigate(`/movie/${rel.slug}`);
                     }}
                   >
@@ -415,11 +476,11 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
                       <span className="play" aria-hidden="true">
                         ▶
                       </span>
-                      <span className="card-res">{rel.quality || '4K'}</span>
+                      <span className="card-res">{relRes}</span>
                       <span className="card-vi">TM|PD</span>
                       <span className="card-score">
-                        <b aria-hidden="true">★</b>
-                        {rel.score ? rel.score.toFixed(1) : '8.0'}
+                        <b aria-hidden="true" style={{ color: '#fbbf24' }}>★</b>
+                        {relScore}
                       </span>
                     </div>
                     <h3>{relTitle}</h3>
