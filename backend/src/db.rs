@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use anyhow::Context;
 use tracing::{info, warn};
 
-use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, ServerSource, Source, SubtitleTrack};
+use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, MoviesQuery, ServerSource, Source, SubtitleTrack};
 
 #[derive(Clone)]
 pub struct Database {
@@ -99,6 +99,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE movies ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
         let _ = conn.execute("ALTER TABLE movies ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
         let _ = conn.execute("ALTER TABLE movies ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE movies ADD COLUMN views INTEGER NOT NULL DEFAULT 0", []);
 
         let _ = conn.execute("ALTER TABLE episodes ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
         let _ = conn.execute("ALTER TABLE episodes ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
@@ -247,41 +248,127 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_movies(
+    pub fn get_movies_filtered(
         &self,
-        search: Option<&str>,
-        genre: Option<&str>,
-        movie_type: Option<&str>,
-        limit: i64,
-        offset: i64,
+        query: &MoviesQuery,
     ) -> anyhow::Result<(Vec<MovieSummary>, i64)> {
         let conn = self.conn.lock().unwrap();
 
         let mut where_clauses = Vec::new();
         let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(s) = search {
+        if let Some(ref s) = query.search {
             if !s.trim().is_empty() {
                 let pattern = format!("%{}%", s.trim().to_lowercase());
-                where_clauses.push("search_text LIKE ?");
+                where_clauses.push("(search_text LIKE ? OR title_vi LIKE ? OR title_en LIKE ? OR slug LIKE ?)");
+                query_params.push(Box::new(pattern.clone()));
+                query_params.push(Box::new(pattern.clone()));
+                query_params.push(Box::new(pattern.clone()));
                 query_params.push(Box::new(pattern));
             }
         }
 
-        if let Some(g) = genre {
-            if !g.trim().is_empty() {
+        if let Some(ref g) = query.genre {
+            if !g.trim().is_empty() && g != "all" {
                 let pattern = format!("%\"{}\"%", g.trim());
                 where_clauses.push("genres_json LIKE ?");
                 query_params.push(Box::new(pattern));
             }
         }
 
-        if let Some(mt) = movie_type {
+        if let Some(ref mt) = query.movie_type {
             if !mt.trim().is_empty() && mt != "all" {
                 where_clauses.push("movie_type = ?");
                 query_params.push(Box::new(mt.to_string()));
             }
         }
+
+        if let Some(ref c) = query.country {
+            if !c.trim().is_empty() && c != "all" {
+                let pattern = format!("%{}%", c.trim());
+                where_clauses.push("country LIKE ?");
+                query_params.push(Box::new(pattern));
+            }
+        }
+
+        if let Some(ref y) = query.year {
+            let y_trimmed = y.trim();
+            if !y_trimmed.is_empty() && y_trimmed != "all" {
+                if let Some(rest) = y_trimmed.strip_prefix("<=") {
+                    if let Ok(val) = rest.trim().parse::<i32>() {
+                        where_clauses.push("year <= ?");
+                        query_params.push(Box::new(val));
+                    }
+                } else if let Some(rest) = y_trimmed.strip_prefix('<') {
+                    if let Ok(val) = rest.trim().parse::<i32>() {
+                        where_clauses.push("year < ?");
+                        query_params.push(Box::new(val));
+                    }
+                } else if let Some(rest) = y_trimmed.strip_prefix(">=") {
+                    if let Ok(val) = rest.trim().parse::<i32>() {
+                        where_clauses.push("year >= ?");
+                        query_params.push(Box::new(val));
+                    }
+                } else if let Some(rest) = y_trimmed.strip_prefix('>') {
+                    if let Ok(val) = rest.trim().parse::<i32>() {
+                        where_clauses.push("year > ?");
+                        query_params.push(Box::new(val));
+                    }
+                } else if y_trimmed.contains('-') {
+                    let parts: Vec<&str> = y_trimmed.split('-').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(y1), Ok(y2)) = (parts[0].trim().parse::<i32>(), parts[1].trim().parse::<i32>()) {
+                            where_clauses.push("year BETWEEN ? AND ?");
+                            query_params.push(Box::new(y1));
+                            query_params.push(Box::new(y2));
+                        }
+                    }
+                } else if let Ok(val) = y_trimmed.parse::<i32>() {
+                    where_clauses.push("year = ?");
+                    query_params.push(Box::new(val));
+                }
+            }
+        }
+
+        if let Some(ref q) = query.quality {
+            if !q.trim().is_empty() && q != "all" {
+                let pattern = format!("%{}%", q.trim());
+                where_clauses.push("quality LIKE ?");
+                query_params.push(Box::new(pattern));
+            }
+        }
+
+        if let Some(ref t) = query.track {
+            match t.to_lowercase().as_str() {
+                "tm" => {
+                    where_clauses.push("(audio_tracks_json LIKE '%Thuyết minh%' OR audio_tracks_json LIKE '%thuyết minh%' OR audio_tracks_json LIKE '%Lồng tiếng%' OR audio_tracks_json LIKE '%lồng tiếng%')");
+                }
+                "pd" => {
+                    where_clauses.push("(subtitles_json LIKE '%\"vi\"%' OR subtitles_json LIKE '%Tiếng Việt%' OR subtitles_json != '[]')");
+                }
+                "both" => {
+                    where_clauses.push("((audio_tracks_json LIKE '%Thuyết minh%' OR audio_tracks_json LIKE '%thuyết minh%' OR audio_tracks_json LIKE '%Lồng tiếng%' OR audio_tracks_json LIKE '%lồng tiếng%') AND (subtitles_json LIKE '%\"vi\"%' OR subtitles_json LIKE '%Tiếng Việt%' OR subtitles_json != '[]'))");
+                }
+                _ => {}
+            }
+        }
+
+        let order_clause = match query.sort.as_deref().unwrap_or("default") {
+            "latest" => "ORDER BY id DESC",
+            "score" => "ORDER BY score DESC NULLS LAST, id DESC",
+            "views" => "ORDER BY views DESC, score DESC NULLS LAST, id DESC",
+            "year" => "ORDER BY year DESC NULLS LAST, score DESC NULLS LAST, id DESC",
+            _ => "ORDER BY year DESC NULLS LAST, score DESC NULLS LAST, id DESC",
+        };
+
+        let limit = query.limit.unwrap_or(24).clamp(1, 100) as i64;
+        let offset = query.offset.unwrap_or_else(|| {
+            if let Some(p) = query.page {
+                (p.max(1) - 1) * (limit as usize)
+            } else {
+                0
+            }
+        }) as i64;
 
         let where_sql = if where_clauses.is_empty() {
             String::new()
@@ -301,10 +388,10 @@ impl Database {
             SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
             FROM movies
             {}
-            ORDER BY year DESC, score DESC, id DESC
+            {}
             LIMIT ? OFFSET ?
             "#,
-            where_sql
+            where_sql, order_clause
         );
 
         let mut stmt = conn.prepare(&query_sql)?;
@@ -338,6 +425,199 @@ impl Database {
         }
 
         Ok((summaries, total))
+    }
+
+    pub fn get_movies(
+        &self,
+        search: Option<&str>,
+        genre: Option<&str>,
+        movie_type: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> anyhow::Result<(Vec<MovieSummary>, i64)> {
+        let q = MoviesQuery {
+            search: search.map(ToString::to_string),
+            genre: genre.map(ToString::to_string),
+            movie_type: movie_type.map(ToString::to_string),
+            limit: Some(limit as usize),
+            offset: Some(offset as usize),
+            ..Default::default()
+        };
+        self.get_movies_filtered(&q)
+    }
+
+    pub fn search_suggest(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MovieSummary>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let pattern_full = format!("%{}%", trimmed.to_lowercase());
+        let exact = trimmed.to_lowercase();
+        let prefix = format!("{}%", trimmed.to_lowercase());
+        let limit_val = limit.clamp(1, 20) as i64;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
+            FROM movies
+            WHERE search_text LIKE ?1 OR title_vi LIKE ?1 OR title_en LIKE ?1 OR slug LIKE ?1
+            ORDER BY
+                CASE
+                    WHEN lower(slug) = ?2 THEN 1
+                    WHEN lower(title_vi) LIKE ?3 THEN 2
+                    WHEN lower(title_en) LIKE ?3 THEN 3
+                    ELSE 4
+                END,
+                score DESC NULLS LAST,
+                year DESC NULLS LAST,
+                id DESC
+            LIMIT ?4
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![pattern_full, exact, prefix, limit_val], |row| {
+            let genres_raw: String = row.get(8)?;
+            let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+            Ok(MovieSummary {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                movie_type: row.get(2)?,
+                title_vi: row.get(3)?,
+                title_en: row.get(4)?,
+                year: row.get(5)?,
+                quality: row.get(6)?,
+                score: row.get(7)?,
+                genres,
+                poster: row.get(9)?,
+                backdrop: row.get(10)?,
+                total_episodes: row.get(11)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    pub fn get_recommendations(&self, slug: &str, limit: usize) -> anyhow::Result<Vec<MovieSummary>> {
+        let max_items = limit.clamp(1, 24);
+        let movie_opt = self.get_movie_by_slug(slug)?;
+
+        let conn = self.conn.lock().unwrap();
+        let mut results = Vec::new();
+        let mut seen_slugs = std::collections::HashSet::new();
+        seen_slugs.insert(slug.to_string());
+
+        if let Some(target) = movie_opt {
+            let mut genre_clauses = Vec::new();
+            let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            query_params.push(Box::new(slug.to_string()));
+
+            for g in &target.genres {
+                if !g.trim().is_empty() {
+                    let pattern = format!("%\"{}\"%", g.trim());
+                    genre_clauses.push("genres_json LIKE ?");
+                    query_params.push(Box::new(pattern));
+                }
+            }
+
+            let where_sql = if !genre_clauses.is_empty() {
+                format!("WHERE slug != ?1 AND ({})", genre_clauses.join(" OR "))
+            } else {
+                query_params.push(Box::new(target.movie_type.clone()));
+                format!("WHERE slug != ?1 AND movie_type = ?2")
+            };
+
+            let query_sql = format!(
+                r#"
+                SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
+                FROM movies
+                {}
+                ORDER BY score DESC NULLS LAST, year DESC NULLS LAST, id DESC
+                LIMIT ?
+                "#,
+                where_sql
+            );
+
+            let mut stmt = conn.prepare(&query_sql)?;
+            let mut full_params = query_params;
+            full_params.push(Box::new(max_items as i64));
+            let param_refs: Vec<&dyn rusqlite::ToSql> = full_params.iter().map(|p| p.as_ref()).collect();
+
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                let genres_raw: String = row.get(8)?;
+                let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+                Ok(MovieSummary {
+                    id: row.get(0)?,
+                    slug: row.get(1)?,
+                    movie_type: row.get(2)?,
+                    title_vi: row.get(3)?,
+                    title_en: row.get(4)?,
+                    year: row.get(5)?,
+                    quality: row.get(6)?,
+                    score: row.get(7)?,
+                    genres,
+                    poster: row.get(9)?,
+                    backdrop: row.get(10)?,
+                    total_episodes: row.get(11)?,
+                })
+            })?;
+
+            for r in rows {
+                let item = r?;
+                if seen_slugs.insert(item.slug.clone()) {
+                    results.push(item);
+                }
+            }
+        }
+
+        // Backfill if needed up to max_items
+        if results.len() < max_items {
+            let needed = max_items - results.len();
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
+                FROM movies
+                WHERE slug != ?1
+                ORDER BY score DESC NULLS LAST, year DESC NULLS LAST, id DESC
+                LIMIT ?2
+                "#,
+            )?;
+            let rows = stmt.query_map(params![slug, (needed + 10) as i64], |row| {
+                let genres_raw: String = row.get(8)?;
+                let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
+                Ok(MovieSummary {
+                    id: row.get(0)?,
+                    slug: row.get(1)?,
+                    movie_type: row.get(2)?,
+                    title_vi: row.get(3)?,
+                    title_en: row.get(4)?,
+                    year: row.get(5)?,
+                    quality: row.get(6)?,
+                    score: row.get(7)?,
+                    genres,
+                    poster: row.get(9)?,
+                    backdrop: row.get(10)?,
+                    total_episodes: row.get(11)?,
+                })
+            })?;
+
+            for r in rows {
+                let item = r?;
+                if seen_slugs.insert(item.slug.clone()) {
+                    results.push(item);
+                    if results.len() >= max_items {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     pub fn get_movie_by_slug(&self, slug: &str) -> anyhow::Result<Option<Movie>> {

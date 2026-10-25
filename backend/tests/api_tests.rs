@@ -3,7 +3,10 @@ use webproxy_backend::{
     crawler::CrawlerService,
     create_app,
     db::Database,
-    models::{AudioTrack, Episode, HomeResponse, Movie, MoviesResponse, ServerSource, Source, SubtitleTrack},
+    models::{
+        AudioTrack, Episode, HomeResponse, Movie, MoviesResponse, RecommendationsResponse,
+        SearchSuggestResponse, ServerSource, Source, SubtitleTrack,
+    },
     proxy::is_valid_remote_url,
     AppState,
 };
@@ -1019,4 +1022,166 @@ async fn test_api_home_endpoint() {
 
     // Should return the cached total
     assert_eq!(cached_resp.total, 9999);
+}
+
+#[tokio::test]
+async fn test_api_search_suggest() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Search for "inter" -> should match interstellar
+    let resp = client
+        .get(format!("{}/api/search/suggest?q=inter", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: SearchSuggestResponse = resp.json().await.unwrap();
+    assert!(!data.results.is_empty());
+    assert_eq!(data.results[0].slug, "interstellar");
+    assert_eq!(data.results[0].title_vi.as_deref(), Some("Hố Đen Tử Thần"));
+
+    // 2. Search for Vietnamese title "Hố Đen"
+    let resp_vi = client
+        .get(format!("{}/api/search/suggest?q=Hố", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    let data_vi: SearchSuggestResponse = resp_vi.json().await.unwrap();
+    assert!(!data_vi.results.is_empty());
+    assert!(data_vi.results.iter().any(|r| r.slug == "interstellar"));
+
+    // 3. Search for nonexistent query
+    let resp_none = client
+        .get(format!("{}/api/search/suggest?q=xyznonexistent", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    let data_none: SearchSuggestResponse = resp_none.json().await.unwrap();
+    assert!(data_none.results.is_empty());
+
+    // 4. Empty query returns empty results
+    let resp_empty = client
+        .get(format!("{}/api/search/suggest?q=", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    let data_empty: SearchSuggestResponse = resp_empty.json().await.unwrap();
+    assert!(data_empty.results.is_empty());
+}
+
+#[tokio::test]
+async fn test_api_movies_multi_criteria_filtering() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Filter by country=US
+    let resp = client
+        .get(format!("{}/api/movies?country=US", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data: MoviesResponse = resp.json().await.unwrap();
+    assert!(!data.movies.is_empty());
+
+    // 2. Filter by exact year=2014 (Interstellar)
+    let resp_2014 = client
+        .get(format!("{}/api/movies?year=2014", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_2014: MoviesResponse = resp_2014.json().await.unwrap();
+    assert_eq!(data_2014.movies.len(), 1);
+    assert_eq!(data_2014.movies[0].slug, "interstellar");
+
+    // 3. Filter by year=<2012 (Interstellar 2014, Inception 2010, Breaking Bad 2008, Oppenheimer 2023)
+    let resp_lt2012 = client
+        .get(format!("{}/api/movies?year=<2012", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_lt2012: MoviesResponse = resp_lt2012.json().await.unwrap();
+    assert_eq!(data_lt2012.movies.len(), 2); // inception (2010) & breaking-bad (2008)
+
+    // 4. Filter by year range: 2009-2015
+    let resp_range = client
+        .get(format!("{}/api/movies?year=2009-2015", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_range: MoviesResponse = resp_range.json().await.unwrap();
+    assert_eq!(data_range.movies.len(), 2); // inception (2010) & interstellar (2014)
+
+    // 5. Filter by quality=4K
+    let resp_4k = client
+        .get(format!("{}/api/movies?quality=4K", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_4k: MoviesResponse = resp_4k.json().await.unwrap();
+    assert!(!data_4k.movies.is_empty());
+
+    // 6. Sort by score
+    let resp_sort_score = client
+        .get(format!("{}/api/movies?sort=score", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_score: MoviesResponse = resp_sort_score.json().await.unwrap();
+    assert_eq!(data_score.movies[0].slug, "breaking-bad"); // score 9.5 is highest
+
+    // 7. Sort by year
+    let resp_sort_year = client
+        .get(format!("{}/api/movies?sort=year", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_year: MoviesResponse = resp_sort_year.json().await.unwrap();
+    assert_eq!(data_year.movies[0].slug, "oppenheimer"); // 2023 is newest
+
+    // 8. Track filter: pd (phụ đề)
+    let resp_pd = client
+        .get(format!("{}/api/movies?track=pd", base_url))
+        .send()
+        .await
+        .unwrap();
+    let data_pd: MoviesResponse = resp_pd.json().await.unwrap();
+    assert!(!data_pd.movies.is_empty());
+}
+
+#[tokio::test]
+async fn test_api_movie_recommendations() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    let resp = client
+        .get(format!("{}/api/movies/interstellar/recommendations", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: RecommendationsResponse = resp.json().await.unwrap();
+
+    // Recommendations should not include interstellar itself
+    assert!(!data.recommendations.is_empty());
+    assert!(!data.recommendations.iter().any(|m| m.slug == "interstellar"));
+    assert!(data.recommendations.len() <= 12);
+}
+
+#[tokio::test]
+async fn test_hls_prewarming_service() {
+    let temp_dir = std::env::temp_dir().join(format!("test_hls_prewarm_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let playlist_cache = webproxy_backend::PlaylistCacheService::new(&temp_dir);
+    let db = Database::new_in_memory().unwrap();
+
+    // Empty slugs should not fail
+    playlist_cache.prewarm_hot_movies(&[], &db).await;
+
+    // Clean up
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 }

@@ -146,15 +146,35 @@ fn default_movie_type() -> String {
     "movie".to_string()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct MoviesQuery {
     pub search: Option<String>,
     pub genre: Option<String>,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "movie_type")]
     pub movie_type: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-    pub page: Option<i64>,
+    pub country: Option<String>,
+    pub year: Option<String>,
+    pub quality: Option<String>,
+    pub track: Option<String>,
+    pub sort: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    pub page: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct SearchSuggestQuery {
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct SearchSuggestResponse {
+    pub results: Vec<MovieSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RecommendationsResponse {
+    pub recommendations: Vec<MovieSummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

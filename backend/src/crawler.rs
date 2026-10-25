@@ -201,8 +201,33 @@ impl CrawlerService {
                 }
             });
         } else {
-            info!("✅ Home cache is fresh (<1h), initial crawl skipped");
-            self.add_log("✅ Home cache is fresh (<1h)".to_string());
+            info!("✅ Home cache is fresh (<1h), running startup HLS prewarming...");
+            self.add_log("✅ Home cache is fresh (<1h), prewarming hot movies".to_string());
+            let home = self.get_home();
+            let mut hot_slugs = Vec::new();
+            for m in home.hero.iter().take(5) {
+                if !hot_slugs.contains(&m.slug) {
+                    hot_slugs.push(m.slug.clone());
+                }
+            }
+            for m in home.top.iter().take(10) {
+                if !hot_slugs.contains(&m.slug) {
+                    hot_slugs.push(m.slug.clone());
+                }
+            }
+            if let Some(ref cache) = self.playlist_cache {
+                let cache_clone = cache.clone();
+                let db_clone = self.db.clone();
+                tokio::spawn(async move {
+                    cache_clone.prewarm_hot_movies(&hot_slugs, &db_clone).await;
+                });
+            }
+        }
+    }
+
+    pub async fn prewarm_hot_movies(&self, slugs: &[String]) {
+        if let Some(ref cache) = self.playlist_cache {
+            cache.prewarm_hot_movies(slugs, &self.db).await;
         }
     }
 
@@ -340,6 +365,27 @@ impl CrawlerService {
             home_response.list.len(),
             home_response.total,
         ));
+
+        // 3. Prewarm top hero (5) and top (10) movies for zero-delay HLS playback
+        let mut hot_slugs = Vec::new();
+        for m in home_response.hero.iter().take(5) {
+            if !hot_slugs.contains(&m.slug) {
+                hot_slugs.push(m.slug.clone());
+            }
+        }
+        for m in home_response.top.iter().take(10) {
+            if !hot_slugs.contains(&m.slug) {
+                hot_slugs.push(m.slug.clone());
+            }
+        }
+
+        if let Some(ref cache) = self.playlist_cache {
+            let cache_clone = cache.clone();
+            let db_clone = self.db.clone();
+            tokio::spawn(async move {
+                cache_clone.prewarm_hot_movies(&hot_slugs, &db_clone).await;
+            });
+        }
 
         Ok(home_response)
     }

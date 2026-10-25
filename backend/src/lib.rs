@@ -61,6 +61,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/home", get(get_home))
         .route("/movies", get(list_movies))
         .route("/movies/:slug", get(get_movie))
+        .route("/movies/:slug/recommendations", get(get_movie_recommendations))
+        .route("/search/suggest", get(search_suggest))
         .route("/proxy/stream", get(handle_stream_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
         .route("/stream/:slug/:file", get(handle_stream_file))
@@ -187,24 +189,18 @@ pub async fn list_movies(
     let limit = query.limit.unwrap_or(24).clamp(1, 100);
     let offset = query.offset.unwrap_or_else(|| {
         if let Some(p) = query.page {
-            (p - 1).max(0) * limit
+            (p.max(1) - 1) * limit
         } else {
             0
         }
-    }).max(0);
+    });
 
-    match state.db.get_movies(
-        query.search.as_deref(),
-        query.genre.as_deref(),
-        query.movie_type.as_deref(),
-        limit,
-        offset,
-    ) {
+    match state.db.get_movies_filtered(&query) {
         Ok((movies, total)) => Ok(Json(MoviesResponse {
             movies,
             total,
-            limit,
-            offset,
+            limit: limit as i64,
+            offset: offset as i64,
         })),
         Err(err) => {
             error!("Database error in list_movies: {}", err);
@@ -214,6 +210,23 @@ pub async fn list_movies(
             ))
         }
     }
+}
+
+pub async fn search_suggest(
+    State(state): State<AppState>,
+    Query(query): Query<models::SearchSuggestQuery>,
+) -> Json<models::SearchSuggestResponse> {
+    let q = query.q.unwrap_or_default();
+    let results = state.db.search_suggest(&q, 6).unwrap_or_default();
+    Json(models::SearchSuggestResponse { results })
+}
+
+pub async fn get_movie_recommendations(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Json<models::RecommendationsResponse> {
+    let recommendations = state.db.get_recommendations(&slug, 12).unwrap_or_default();
+    Json(models::RecommendationsResponse { recommendations })
 }
 
 pub async fn get_movie(

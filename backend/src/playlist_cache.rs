@@ -102,6 +102,34 @@ impl PlaylistCache {
         }
     }
 
+    pub async fn prewarm_hot_movies(&self, slugs: &[String], db: &Database) {
+        if slugs.is_empty() {
+            return;
+        }
+        info!("🚀 [Prewarm] Starting zero-delay HLS prewarming for {} hot movies...", slugs.len());
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(3));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for slug in slugs {
+            let slug_clone = slug.clone();
+            let cache = self.clone();
+            let db_clone = db.clone();
+            let sem = semaphore.clone();
+
+            join_set.spawn(async move {
+                let _permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+                info!("⚡ [Prewarm] Prewarming HLS playlist for '{}'...", slug_clone);
+                let _ = cache.get_master(&slug_clone, false, Some(&db_clone)).await;
+            });
+        }
+
+        while join_set.join_next().await.is_some() {}
+        info!("✅ [Prewarm] Completed zero-delay HLS prewarming.");
+    }
+
     pub async fn get_master(
         &self,
         slug: &str,
