@@ -43,14 +43,21 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 3. Initialize Playlist Cache & Crawler Service
+    // 3. Initialize Admin Service (required secret)
+    let admin = webproxy_backend::AdminService::from_env()
+        .map_err(|e| anyhow::anyhow!("Configuration error: {}", e))?;
+    info!("🔒 Admin service initialized with required secret.");
+
+    // 4. Initialize Playlist Cache & Crawler Service
     let playlist_cache = webproxy_backend::PlaylistCacheService::default();
     let mut crawler = CrawlerService::new(db.clone());
     crawler.set_playlist_cache(playlist_cache.clone());
     crawler.start_background_schedule(1); // Hourly homepage sync & crawl (every 1 hour)
     crawler.check_and_trigger_initial_sync(); // Initial crawl on startup if cache is empty or stale
 
-    let state = AppState::new(db, crawler).with_playlist_cache(playlist_cache);
+    let state = AppState::new(db, crawler)
+        .with_playlist_cache(playlist_cache)
+        .with_admin(admin);
     let app = create_app(state);
 
     let port: u16 = std::env::var("PORT")

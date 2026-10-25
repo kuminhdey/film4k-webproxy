@@ -4,10 +4,11 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use crate::crawler::CrawlerStatus;
@@ -15,10 +16,33 @@ use crate::AppState;
 
 static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1000);
 
+/// Bounded session lifetime: 4 hours
+const SESSION_TTL: Duration = Duration::from_secs(4 * 3600);
+
+fn generate_secure_token() -> String {
+    let mut bytes = [0u8; 32];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        if f.read_exact(&mut bytes).is_ok() {
+            let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+            return format!("adm_{}", hex);
+        }
+    }
+    // Fallback mixing timestamp, pid, counter
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let seq = TOKEN_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let mix = now ^ ((pid as u128) << 64) ^ (seq as u128);
+    format!("adm_{:032x}", mix)
+}
+
 #[derive(Clone)]
 pub struct AdminService {
     admin_password: String,
-    sessions: Arc<RwLock<HashSet<String>>>,
+    sessions: Arc<RwLock<HashMap<String, Instant>>>,
 }
 
 impl Default for AdminService {
@@ -28,47 +52,56 @@ impl Default for AdminService {
 }
 
 impl AdminService {
-    pub fn new() -> Self {
-        let admin_password = std::env::var("ADMIN_PASSWORD")
-            .unwrap_or_else(|_| "film4k@admin2026".to_string());
-        Self {
-            admin_password,
-            sessions: Arc::new(RwLock::new(HashSet::new())),
+    pub fn from_env() -> Result<Self, String> {
+        let pass = std::env::var("ADMIN_PASSWORD")
+            .map_err(|_| "ADMIN_PASSWORD environment variable is required but not set".to_string())?;
+        let trimmed = pass.trim();
+        if trimmed.is_empty() {
+            return Err("ADMIN_PASSWORD environment variable cannot be empty".to_string());
         }
+        Ok(Self::with_password(trimmed))
+    }
+
+    pub fn new() -> Self {
+        let admin_password = std::env::var("ADMIN_PASSWORD").unwrap_or_default();
+        Self::with_password(admin_password)
     }
 
     pub fn with_password(password: impl Into<String>) -> Self {
         Self {
             admin_password: password.into(),
-            sessions: Arc::new(RwLock::new(HashSet::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn verify_password(&self, password: &str) -> bool {
+        if self.admin_password.is_empty() {
+            return false;
+        }
         self.admin_password == password
-            || password == "admin"
-            || password == "film4k2026"
-            || password == "film4k@admin2026"
     }
 
     pub fn create_session(&self) -> String {
-        let now_nano = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let seq = TOKEN_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let token = format!("adm_{:x}_{:x}", now_nano, seq);
+        let token = generate_secure_token();
+        let expires_at = Instant::now() + SESSION_TTL;
 
         let mut sessions = self.sessions.write().unwrap();
-        sessions.insert(token.clone());
+        let now = Instant::now();
+        sessions.retain(|_, &mut exp| exp > now);
+        sessions.insert(token.clone(), expires_at);
         token
+    }
+
+    pub fn invalidate_session(&self, token: &str) -> bool {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.remove(token.trim()).is_some()
     }
 
     pub fn is_authenticated(&self, headers: &HeaderMap) -> bool {
         // 1. Check X-Admin-Key
         if let Some(key_header) = headers.get("X-Admin-Key") {
             if let Ok(key) = key_header.to_str() {
-                if key == self.admin_password {
+                if !self.admin_password.is_empty() && key == self.admin_password {
                     return true;
                 }
             }
@@ -78,9 +111,12 @@ impl AdminService {
         if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    let now = Instant::now();
                     let sessions = self.sessions.read().unwrap();
-                    if sessions.contains(token.trim()) {
-                        return true;
+                    if let Some(&expires_at) = sessions.get(token.trim()) {
+                        if expires_at > now {
+                            return true;
+                        }
                     }
                 }
             }
@@ -131,6 +167,27 @@ pub async fn admin_login(
         )
             .into_response()
     }
+}
+
+pub async fn admin_logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                state.admin.invalidate_session(token);
+            }
+        }
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "message": "Logged out successfully"
+        })),
+    )
+        .into_response()
 }
 
 fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
@@ -386,6 +443,17 @@ pub async fn admin_cache_clear(
     let target_slug = payload.and_then(|p| p.slug.clone()).filter(|s| !s.trim().is_empty());
 
     if let Some(slug) = target_slug {
+        if !crate::playlist_cache::is_safe_filename(&slug) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": "Invalid slug format"
+                })),
+            )
+                .into_response();
+        }
+
         let slug_dir = base_dir.join(&slug);
         let exists = slug_dir.exists();
         if exists {
@@ -451,6 +519,17 @@ pub async fn admin_cache_clear_slug(
 ) -> Response {
     if let Err(resp) = require_auth(&state, &headers) {
         return resp;
+    }
+
+    if !crate::playlist_cache::is_safe_filename(&slug) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "Invalid slug format"
+            })),
+        )
+            .into_response();
     }
 
     let base_dir = state.playlist_cache.base_dir();
@@ -550,6 +629,11 @@ mod tests {
         assert!(admin.verify_password("my-secret-pw"));
         assert!(!admin.verify_password("wrong-pw"));
 
+        // Old aliases must all be rejected
+        assert!(!admin.verify_password("admin"));
+        assert!(!admin.verify_password("film4k2026"));
+        assert!(!admin.verify_password("film4k@admin2026"));
+
         let token = admin.create_session();
         assert!(token.starts_with("adm_"));
 
@@ -560,6 +644,10 @@ mod tests {
             HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
         assert!(admin.is_authenticated(&headers));
+
+        // Test logout/invalidation
+        assert!(admin.invalidate_session(&token));
+        assert!(!admin.is_authenticated(&headers));
 
         // Test wrong token
         let mut bad_headers = HeaderMap::new();
@@ -577,6 +665,20 @@ mod tests {
         let mut bad_key_headers = HeaderMap::new();
         bad_key_headers.insert("X-Admin-Key", HeaderValue::from_static("wrong-key"));
         assert!(!admin.is_authenticated(&bad_key_headers));
+    }
+
+    #[test]
+    fn test_admin_from_env() {
+        std::env::remove_var("ADMIN_PASSWORD");
+        assert!(AdminService::from_env().is_err());
+
+        std::env::set_var("ADMIN_PASSWORD", "   ");
+        assert!(AdminService::from_env().is_err());
+
+        std::env::set_var("ADMIN_PASSWORD", "super_secret_env_password");
+        let admin = AdminService::from_env().unwrap();
+        assert!(admin.verify_password("super_secret_env_password"));
+        std::env::remove_var("ADMIN_PASSWORD");
     }
 
     #[test]

@@ -37,26 +37,26 @@ interface AdminDashboardProps {
 const STORAGE_AUTH_KEY = 'film4k_admin_token';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) => {
-  // Authentication state
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(STORAGE_AUTH_KEY));
+  // Authentication state (bounded to active browser session/tab, avoiding persistent localStorage)
+  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem(STORAGE_AUTH_KEY));
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Stats & Progress state
+  // Stats & Progress state (initialized empty, populated from live /api/admin/stats)
   const [stats, setStats] = useState<AdminStats>({
-    total_movies: 3211,
-    total_series: 840,
-    total_single: 2371,
-    cached_m3u8_count: 3211,
+    total_movies: 0,
+    total_series: 0,
+    total_single: 0,
+    cached_m3u8_count: 0,
     crawler_is_running: false,
-    crawler_progress_percent: 100,
-    crawler_processed: 3211,
-    crawler_total: 3211,
+    crawler_progress_percent: 0,
+    crawler_processed: 0,
+    crawler_total: 0,
     crawler_current_movie: '',
-    crawler_last_run: 'Hôm nay, 09:30:00',
-    crawler_last_status: 'Hoàn tất quét toàn bộ kho dữ liệu',
+    crawler_last_run: '',
+    crawler_last_status: 'Sẵn sàng',
   });
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -151,42 +151,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
       if (res.ok) {
         const data = await res.json();
-        const savedToken = data.token || 'film4k_admin_token_default';
-        localStorage.setItem(STORAGE_AUTH_KEY, savedToken);
-        setToken(savedToken);
-        addLog('success', 'Đăng nhập phiên quản trị thành công.');
-      } else {
-        // Fallback for demo / offline pass
-        if (passwordInput.trim() === 'admin' || passwordInput.trim() === 'film4k2026') {
-          const fallbackToken = 'film4k_admin_token_local';
-          localStorage.setItem(STORAGE_AUTH_KEY, fallbackToken);
-          setToken(fallbackToken);
-          addLog('success', 'Đăng nhập phiên quản trị (chế độ bảo mật cục bộ) thành công.');
+        const savedToken = data.token;
+        if (savedToken) {
+          sessionStorage.setItem(STORAGE_AUTH_KEY, savedToken);
+          setToken(savedToken);
+          addLog('success', 'Đăng nhập phiên quản trị thành công.');
         } else {
-          const errData = await res.json().catch(() => ({}));
-          setAuthError(errData.message || 'Mật khẩu quản trị không chính xác.');
-          addLog('error', 'Xác thực quản trị thất bại: Mật khẩu không đúng.');
+          setAuthError('Không nhận được token xác thực từ máy chủ.');
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setAuthError(errData.message || 'Mật khẩu quản trị không chính xác.');
+        addLog('error', 'Xác thực quản trị thất bại: Mật khẩu không đúng.');
       }
     } catch {
-      // If network fails (e.g. backend starting up), accept valid master pass
-      if (passwordInput.trim() === 'admin' || passwordInput.trim() === 'film4k2026') {
-        const fallbackToken = 'film4k_admin_token_local';
-        localStorage.setItem(STORAGE_AUTH_KEY, fallbackToken);
-        setToken(fallbackToken);
-        addLog('warn', 'Không thể kết nối API /api/admin/login. Đã mở phiên quản trị offline.');
-      } else {
-        setAuthError('Không thể kết nối máy chủ quản trị. Vui lòng thử lại.');
-        addLog('error', 'Lỗi kết nối API máy chủ quản trị.');
-      }
+      setAuthError('Không thể kết nối máy chủ quản trị. Vui lòng thử lại.');
+      addLog('error', 'Lỗi kết nối API máy chủ quản trị.');
     } finally {
       setAuthLoading(false);
     }
   };
 
-  // Logout
-  const handleLogout = () => {
-    localStorage.removeItem(STORAGE_AUTH_KEY);
+  // Logout with server-side session invalidation
+  const handleLogout = async () => {
+    if (token) {
+      try {
+        await fetch('/api/admin/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Ignore network errors on logout
+      }
+    }
+    sessionStorage.removeItem(STORAGE_AUTH_KEY);
     setToken(null);
     setPasswordInput('');
     addLog('info', 'Đã đăng xuất khỏi tài khoản quản trị.');
@@ -315,17 +313,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       }
       setStats((s) => ({ ...s, crawler_is_running: true, crawler_progress_percent: 5 }));
       fetchStats();
-    } catch {
-      // Fallback endpoint
-      try {
-        await fetch('/api/crawler/trigger', { method: 'POST' });
-        addLog('success', 'Đã kích hoạt crawler sync ngầm.');
-        showToast('🚀 Đã bắt đầu quét toàn bộ kho phim!');
-        setStats((s) => ({ ...s, crawler_is_running: true }));
-      } catch (e: any) {
-        addLog('error', `Lỗi khi kích hoạt crawler: ${e.message || 'Network error'}`);
-        showToast('❌ Lỗi kết nối máy chủ');
-      }
+    } catch (e: any) {
+      addLog('error', `Lỗi khi kích hoạt crawler: ${e.message || 'Network error'}`);
+      showToast('❌ Lỗi kết nối máy chủ');
     } finally {
       setActionLoading(null);
     }
