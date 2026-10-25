@@ -29,3 +29,9 @@ frontend/dist/
 .DS_Store
 *.log
 AGY_FIX_PLAN.md
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.sample
