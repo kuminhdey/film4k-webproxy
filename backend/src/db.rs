@@ -37,73 +37,156 @@ impl Database {
     }
 
     fn init_tables(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
+        Self::run_migrations(&mut conn)
+    }
+
+    pub fn get_column_names(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+        let cols = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(cols)
+    }
+
+    fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
         conn.execute_batch(
             r#"
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-
-            CREATE TABLE IF NOT EXISTS movies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT UNIQUE NOT NULL,
-                movie_type TEXT NOT NULL DEFAULT 'movie',
-                title_vi TEXT,
-                title_en TEXT,
-                search_text TEXT NOT NULL DEFAULT '',
-                year INTEGER,
-                quality TEXT,
-                score REAL,
-                genres_json TEXT NOT NULL DEFAULT '[]',
-                country TEXT,
-                poster TEXT,
-                backdrop TEXT,
-                overview TEXT,
-                total_episodes INTEGER,
-                stream TEXT,
-                servers_json TEXT NOT NULL DEFAULT '[]',
-                subtitles_json TEXT NOT NULL DEFAULT '[]',
-                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS episodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                movie_slug TEXT NOT NULL,
-                season INTEGER NOT NULL DEFAULT 1,
-                episode INTEGER NOT NULL,
-                title TEXT,
-                runtime INTEGER,
-                still TEXT,
-                sources_json TEXT NOT NULL DEFAULT '[]',
-                servers_json TEXT NOT NULL DEFAULT '[]',
-                subtitles_json TEXT NOT NULL DEFAULT '[]',
-                audio_tracks_json TEXT NOT NULL DEFAULT '[]',
-                UNIQUE(movie_slug, season, episode),
-                FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug);
-            CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type);
-            CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug);
-
-            CREATE TABLE IF NOT EXISTS home_cache (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                data_json TEXT NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             "#,
         )?;
 
-        // Auto-migrate new columns for pre-existing databases
-        let _ = conn.execute("ALTER TABLE movies ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE movies ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE movies ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE movies ADD COLUMN views INTEGER NOT NULL DEFAULT 0", []);
+        let applied_versions: std::collections::HashSet<i64> = {
+            let mut stmt = conn.prepare("SELECT version FROM schema_migrations")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.filter_map(Result::ok).collect()
+        };
 
-        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'", []);
+        // Migration 1: Base schema (movies, episodes, home_cache, indexes)
+        if !applied_versions.contains(&1) {
+            conn.execute_batch(
+                r#"
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+
+                CREATE TABLE IF NOT EXISTS movies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT UNIQUE NOT NULL,
+                    movie_type TEXT NOT NULL DEFAULT 'movie',
+                    title_vi TEXT,
+                    title_en TEXT,
+                    search_text TEXT NOT NULL DEFAULT '',
+                    year INTEGER,
+                    quality TEXT,
+                    score REAL,
+                    genres_json TEXT NOT NULL DEFAULT '[]',
+                    country TEXT,
+                    poster TEXT,
+                    backdrop TEXT,
+                    overview TEXT,
+                    total_episodes INTEGER,
+                    stream TEXT,
+                    servers_json TEXT NOT NULL DEFAULT '[]',
+                    subtitles_json TEXT NOT NULL DEFAULT '[]',
+                    audio_tracks_json TEXT NOT NULL DEFAULT '[]',
+                    views INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS episodes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    movie_slug TEXT NOT NULL,
+                    season INTEGER NOT NULL DEFAULT 1,
+                    episode INTEGER NOT NULL,
+                    title TEXT,
+                    runtime INTEGER,
+                    still TEXT,
+                    sources_json TEXT NOT NULL DEFAULT '[]',
+                    servers_json TEXT NOT NULL DEFAULT '[]',
+                    subtitles_json TEXT NOT NULL DEFAULT '[]',
+                    audio_tracks_json TEXT NOT NULL DEFAULT '[]',
+                    UNIQUE(movie_slug, season, episode),
+                    FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug);
+                CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type);
+                CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug);
+
+                CREATE TABLE IF NOT EXISTS home_cache (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    data_json TEXT NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                "#,
+            )?;
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (1, 'base_schema')",
+                [],
+            )?;
+            info!("Applied schema migration 1: base_schema");
+        }
+
+        // Migration 2: Verify and safely migrate extra columns for pre-existing databases
+        if !applied_versions.contains(&2) {
+            let movie_cols = Self::get_column_names(conn, "movies")?;
+            if !movie_cols.contains(&"servers_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE movies ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+            if !movie_cols.contains(&"subtitles_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE movies ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+            if !movie_cols.contains(&"audio_tracks_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE movies ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+            if !movie_cols.contains(&"views".to_string()) {
+                conn.execute(
+                    "ALTER TABLE movies ADD COLUMN views INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+
+            let ep_cols = Self::get_column_names(conn, "episodes")?;
+            if !ep_cols.contains(&"servers_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+            if !ep_cols.contains(&"subtitles_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+            if !ep_cols.contains(&"audio_tracks_json".to_string()) {
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'",
+                    [],
+                )?;
+            }
+
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (2, 'extra_json_columns')",
+                [],
+            )?;
+            info!("Applied schema migration 2: extra_json_columns");
+        }
 
         Ok(())
     }
@@ -130,18 +213,26 @@ impl Database {
         let movies: Vec<Movie> = serde_json::from_str(&content)
             .with_context(|| "Parsing seed JSON")?;
 
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
         let mut inserted = 0;
         for movie in &movies {
-            self.upsert_movie(movie)?;
+            Self::upsert_movie_conn(&tx, movie)?;
             inserted += 1;
         }
 
-        info!("Successfully seeded {} movies into database", inserted);
+        tx.commit()?;
+        info!("Successfully seeded {} movies into database atomically", inserted);
         Ok(inserted)
     }
 
     pub fn upsert_movie(&self, movie: &Movie) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
+        Self::upsert_movie_conn(&conn, movie)
+    }
+
+    pub fn upsert_movie_conn(conn: &Connection, movie: &Movie) -> anyhow::Result<()> {
         let genres_json = serde_json::to_string(&movie.genres).unwrap_or_else(|_| "[]".to_string());
         let search_text = format!(
             "{} {} {}",
@@ -1201,5 +1292,38 @@ mod tests {
         // 4. Test finding slug by new stream url
         let slug_new = db.find_slug_by_stream_url(new_url);
         assert_eq!(slug_new.as_deref(), Some("spider-man-brand-new-day"));
+    }
+
+    #[test]
+    fn test_schema_migrations_and_versioning() {
+        let db = Database::new_in_memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+
+        // 1. Verify schema_migrations table contains expected migrations
+        let mut stmt = conn.prepare("SELECT version, name FROM schema_migrations ORDER BY version").unwrap();
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, 1);
+        assert_eq!(rows[0].1, "base_schema");
+        assert_eq!(rows[1].0, 2);
+        assert_eq!(rows[1].1, "extra_json_columns");
+
+        // 2. Verify all expected columns exist in movies
+        let movie_cols = Database::get_column_names(&conn, "movies").unwrap();
+        assert!(movie_cols.contains(&"servers_json".to_string()));
+        assert!(movie_cols.contains(&"subtitles_json".to_string()));
+        assert!(movie_cols.contains(&"audio_tracks_json".to_string()));
+        assert!(movie_cols.contains(&"views".to_string()));
+
+        // 3. Verify all expected columns exist in episodes
+        let ep_cols = Database::get_column_names(&conn, "episodes").unwrap();
+        assert!(ep_cols.contains(&"servers_json".to_string()));
+        assert!(ep_cols.contains(&"subtitles_json".to_string()));
+        assert!(ep_cols.contains(&"audio_tracks_json".to_string()));
     }
 }

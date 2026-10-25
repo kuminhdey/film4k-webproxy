@@ -1,9 +1,12 @@
 import time
 import subprocess
 import json
+import os
 
 TEST_CHUNK = "https://p16-ad-site-sign-sg.tiktokcdn.com/ad-site-i18n-sg/202608315d0d92070256ac054355903b~tplv-d5opwmad15-ttam-origin.image?lk3s=6d71dd51&x-expires=1819745989&x-signature=ba56vt3yQB04PqektPXAzJSwPeE%3D"
-SSH_CMD = "ssh -i /Users/kuminhdey/Downloads/TokenClick_DangDucMinh_System/vps-credentials/tokengiare_staging_161.pem -o StrictHostKeyChecking=no ubuntu@161.118.202.252"
+SSH_KEY_PATH = os.environ.get("SSH_KEY_PATH", "vps.pem")
+SSH_HOST = os.environ.get("SSH_HOST", "ubuntu@161.118.202.252")
+SSH_CMD = f"ssh -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no {SSH_HOST}"
 RANGE_BYTES = "0-10485759" # 10 Megabytes
 
 def run_curl_benchmark(label, curl_cmd, rounds=3):
