@@ -141,50 +141,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     };
   }, [settingsOpen]);
 
-  // Flexible servers from currentEpisode sources, movie servers, or current source
-  // Always prioritizing Server VIP (Server 1) from /api/stream/${movie.slug}/master.m3u8
+  // Single authentic Server VIP (4K Siêu Nhanh) connecting to /api/stream/${movie.slug}/master.m3u8
   const availableServers: Source[] = useMemo(() => {
-    const list: Source[] = [];
-    if (movie?.slug) {
-      list.push({
+    if (!movie?.slug) return [];
+    return [
+      {
         label: 'Server VIP (4K Siêu Nhanh)',
         hlsUrl: `/api/stream/${movie.slug}/master.m3u8`,
         proxyStreamUrl: `/api/stream/${movie.slug}/master.m3u8`,
-      });
-    }
-    if (currentEpisode && currentEpisode.sources && currentEpisode.sources.length > 0) {
-      currentEpisode.sources.forEach((s, idx) => {
-        const label = s.label || `Server ${idx + 2}`;
-        if (
-          label !== 'Server VIP (4K Siêu Nhanh)' &&
-          !list.some((existing) => existing.hlsUrl === s.hlsUrl)
-        ) {
-          list.push({
-            ...s,
-            label,
-          });
-        }
-      });
-    } else if (movie?.servers && movie.servers.length > 0) {
-      movie.servers.forEach((s, idx) => {
-        const label = s.label || `Server ${idx + 2}`;
-        if (
-          label !== 'Server VIP (4K Siêu Nhanh)' &&
-          !list.some((existing) => existing.hlsUrl === s.hlsUrl)
-        ) {
-          list.push({
-            ...s,
-            label,
-          });
-        }
-      });
-    } else if (currentSource) {
-      if (!list.some((existing) => existing.label === currentSource.label || existing.hlsUrl === currentSource.hlsUrl)) {
-        list.push(currentSource);
-      }
-    }
-    return list;
-  }, [currentEpisode, movie, currentSource]);
+      },
+    ];
+  }, [movie?.slug]);
 
   // Flexible subtitle tracks from movie.subtitles, currentEpisode.subtitles, HLS manifest, or local tracks
   const availableSubtitleOptions: SubtitleTrackOption[] = useMemo(() => {
@@ -570,30 +537,21 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           proxyStreamUrl: localMasterUrl,
         };
 
+        const virtualEp: Episode = {
+          movieSlug: data.slug,
+          season: 1,
+          episode: 1,
+          title: data.title_vi || data.title_en || 'Full Movie',
+          sources: [vipSource],
+        };
+
         if (data.episodes && data.episodes.length > 0) {
           const targetEp = initialEpisode
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
             : data.episodes[0];
           setCurrentEpisode(targetEp);
           setCurrentSource(vipSource);
-        } else if (data.servers && data.servers.length > 0) {
-          const virtualEp: Episode = {
-            movieSlug: data.slug,
-            season: 1,
-            episode: 1,
-            title: data.title_vi || data.title_en || 'Full Movie',
-            sources: [vipSource, ...data.servers.filter((s) => s.label !== 'Server VIP (4K Siêu Nhanh)')],
-          };
-          setCurrentEpisode(virtualEp);
-          setCurrentSource(vipSource);
         } else {
-          const virtualEp: Episode = {
-            movieSlug: data.slug,
-            season: 1,
-            episode: 1,
-            title: data.title_vi || data.title_en || 'Full Movie',
-            sources: [vipSource],
-          };
           setCurrentEpisode(virtualEp);
           setCurrentSource(vipSource);
         }
@@ -1042,11 +1000,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
   const handleSelectEpisode = (ep: Episode) => {
     setCurrentEpisode(ep);
-    if (ep.sources && ep.sources.length > 0) {
-      setCurrentSource(ep.sources[0]);
-    } else if (movie?.servers && movie.servers.length > 0) {
-      setCurrentSource(movie.servers[0]);
-    }
+    const localMasterUrl = movie?.slug ? `/api/stream/${movie.slug}/master.m3u8` : '';
+    const vipSource: Source = {
+      label: 'Server VIP (4K Siêu Nhanh)',
+      hlsUrl: localMasterUrl,
+      proxyStreamUrl: localMasterUrl,
+    };
+    setCurrentSource(vipSource);
     const newPath = ep.episode > 1 ? `/watch/${slug}/${ep.episode}` : `/watch/${slug}`;
     window.history.pushState({}, '', newPath);
   };
@@ -2359,13 +2319,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           </div>
         </div>
 
-        {/* Server Selection Chips */}
+        {/* Server Selection Chips / Badge */}
         <div className="wrap" style={{ maxWidth: '1100px', margin: '16px auto 0' }}>
           <div className="servers" style={{ padding: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted, #8b95ad)', marginRight: '4px' }}>
               Máy chủ phát:
             </span>
-            {availableServers.length > 0 ? (
+            {availableServers.length > 1 ? (
               availableServers.map((src, i) => {
                 const isSelected = currentSource?.hlsUrl === src.hlsUrl || currentSource?.label === src.label;
                 return (
@@ -2381,9 +2341,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 );
               })
             ) : (
-              <button type="button" className="chip on">
-                Server VIP (4K Siêu Nhanh)
-              </button>
+              <span className="chip on" style={{ cursor: 'default' }}>
+                Server VIP (4K CDN)
+              </span>
             )}
           </div>
         </div>
