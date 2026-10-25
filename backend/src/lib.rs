@@ -1,6 +1,7 @@
 pub mod crawler;
 pub mod db;
 pub mod models;
+pub mod playlist_cache;
 pub mod proxy;
 
 use axum::{
@@ -15,6 +16,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::error;
 
+pub use playlist_cache::{
+    handle_stream_file, handle_stream_master, PlaylistCache, PlaylistCacheService, StreamParams,
+};
 use crate::crawler::CrawlerService;
 use crate::db::Database;
 use crate::models::{MoviesQuery, MoviesResponse};
@@ -24,6 +28,22 @@ use crate::proxy::handle_stream_proxy;
 pub struct AppState {
     pub db: Database,
     pub crawler: CrawlerService,
+    pub playlist_cache: PlaylistCacheService,
+}
+
+impl AppState {
+    pub fn new(db: Database, crawler: CrawlerService) -> Self {
+        Self {
+            db,
+            crawler,
+            playlist_cache: PlaylistCacheService::default(),
+        }
+    }
+
+    pub fn with_playlist_cache(mut self, playlist_cache: PlaylistCacheService) -> Self {
+        self.playlist_cache = playlist_cache;
+        self
+    }
 }
 
 pub fn create_app(state: AppState) -> Router {
@@ -32,6 +52,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/movies", get(list_movies))
         .route("/movies/:slug", get(get_movie))
         .route("/proxy/stream", get(handle_stream_proxy))
+        .route("/stream/:slug/master.m3u8", get(handle_stream_master))
+        .route("/stream/:slug/:file", get(handle_stream_file))
         .route("/crawler/status", get(get_crawler_status))
         .route("/crawler/trigger", post(trigger_crawler));
 

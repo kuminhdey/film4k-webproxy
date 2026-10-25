@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let crawler = CrawlerService::new(db.clone());
     crawler.start_background_schedule(6); // Run every 6 hours
 
-    let state = AppState { db, crawler };
+    let state = AppState::new(db, crawler);
     let app = create_app(state);
 
     let port: u16 = std::env::var("PORT")

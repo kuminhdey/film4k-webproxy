@@ -196,7 +196,26 @@ pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
     let hls_path = json_val
         .get("movie")
         .and_then(|m| m.get("hlsUrl"))
-        .and_then(|h| h.as_str())?;
+        .and_then(|h| h.as_str())
+        .or_else(|| {
+            json_val
+                .get("episodes")
+                .and_then(|e| e.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|ep| ep.get("sources"))
+                .and_then(|s| s.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|src| src.get("url"))
+                .and_then(|u| u.as_str())
+        })
+        .or_else(|| {
+            json_val
+                .get("sources")
+                .and_then(|s| s.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|src| src.get("url"))
+                .and_then(|u| u.as_str())
+        })?;
 
     let full_hls = if hls_path.starts_with('/') {
         format!("https://fiml4k.fun{}", hls_path)

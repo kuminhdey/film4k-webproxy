@@ -225,10 +225,7 @@ async fn spawn_test_server() -> (String, Database) {
     }
 
     let crawler = CrawlerService::new(db.clone());
-    let state = AppState {
-        db: db.clone(),
-        crawler,
-    };
+    let state = AppState::new(db.clone(), crawler);
 
     let app = create_app(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -614,4 +611,126 @@ async fn test_api_proxy_stream_expired_token_auto_refresh() {
             "New HLS URL should contain valid stream path"
         );
     }
+}
+
+#[tokio::test]
+async fn test_local_playlist_cache_and_bytedance_direct_cdn() {
+    let (base_url, _) = spawn_test_server().await;
+    let client = Client::new();
+
+    let test_slug = "test-cached-movie";
+    let playlist_dir = std::path::PathBuf::from("data/playlists").join(test_slug);
+    tokio::fs::create_dir_all(&playlist_dir).await.unwrap();
+
+    let master_content = r#"#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",DEFAULT=YES,URI="a0.m3u8"
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="sub",NAME="Tiếng Việt",DEFAULT=NO,URI="s0.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080
+v0.m3u8
+"#;
+
+    let v0_content = r#"#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:25
+#EXT-X-MAP:URI="https://p19-ad-site-sign-sg.tiktokcdn.com/map.image?x-expires=1824367135"
+#EXTINF:24.56,
+https://p16-ad-site-sign-sg.tiktokcdn.com/chunk_video_01.image?lk3s=6d71dd51&x-expires=1824366813&x-signature=valid_sig_123
+#EXTINF:20.00,
+https://p19-ad-site-sign-sg.tiktokcdn.com/chunk_video_02.image?lk3s=6d71dd51&x-expires=1824366813&x-signature=valid_sig_456
+"#;
+
+    let a0_content = r#"#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:20
+#EXTINF:20.01,
+https://p16-ad-site-sign-sg.tiktokcdn.com/chunk_audio_01.image?lk3s=6d71dd51&x-expires=1824366775&x-signature=audio_sig_789
+"#;
+
+    // Write cached playlist files directly to disk
+    tokio::fs::write(playlist_dir.join("master.m3u8"), master_content).await.unwrap();
+    tokio::fs::write(playlist_dir.join("v0.m3u8"), v0_content).await.unwrap();
+    tokio::fs::write(playlist_dir.join("a0.m3u8"), a0_content).await.unwrap();
+
+    // 1. GET /api/stream/:slug/master.m3u8
+    let master_resp = client
+        .get(format!("{}/api/stream/{}/master.m3u8", base_url, test_slug))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(master_resp.status(), StatusCode::OK);
+    assert_eq!(
+        master_resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "application/vnd.apple.mpegurl; charset=utf-8"
+    );
+    assert_eq!(
+        master_resp
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+
+    let master_body = master_resp.text().await.unwrap();
+    assert!(master_body.contains("#EXTM3U"));
+    assert!(master_body.contains(r#"URI="a0.m3u8""#));
+    assert!(master_body.contains("v0.m3u8"));
+
+    // 2. GET /api/stream/:slug/v0.m3u8 (Sub-variant video)
+    let v0_resp = client
+        .get(format!("{}/api/stream/{}/v0.m3u8", base_url, test_slug))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(v0_resp.status(), StatusCode::OK);
+    let v0_body = v0_resp.text().await.unwrap();
+    // Direct ByteDance CDN links MUST be preserved intact
+    assert!(v0_body.contains("https://p16-ad-site-sign-sg.tiktokcdn.com/chunk_video_01.image?lk3s=6d71dd51&x-expires=1824366813&x-signature=valid_sig_123"));
+    assert!(v0_body.contains("https://p19-ad-site-sign-sg.tiktokcdn.com/chunk_video_02.image?lk3s=6d71dd51&x-expires=1824366813&x-signature=valid_sig_456"));
+
+    // 3. GET /api/stream/:slug/a0.m3u8 (Sub-variant audio)
+    let a0_resp = client
+        .get(format!("{}/api/stream/{}/a0.m3u8", base_url, test_slug))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(a0_resp.status(), StatusCode::OK);
+    let a0_body = a0_resp.text().await.unwrap();
+    assert!(a0_body.contains("https://p16-ad-site-sign-sg.tiktokcdn.com/chunk_audio_01.image?lk3s=6d71dd51&x-expires=1824366775&x-signature=audio_sig_789"));
+
+    // 4. Test invalid slug / characters protection
+    let bad_slug_resp = client
+        .get(format!("{}/api/stream/bad!slug@chars/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_slug_resp.status(), StatusCode::BAD_REQUEST);
+
+    let bad_file_resp = client
+        .get(format!("{}/api/stream/{}/bad*file?.m3u8", base_url, test_slug))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_file_resp.status(), StatusCode::BAD_REQUEST);
+
+    // 5. Test missing file
+    let missing_resp = client
+        .get(format!("{}/api/stream/{}/non_existent.m3u8", base_url, test_slug))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_resp.status(), StatusCode::NOT_FOUND);
+
+    // Clean up test directory
+    let _ = tokio::fs::remove_dir_all(&playlist_dir).await;
 }
