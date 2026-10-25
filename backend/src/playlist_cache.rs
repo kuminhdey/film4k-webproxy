@@ -54,6 +54,8 @@ pub fn extract_filename(uri: &str) -> String {
     clean.rsplit('/').next().unwrap_or(clean).to_string()
 }
 
+pub const MAX_CACHE_AGE_SECS: u64 = 4 * 3600;
+
 pub fn extract_expiration_timestamp(content: &str, stream_url: &str) -> Option<u64> {
     if let Ok(u) = Url::parse(stream_url) {
         for (k, v) in u.query_pairs() {
@@ -65,13 +67,35 @@ pub fn extract_expiration_timestamp(content: &str, stream_url: &str) -> Option<u
         }
     }
     for line in content.lines() {
-        if line.contains("x-expires=") || line.contains("expires=") {
-            if let Some(pos) = line.find("x-expires=") {
-                let rest = &line[pos + 10..];
-                let val_str = rest.split('&').next().unwrap_or(rest).split('"').next().unwrap_or(rest);
-                if let Ok(ts) = val_str.parse::<u64>() {
-                    return Some(ts);
-                }
+        if let Some(pos) = line.find("x-expires=") {
+            let rest = &line[pos + 10..];
+            let val_str = rest
+                .split('&')
+                .next()
+                .unwrap_or(rest)
+                .split('"')
+                .next()
+                .unwrap_or(rest)
+                .split('\'')
+                .next()
+                .unwrap_or(rest);
+            if let Ok(ts) = val_str.parse::<u64>() {
+                return Some(ts);
+            }
+        } else if let Some(pos) = line.find("expires=") {
+            let rest = &line[pos + 8..];
+            let val_str = rest
+                .split('&')
+                .next()
+                .unwrap_or(rest)
+                .split('"')
+                .next()
+                .unwrap_or(rest)
+                .split('\'')
+                .next()
+                .unwrap_or(rest);
+            if let Ok(ts) = val_str.parse::<u64>() {
+                return Some(ts);
             }
         }
     }
@@ -204,14 +228,43 @@ impl PlaylistCache {
                 .unwrap_or(0);
 
             if meta_path.exists() {
-                if let Ok(meta_str) = tokio::fs::read_to_string(&meta_path).await {
-                    if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                        if let Some(exp) = meta_json.get("expires_at").and_then(|v| v.as_u64()) {
-                            if now >= exp.saturating_sub(60) {
-                                is_expired = true;
-                                warn!("Cached master playlist for '{:?}' expired at {}. Re-fetching...", slug, exp);
+                match tokio::fs::read_to_string(&meta_path).await {
+                    Ok(meta_str) => match serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        Ok(meta_json) => {
+                            if let Some(exp) = meta_json.get("expires_at").and_then(|v| v.as_u64()) {
+                                if now >= exp.saturating_sub(60) {
+                                    is_expired = true;
+                                    warn!("Cached master playlist for '{:?}' expired at {}. Re-fetching...", slug, exp);
+                                }
+                            } else {
+                                // expires_at is null, missing, or invalid: apply bounded TTL
+                                let cached_at = meta_json
+                                    .get("cached_at")
+                                    .and_then(|v| v.as_u64())
+                                    .or_else(|| {
+                                        master_file.metadata().ok().and_then(|m| {
+                                            m.modified().ok()
+                                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                                .map(|d| d.as_secs())
+                                        })
+                                    })
+                                    .unwrap_or(0);
+                                if now >= cached_at.saturating_add(MAX_CACHE_AGE_SECS) {
+                                    is_expired = true;
+                                    warn!("Cached master playlist for '{:?}' with null expires_at exceeded max TTL (cached_at: {}). Re-fetching...", slug, cached_at);
+                                }
                             }
                         }
+                        Err(err) => {
+                            // Corrupted metadata: fail closed
+                            warn!("Corrupted .metadata.json for '{:?}': {}. Re-fetching...", slug, err);
+                            is_expired = true;
+                        }
+                    },
+                    Err(err) => {
+                        // Unreadable metadata: fail closed
+                        warn!("Failed to read .metadata.json for '{:?}': {}. Re-fetching...", slug, err);
+                        is_expired = true;
                     }
                 }
             } else {
@@ -254,8 +307,7 @@ impl PlaylistCache {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
-                            const MAX_CACHE_AGE_SECS: u64 = 4 * 3600;
-                            if now > mtime_secs + MAX_CACHE_AGE_SECS {
+                            if now >= mtime_secs.saturating_add(MAX_CACHE_AGE_SECS) {
                                 is_expired = true;
                                 warn!("Legacy cached master playlist for '{:?}' is older than 4h (mtime: {}). Re-fetching...", slug, mtime_secs);
                             } else {
@@ -913,6 +965,18 @@ relative_segment.ts
             Some(1789222222)
         );
 
+        let m3u8_body_alt = "#EXTM3U\n#EXTINF:10.0,\nhttps://cdn.example.com/seg.ts?expires=1789333333&key=val\n";
+        assert_eq!(
+            extract_expiration_timestamp(m3u8_body_alt, "https://film4k.net/master.m3u8"),
+            Some(1789333333)
+        );
+
+        let m3u8_quoted = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://cdn.example.com/key?expires=1789444444&id=1\"\n";
+        assert_eq!(
+            extract_expiration_timestamp(m3u8_quoted, "https://film4k.net/master.m3u8"),
+            Some(1789444444)
+        );
+
         let no_exp = "https://film4k.net/api/hls/master.m3u8";
         assert_eq!(extract_expiration_timestamp("#EXTM3U\n", no_exp), None);
     }
@@ -963,6 +1027,71 @@ relative_segment.ts
         let meta_str = tokio::fs::read_to_string(&meta_path).await.unwrap();
         let meta_json: serde_json::Value = serde_json::from_str(&meta_str).unwrap();
         assert_eq!(meta_json.get("expires_at").and_then(|v| v.as_u64()), Some(future_exp));
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_existing_metadata_null_expires_at_ttl_expiry() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_cache_null_exp_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache = PlaylistCache::new(&temp_dir);
+        let slug = "null-exp-movie";
+        let slug_dir = cache.cache_slug_dir(slug, None);
+        tokio::fs::create_dir_all(&slug_dir).await.unwrap();
+
+        let master_content = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nv0.m3u8\n";
+        tokio::fs::write(cache.master_path(slug), master_content)
+            .await
+            .unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // 1. Fresh cache with null expires_at (cached 30 mins ago)
+        let fresh_meta = serde_json::json!({
+            "cached_at": now.saturating_sub(1800),
+            "expires_at": serde_json::Value::Null,
+            "source_url": "https://fiml4k.fun/api/stream.m3u8"
+        });
+        let meta_path = slug_dir.join(".metadata.json");
+        tokio::fs::write(&meta_path, fresh_meta.to_string())
+            .await
+            .unwrap();
+
+        // Fresh cache should be returned directly
+        let fresh_res = cache.get_master(slug, false, None).await;
+        assert!(fresh_res.is_ok());
+        assert_eq!(fresh_res.unwrap(), master_content);
+
+        // 2. Expired cache with null expires_at (cached 5 hours ago > MAX_CACHE_AGE_SECS of 4 hours)
+        let expired_meta = serde_json::json!({
+            "cached_at": now.saturating_sub(5 * 3600),
+            "expires_at": serde_json::Value::Null,
+            "source_url": "https://fiml4k.fun/api/stream.m3u8"
+        });
+        tokio::fs::write(&meta_path, expired_meta.to_string())
+            .await
+            .unwrap();
+
+        // Expired cache should trigger re-fetch and fail offline (NOT return stale master)
+        let expired_res = cache.get_master(slug, false, None).await;
+        assert!(expired_res.is_err());
+
+        // 3. Corrupted .metadata.json fails closed (triggers re-fetch instead of serving stale)
+        tokio::fs::write(&meta_path, "{ broken json ...")
+            .await
+            .unwrap();
+        let corrupted_res = cache.get_master(slug, false, None).await;
+        assert!(corrupted_res.is_err());
 
         // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
