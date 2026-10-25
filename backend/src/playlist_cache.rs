@@ -83,6 +83,21 @@ impl PlaylistCache {
         self.slug_dir(slug).join(file)
     }
 
+    pub fn cache_count(&self) -> usize {
+        std::fs::read_dir(&self.base_dir)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0)
+    }
+
+    pub async fn clear_slug(&self, slug: &str) -> std::io::Result<()> {
+        let dir = self.slug_dir(slug);
+        if dir.exists() {
+            tokio::fs::remove_dir_all(dir).await
+        } else {
+            Ok(())
+        }
+    }
+
     pub async fn get_master(
         &self,
         slug: &str,

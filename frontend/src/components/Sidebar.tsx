@@ -181,6 +181,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </svg>
           <span className="side-label">Cài đặt</span>
         </a>
+        <a
+          className="side-link"
+          href="/admin"
+          onClick={(e) => {
+            e.preventDefault();
+            window.history.pushState({}, '', '/admin');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+        >
+          <svg viewBox="0 0 24 24" className="side-ico" aria-hidden="true">
+            <path d="M12 2 3 7v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V7l-9-5zm0 18c-4.1-1.2-7-5.3-7-9.5V8.3l7-3.9 7 3.9v2.2c0 4.2-2.9 8.3-7 9.5z"></path>
+          </svg>
+          <span className="side-label">Quản trị</span>
+        </a>
         <div className="side-account">
           <div className="auth-btns">
             <a
