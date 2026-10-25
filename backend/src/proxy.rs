@@ -90,10 +90,47 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Parse an IP literal from a host string, handling IPv4 and bracketed IPv6.
+pub fn parse_ip_literal(host: &str) -> Option<IpAddr> {
+    let trimmed = host.trim().trim_start_matches('[').trim_end_matches(']');
+    trimmed.parse::<IpAddr>().ok()
+}
+
+/// Check if an IP literal is explicitly allowlisted by exact policy.
+pub fn is_explicitly_allowlisted_ip(ip: &IpAddr, raw_host: &str) -> bool {
+    if is_blocked_ip(*ip) {
+        return false;
+    }
+    let ip_str = ip.to_string();
+    let host_clean = raw_host.trim().trim_start_matches('[').trim_end_matches(']');
+
+    for allowed in ALLOWED_DOMAINS {
+        if *allowed == ip_str || *allowed == host_clean {
+            return true;
+        }
+    }
+
+    if let Ok(extra) = std::env::var("ALLOWED_PROXY_ORIGINS") {
+        for origin in extra.split(',') {
+            let o = origin.trim();
+            if !o.is_empty() && (o == ip_str || o == host_clean) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Check if a host belongs to permitted upstream origins.
 pub fn is_allowed_origin(host: &str) -> bool {
     let host_lower = host.to_lowercase();
     let host_trimmed = host_lower.trim_end_matches('.');
+
+    // IP literals must NEVER match via wildcard or domain suffix
+    if let Some(ip) = parse_ip_literal(host_trimmed) {
+        return is_explicitly_allowlisted_ip(&ip, host_trimmed);
+    }
 
     for allowed in ALLOWED_DOMAINS {
         if host_trimmed == *allowed || host_trimmed.ends_with(&format!(".{}", allowed)) {
@@ -186,9 +223,13 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
         return Err("Access to internal host is denied");
     }
 
-    if let Ok(ip) = host_lower.parse::<IpAddr>() {
+    // Reject IP literals unless explicitly allowlisted by exact policy
+    if let Some(ip) = parse_ip_literal(&host_lower) {
         if is_blocked_ip(ip) {
             return Err("Access to internal host is denied");
+        }
+        if !is_explicitly_allowlisted_ip(&ip, &host_lower) {
+            return Err("Access to IP literal is not permitted by proxy policy");
         }
         return Ok(parsed);
     }
@@ -200,11 +241,14 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
     Ok(parsed)
 }
 
-/// Resolve host and validate against blocked IP ranges.
+/// Resolve host and validate against blocked IP ranges. Fails closed if resolution fails.
 pub async fn resolve_and_validate_host(host: &str, port: u16) -> Result<SocketAddr, &'static str> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    if let Some(ip) = parse_ip_literal(host) {
         if is_blocked_ip(ip) {
             return Err("Access to internal host is denied");
+        }
+        if !is_explicitly_allowlisted_ip(&ip, host) {
+            return Err("Access to IP literal is not permitted by proxy policy");
         }
         return Ok(SocketAddr::new(ip, port));
     }
@@ -228,35 +272,49 @@ pub async fn resolve_and_validate_host(host: &str, port: u16) -> Result<SocketAd
 }
 
 /// Validate redirect destinations synchronously
-pub fn validate_redirect_target(url: &Url) -> Result<(), String> {
+pub fn validate_redirect_target(url: &Url) -> Result<(), &'static str> {
     match url.scheme() {
         "http" | "https" => {}
-        _ => return Err("Forbidden scheme in redirect".to_string()),
+        _ => return Err("Forbidden scheme in redirect"),
     }
     if let Some(p) = url.port() {
         if p != 80 && p != 443 {
-            return Err("Forbidden port in redirect".to_string());
+            return Err("Forbidden port in redirect");
         }
     }
     let host = url.host_str().ok_or("Missing host in redirect")?;
-    if host.eq_ignore_ascii_case("localhost") {
-        return Err("Access to localhost is denied".to_string());
+    let host_lower = host.to_lowercase();
+    if host_lower == "localhost" {
+        return Err("Access to localhost is denied");
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    if let Some(ip) = parse_ip_literal(&host_lower) {
         if is_blocked_ip(ip) {
-            return Err("Access to internal IP is denied".to_string());
+            return Err("Access to internal IP is denied");
+        }
+        if !is_explicitly_allowlisted_ip(&ip, &host_lower) {
+            return Err("Access to IP literal is not permitted by proxy policy");
         }
         return Ok(());
     }
-    if !is_allowed_origin(host) {
-        return Err(format!("Host '{}' not permitted in redirect", host));
+    if !is_allowed_origin(&host_lower) {
+        return Err("Host not permitted in redirect");
     }
     let port = url.port_or_known_default().unwrap_or(443);
-    if let Ok(addrs) = format!("{}:{}", host, port).to_socket_addrs() {
-        for addr in addrs {
-            if is_blocked_ip(addr.ip()) {
-                return Err("Redirect resolved to blocked internal IP".to_string());
+    match format!("{}:{}", host, port).to_socket_addrs() {
+        Ok(addrs) => {
+            let mut has_addr = false;
+            for addr in addrs {
+                has_addr = true;
+                if is_blocked_ip(addr.ip()) {
+                    return Err("Redirect resolved to blocked internal IP");
+                }
             }
+            if !has_addr {
+                return Err("Redirect DNS returned no addresses");
+            }
+        }
+        Err(_) => {
+            return Err("Failed to resolve redirect host via DNS");
         }
     }
     Ok(())
@@ -432,6 +490,81 @@ pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
     Some(full_hls)
 }
 
+/// Perform an HTTP GET request with DNS pinning and manual fail-closed redirect following
+pub async fn fetch_pinned_stream(
+    target_url: &Url,
+    range: Option<&HeaderValue>,
+    max_hops: usize,
+) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
+    let mut current_url = target_url.clone();
+    let mut hops = 0;
+
+    loop {
+        let host = current_url
+            .host_str()
+            .ok_or((StatusCode::BAD_REQUEST, "Missing host in URL"))?;
+        let port = current_url.port_or_known_default().unwrap_or(443);
+
+        // Fail-closed DNS resolution & blocked IP validation
+        let resolved_addr = resolve_and_validate_host(host, port)
+            .await
+            .map_err(|err| (StatusCode::FORBIDDEN, err))?;
+
+        // Pin the resolved IP address and disable unpinned automatic redirects
+        let client = Client::builder()
+            .timeout(Duration::from_secs(15))
+            .resolve(host, resolved_addr)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client"))?;
+
+        let mut req = client.get(current_url.as_str());
+        if let Some(r) = range {
+            req = req.header(header::RANGE, r);
+        }
+        let referer = format!("https://{}/", host);
+        req = req
+            .header(header::REFERER, referer)
+            .header(
+                header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            )
+            .header(header::ACCEPT, "*/*");
+
+        let resp = req.send().await.map_err(|err| {
+            let redacted = redact_url_secrets(current_url.as_str());
+            error!("Upstream fetch error for {}: {}", redacted, err);
+            (StatusCode::BAD_GATEWAY, "Failed to connect to upstream service")
+        })?;
+
+        if resp.status().is_redirection() {
+            if hops >= max_hops {
+                return Err((StatusCode::BAD_GATEWAY, "Too many redirects"));
+            }
+            hops += 1;
+
+            let loc = resp
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|l| l.to_str().ok())
+                .ok_or((StatusCode::BAD_GATEWAY, "Missing or invalid redirect Location header"))?;
+
+            let next_url = current_url
+                .join(loc)
+                .map_err(|_| (StatusCode::BAD_GATEWAY, "Invalid redirect destination URL"))?;
+
+            // Validate redirect destination (checks scheme, port, reject IP literals, origin policy)
+            is_valid_remote_url(next_url.as_str())
+                .map_err(|err| (StatusCode::FORBIDDEN, err))?;
+
+            current_url = next_url;
+            continue;
+        }
+
+        return Ok((resp, current_url));
+    }
+}
+
 pub async fn handle_stream_proxy(
     State(state): State<AppState>,
     Query(query): Query<ProxyQuery>,
@@ -474,61 +607,10 @@ pub async fn handle_stream_proxy(
         state.db.find_slug_by_stream_url(target_str)
     });
 
-    let port = parsed_url.port_or_known_default().unwrap_or(443);
-    let host = parsed_url.host_str().unwrap_or("");
-    let resolved_addr = match resolve_and_validate_host(host, port).await {
-        Ok(addr) => addr,
-        Err(err) => return (StatusCode::FORBIDDEN, err).into_response(),
-    };
-
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .resolve(host, resolved_addr)
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 {
-                return attempt.error("Too many redirects");
-            }
-            if let Err(e) = validate_redirect_target(attempt.url()) {
-                return attempt.error(e);
-            }
-            attempt.follow()
-        }))
-        .build()
-        .unwrap_or_default();
-
-    let mut req = client.get(parsed_url.as_str());
-
-    // Forward range header if present for byte seeking
-    if let Some(range) = headers.get(header::RANGE) {
-        req = req.header(header::RANGE, range);
-    }
-
-    // Set browser headers
-    let referer = if let Some(host) = parsed_url.host_str() {
-        format!("https://{}/", host)
-    } else {
-        "https://film4k.net/".to_string()
-    };
-
-    req = req
-        .header(header::REFERER, referer)
-        .header(
-            header::USER_AGENT,
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        )
-        .header(header::ACCEPT, "*/*");
-
-    let upstream_resp = match req.send().await {
+    // Execute request with fail-closed DNS resolution, IP pinning, and secure redirect handling
+    let (upstream_resp, final_url) = match fetch_pinned_stream(&parsed_url, headers.get(header::RANGE), 5).await {
         Ok(res) => res,
-        Err(err) => {
-            let redacted = redact_url_secrets(target_str);
-            error!("Upstream fetch error for {}: {}", redacted, err);
-            return (
-                StatusCode::BAD_GATEWAY,
-                "Failed to connect to upstream service",
-            )
-                .into_response();
-        }
+        Err((code, msg)) => return (code, msg).into_response(),
     };
 
     let status = upstream_resp.status();
@@ -539,7 +621,7 @@ pub async fn handle_stream_proxy(
         .unwrap_or("")
         .to_string();
 
-    let is_m3u8 = parsed_url.path().ends_with(".m3u8")
+    let is_m3u8 = final_url.path().ends_with(".m3u8")
         || content_type.contains("mpegurl")
         || content_type.contains("application/x-mpegURL")
         || content_type.contains("vnd.apple.mpegurl");
@@ -584,46 +666,18 @@ pub async fn handle_stream_proxy(
                                 let _ = state.db.update_movie_stream(slug, &fresh_hls);
 
                                 if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
-                                    let fresh_port = fresh_url.port_or_known_default().unwrap_or(443);
-                                    let fresh_host = fresh_url.host_str().unwrap_or("");
-                                    if let Ok(fresh_addr) = resolve_and_validate_host(fresh_host, fresh_port).await {
-                                        let fresh_client = Client::builder()
-                                            .timeout(Duration::from_secs(15))
-                                            .resolve(fresh_host, fresh_addr)
-                                            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                                                if attempt.previous().len() >= 5 {
-                                                    return attempt.error("Too many redirects");
-                                                }
-                                                if let Err(e) = validate_redirect_target(attempt.url()) {
-                                                    return attempt.error(e);
-                                                }
-                                                attempt.follow()
-                                            }))
-                                            .build()
-                                            .unwrap_or_default();
-
-                                        let retry_req = fresh_client
-                                            .get(fresh_url.as_str())
-                                            .header(header::REFERER, "https://film4k.net/")
-                                            .header(
-                                                header::USER_AGENT,
-                                                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-                                            )
-                                            .header(header::ACCEPT, "*/*");
-
-                                        if let Ok(retry_resp) = retry_req.send().await {
-                                            if retry_resp.status().is_success() {
-                                                if let Ok(fresh_bytes) = retry_resp.bytes().await {
-                                                    if fresh_bytes.len() <= MAX_PLAYLIST_BYTES {
-                                                        let fresh_body = String::from_utf8_lossy(&fresh_bytes).to_string();
-                                                        let rewritten = rewrite_m3u8(
-                                                            &fresh_body,
-                                                            &fresh_url,
-                                                            "/api/proxy/stream",
-                                                            keep_cdn,
-                                                        );
-                                                        return create_m3u8_response(rewritten);
-                                                    }
+                                    if let Ok((retry_resp, final_fresh_url)) = fetch_pinned_stream(&fresh_url, headers.get(header::RANGE), 5).await {
+                                        if retry_resp.status().is_success() {
+                                            if let Ok(fresh_bytes) = retry_resp.bytes().await {
+                                                if fresh_bytes.len() <= MAX_PLAYLIST_BYTES {
+                                                    let fresh_body = String::from_utf8_lossy(&fresh_bytes).to_string();
+                                                    let rewritten = rewrite_m3u8(
+                                                        &fresh_body,
+                                                        &final_fresh_url,
+                                                        "/api/proxy/stream",
+                                                        keep_cdn,
+                                                    );
+                                                    return create_m3u8_response(rewritten);
                                                 }
                                             }
                                         }
@@ -639,13 +693,13 @@ pub async fn handle_stream_proxy(
                 }
 
                 if is_m3u8 && status.is_success() {
-                    let rewritten = rewrite_m3u8(&body_text, &parsed_url, "/api/proxy/stream", keep_cdn);
+                    let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
                     return create_m3u8_response(rewritten);
                 } else if !status.is_success() {
                     return (status, body_text).into_response();
                 }
 
-                let rewritten = rewrite_m3u8(&body_text, &parsed_url, "/api/proxy/stream", keep_cdn);
+                let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
                 create_m3u8_response(rewritten)
             }
             Err(err) => {
@@ -773,5 +827,66 @@ https://v16m-default.akamaicdn.net/chunk01.image
 
         // When keep_cdn=false, even CDN chunks must go through proxy
         assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Fv16m-default.akamaicdn.net%2Fchunk01.image"));
+    }
+
+    #[test]
+    fn test_reject_all_unallowlisted_ip_literals() {
+        // Public IPv4
+        let err1 = is_valid_remote_url("http://1.1.1.1/master.m3u8").unwrap_err();
+        assert_eq!(err1, "Access to IP literal is not permitted by proxy policy");
+
+        let err2 = is_valid_remote_url("http://8.8.8.8/chunk.ts").unwrap_err();
+        assert_eq!(err2, "Access to IP literal is not permitted by proxy policy");
+
+        // Public IPv6
+        let err3 = is_valid_remote_url("http://[2606:4700:4700::1111]/master.m3u8").unwrap_err();
+        assert_eq!(err3, "Access to IP literal is not permitted by proxy policy");
+
+        // Private / loopback IPv4
+        let err4 = is_valid_remote_url("http://127.0.0.1:8090/status").unwrap_err();
+        assert_eq!(err4, "Access to internal host is denied");
+
+        let err5 = is_valid_remote_url("http://192.168.1.1/admin").unwrap_err();
+        assert_eq!(err5, "Access to internal host is denied");
+
+        // Loopback IPv6
+        let err6 = is_valid_remote_url("http://[::1]/status").unwrap_err();
+        assert_eq!(err6, "Access to internal host is denied");
+    }
+
+    #[test]
+    fn test_validate_redirect_target_rejects_ip_literals() {
+        let u1 = Url::parse("http://1.1.1.1/sub.m3u8").unwrap();
+        assert_eq!(
+            validate_redirect_target(&u1).unwrap_err(),
+            "Access to IP literal is not permitted by proxy policy"
+        );
+
+        let u2 = Url::parse("http://127.0.0.1/sub.m3u8").unwrap();
+        assert_eq!(
+            validate_redirect_target(&u2).unwrap_err(),
+            "Access to internal IP is denied"
+        );
+
+        let u3 = Url::parse("http://[2606:4700:4700::1111]/sub.m3u8").unwrap();
+        assert_eq!(
+            validate_redirect_target(&u3).unwrap_err(),
+            "Access to IP literal is not permitted by proxy policy"
+        );
+
+        let u4 = Url::parse("https://evil.com/sub.m3u8").unwrap();
+        assert_eq!(
+            validate_redirect_target(&u4).unwrap_err(),
+            "Host not permitted in redirect"
+        );
+
+        let u_valid = Url::parse("https://film4k.net/api/hls/sub.m3u8").unwrap();
+        assert!(validate_redirect_target(&u_valid).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_validate_host_fails_closed_on_dns_failure() {
+        let res = resolve_and_validate_host("nonexistent-domain-xyz-12345.com", 443).await;
+        assert_eq!(res.unwrap_err(), "Failed to resolve host via DNS");
     }
 }

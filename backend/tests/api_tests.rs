@@ -1441,3 +1441,71 @@ async fn test_api_stream_episode_routing_and_validation() {
     // Clean up test cache
     let _ = tokio::fs::remove_dir_all(&ep2_dir).await;
 }
+
+#[tokio::test]
+async fn test_api_stream_episode_nonexistent_never_plays_episode_one() {
+    let (base_url, _db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // Episode 99 does not exist for breaking-bad (only eps 1 and 2 exist in seed data)
+    let resp = client
+        .get(format!("{}/api/stream/breaking-bad/ep/99/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Episode 99 for slug 'breaking-bad' is not available"));
+    // Ensure episode 1 URL is NOT returned
+    assert!(!body.contains("bb_s1e1.m3u8"));
+}
+
+#[tokio::test]
+async fn test_api_proxy_stream_rejects_ip_literals_and_fails_closed_dns() {
+    let (base_url, _db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Reject public IPv4 literals
+    let resp_ip1 = client
+        .get(format!("{}/api/proxy/stream?url=http://1.1.1.1/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_ip1.status(), StatusCode::FORBIDDEN);
+    let text1 = resp_ip1.text().await.unwrap();
+    assert!(text1.contains("Access to IP literal is not permitted by proxy policy"));
+
+    let resp_ip2 = client
+        .get(format!("{}/api/proxy/stream?url=http://8.8.8.8/chunk.ts", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_ip2.status(), StatusCode::FORBIDDEN);
+
+    // 2. Reject IPv6 literals
+    let resp_ipv6 = client
+        .get(format!("{}/api/proxy/stream?url=http://[2606:4700:4700::1111]/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_ipv6.status(), StatusCode::FORBIDDEN);
+
+    // 3. Reject loopback and internal IPs
+    let resp_local = client
+        .get(format!("{}/api/proxy/stream?url=http://127.0.0.1:8090/status", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_local.status(), StatusCode::FORBIDDEN);
+
+    // 4. DNS failure on non-existent domain fails closed
+    let resp_dns = client
+        .get(format!("{}/api/proxy/stream?url=https://unresolvable-domain-xyz.film4k.net/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_dns.status(), StatusCode::FORBIDDEN);
+    let text_dns = resp_dns.text().await.unwrap();
+    assert!(text_dns.contains("Failed to resolve host via DNS"));
+}

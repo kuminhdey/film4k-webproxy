@@ -195,20 +195,76 @@ impl PlaylistCache {
         let slug_dir = self.cache_slug_dir(slug, ep);
 
         if !refresh && master_file.exists() {
-            // Check signed URL expiration via metadata
+            // Check signed URL expiration via metadata or file inspection
             let meta_path = slug_dir.join(".metadata.json");
             let mut is_expired = false;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
             if meta_path.exists() {
                 if let Ok(meta_str) = tokio::fs::read_to_string(&meta_path).await {
                     if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
                         if let Some(exp) = meta_json.get("expires_at").and_then(|v| v.as_u64()) {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
                             if now >= exp.saturating_sub(60) {
                                 is_expired = true;
                                 warn!("Cached master playlist for '{:?}' expired at {}. Re-fetching...", slug, exp);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Existing cache without .metadata.json
+                if let Ok(content) = tokio::fs::read_to_string(&master_file).await {
+                    let mut detected_exp = extract_expiration_timestamp(&content, "");
+                    if detected_exp.is_none() {
+                        if let Ok(mut entries) = tokio::fs::read_dir(&slug_dir).await {
+                            while let Ok(Some(entry)) = entries.next_entry().await {
+                                let fname = entry.file_name().to_string_lossy().to_string();
+                                if fname.ends_with(".m3u8") && fname != "master.m3u8" {
+                                    if let Ok(sub_content) = tokio::fs::read_to_string(entry.path()).await {
+                                        if let Some(exp) = extract_expiration_timestamp(&sub_content, "") {
+                                            if detected_exp.is_none() || detected_exp > Some(exp) {
+                                                detected_exp = Some(exp);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(exp) = detected_exp {
+                        if now >= exp.saturating_sub(60) {
+                            is_expired = true;
+                            warn!("Legacy cached playlist for '{:?}' has expired timestamp {}. Re-fetching...", slug, exp);
+                        } else {
+                            // Backfill metadata with detected timestamp
+                            let meta_json = serde_json::json!({
+                                "cached_at": now,
+                                "expires_at": exp,
+                                "source_url": ""
+                            });
+                            let _ = tokio::fs::write(&meta_path, meta_json.to_string()).await;
+                        }
+                    } else if let Ok(fs_meta) = tokio::fs::metadata(&master_file).await {
+                        if let Ok(modified) = fs_meta.modified() {
+                            let mtime_secs = modified
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            const MAX_CACHE_AGE_SECS: u64 = 4 * 3600;
+                            if now > mtime_secs + MAX_CACHE_AGE_SECS {
+                                is_expired = true;
+                                warn!("Legacy cached master playlist for '{:?}' is older than 4h (mtime: {}). Re-fetching...", slug, mtime_secs);
+                            } else {
+                                let meta_json = serde_json::json!({
+                                    "cached_at": mtime_secs,
+                                    "expires_at": mtime_secs + MAX_CACHE_AGE_SECS,
+                                    "source_url": ""
+                                });
+                                let _ = tokio::fs::write(&meta_path, meta_json.to_string()).await;
                             }
                         }
                     }
@@ -295,7 +351,7 @@ impl PlaylistCache {
         // 1. Get fresh upstream master HLS URL from API or DB fallback
         let master_hls_url = match ep_num {
             Some(e_num) if e_num > 1 => {
-                if let Some(db) = db {
+                let ep_source = if let Some(db) = db {
                     if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
                         let target_ep = movie.episodes.iter().find(|e| e.episode == e_num);
                         if let Some(ep) = target_ep {
@@ -314,24 +370,26 @@ impl PlaylistCache {
                     }
                 } else {
                     None
+                };
+
+                // When ep_num > 1 has no matching source, return a clear unavailable error.
+                // NEVER fall back to title API or episode 1.
+                match ep_source {
+                    Some(url) => url,
+                    None => {
+                        return Err((
+                            StatusCode::NOT_FOUND,
+                            format!("Episode {} for slug '{}' is not available", e_num, slug),
+                        ));
+                    }
                 }
             }
-            _ => None,
-        };
-
-        let master_hls_url = match master_hls_url {
-            Some(url) => url,
-            None => match fetch_upstream_title_hls(slug).await {
+            _ => match fetch_upstream_title_hls(slug).await {
                 Some(url) => url,
                 None => {
                     if let Some(db) = db {
                         if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
-                            let target_ep = if let Some(e_num) = ep_num {
-                                movie.episodes.iter().find(|e| e.episode == e_num)
-                            } else {
-                                movie.episodes.first()
-                            };
-
+                            let target_ep = movie.episodes.first();
                             if let Some(ep) = target_ep {
                                 if let Some(src) = ep.sources.first() {
                                     if !src.hls_url.trim().is_empty() {
@@ -378,7 +436,7 @@ impl PlaylistCache {
                         ));
                     }
                 }
-            }
+            },
         };
 
         let master_url_parsed = Url::parse(&master_hls_url).map_err(|e| {
@@ -857,5 +915,56 @@ relative_segment.ts
 
         let no_exp = "https://film4k.net/api/hls/master.m3u8";
         assert_eq!(extract_expiration_timestamp("#EXTM3U\n", no_exp), None);
+    }
+
+    #[tokio::test]
+    async fn test_episode_greater_than_one_never_falls_back_to_episode_one() {
+        let db = Database::new_in_memory().unwrap();
+        let cache = PlaylistCache::new("/tmp/test_cache_never_fallback");
+
+        // breaking-bad is not in db yet, or has no episode 99
+        let res = cache
+            .crawl_and_cache_for_episode("breaking-bad", Some(99), Some(&db))
+            .await;
+
+        assert!(res.is_err());
+        let (status, msg) = res.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(msg, "Episode 99 for slug 'breaking-bad' is not available");
+    }
+
+    #[tokio::test]
+    async fn test_legacy_cache_without_metadata_backfill_and_expiry() {
+        let temp_dir = std::env::temp_dir().join(format!("test_cache_legacy_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let cache = PlaylistCache::new(&temp_dir);
+        let slug = "test-movie";
+        let slug_dir = cache.cache_slug_dir(slug, None);
+        tokio::fs::create_dir_all(&slug_dir).await.unwrap();
+
+        // 1. Valid future playlist without .metadata.json
+        let future_exp = 2100000000u64; // Far in the future
+        let master_content = format!(
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhttps://cdn.example.com/v0.m3u8?x-expires={}\n",
+            future_exp
+        );
+        tokio::fs::write(cache.master_path(slug), &master_content).await.unwrap();
+
+        // Ensure .metadata.json does NOT exist initially
+        let meta_path = slug_dir.join(".metadata.json");
+        assert!(!meta_path.exists());
+
+        // get_master should succeed and backfill .metadata.json
+        let result = cache.get_master(slug, false, None).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), master_content);
+
+        // Verify .metadata.json was backfilled
+        assert!(meta_path.exists());
+        let meta_str = tokio::fs::read_to_string(&meta_path).await.unwrap();
+        let meta_json: serde_json::Value = serde_json::from_str(&meta_str).unwrap();
+        assert_eq!(meta_json.get("expires_at").and_then(|v| v.as_u64()), Some(future_exp));
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }
