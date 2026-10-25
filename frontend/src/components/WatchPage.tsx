@@ -34,6 +34,16 @@ import {
   SubtitleCue,
 } from '../utils/subtitles';
 import { getQualityDisplayInfo, sortQualitiesDescending, QualityLevel } from '../utils/quality';
+import {
+  MoviePlaybackConfig,
+  getMovieConfig,
+  saveMovieConfig,
+  SubtitleSettings,
+  getGlobalSubtitleSettings,
+  saveGlobalSubtitleSettings,
+} from '../utils/movieConfig';
+
+export type { SubtitleSettings, MoviePlaybackConfig };
 
 export interface SubtitleTrackOption {
   id: string;
@@ -41,20 +51,6 @@ export interface SubtitleTrackOption {
   url?: string;
   hlsTrackId?: number;
 }
-
-export interface SubtitleSettings {
-  fontSize: 'small' | 'medium' | 'large';
-  fontColor: string;
-  bgStyle: 'outline' | 'semi' | 'solid';
-}
-
-const DEFAULT_SUBTITLE_SETTINGS: SubtitleSettings = {
-  fontSize: 'medium',
-  fontColor: '#ffffff',
-  bgStyle: 'outline',
-};
-
-const SUBTITLE_SETTINGS_STORAGE_KEY = 'bofilm_subtitle_settings';
 
 interface WatchPageProps {
   slug: string;
@@ -85,7 +81,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [showStats, setShowStats] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMenu, setSettingsMenu] = useState<SettingsSubmenu>('main');
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(() => {
+    const cfg = getMovieConfig(slug);
+    return cfg.playbackSpeed !== undefined ? cfg.playbackSpeed : 1;
+  });
 
   // Subtitle state (Dynamic from movie.subtitles, episode.subtitles, HLS manifest, or local)
   const [hlsSubtitleTracks, setHlsSubtitleTracks] = useState<SubtitleTrackOption[]>([]);
@@ -93,35 +92,30 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [activeCues, setActiveCues] = useState<SubtitleCue[] | null>(null);
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string | null>(null);
 
-  // Subtitle appearance settings (Font size, Color, Background style)
-  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings>(() => {
-    try {
-      const saved = localStorage.getItem(SUBTITLE_SETTINGS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          fontSize: ['small', 'medium', 'large'].includes(parsed.fontSize) ? parsed.fontSize : 'medium',
-          fontColor: parsed.fontColor || '#ffffff',
-          bgStyle: ['outline', 'semi', 'solid'].includes(parsed.bgStyle) ? parsed.bgStyle : 'outline',
-        };
-      }
-    } catch (e) {
-      console.warn('Failed to parse subtitle settings from localStorage', e);
-    }
-    return DEFAULT_SUBTITLE_SETTINGS;
-  });
+  // Subtitle appearance settings (Font size, Color, Background style) - Global across all movies
+  const [subtitleSettings, setSubtitleSettings] = useState<SubtitleSettings>(() => getGlobalSubtitleSettings());
 
   const updateSubtitleSettings = (updates: Partial<SubtitleSettings>) => {
-    setSubtitleSettings((prev) => {
-      const next = { ...prev, ...updates };
-      try {
-        localStorage.setItem(SUBTITLE_SETTINGS_STORAGE_KEY, JSON.stringify(next));
-      } catch (e) {
-        console.warn('Failed to save subtitle settings to localStorage', e);
-      }
-      return next;
-    });
+    const next = saveGlobalSubtitleSettings(updates);
+    setSubtitleSettings(next);
   };
+
+  // Helper to persist selected subtitle track per movie
+  const handleSelectCaption = (captionLabel: string) => {
+    setSelectedCaption(captionLabel);
+    saveMovieConfig(slug, { selectedCaption: captionLabel });
+  };
+
+  // Keep per-movie playback speed and global subtitle appearance synced when slug changes
+  useEffect(() => {
+    const cfg = getMovieConfig(slug);
+    const speed = cfg.playbackSpeed !== undefined ? cfg.playbackSpeed : 1;
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+    setSubtitleSettings(getGlobalSubtitleSettings());
+  }, [slug]);
 
   const subtitleFontSize = useMemo(() => {
     switch (subtitleSettings.fontSize) {
@@ -879,6 +873,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           setActiveResolution('3832x1600');
         }
 
+        const savedCfg = getMovieConfig(data.slug);
+
         // Configure audio tracks if provided by movie
         if (data.audio_tracks && data.audio_tracks.length > 0) {
           const customAudios = data.audio_tracks.map((tr, idx) => ({
@@ -886,13 +882,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             name: typeof tr === 'string' ? tr : tr.name || (tr as any).label || `Audio ${idx + 1}`,
           }));
           setAudioTracks(customAudios);
-          setActiveAudioTrack(customAudios[0].id);
-          setActiveAudioName(customAudios[0].name);
+          const matched = savedCfg.selectedAudioName
+            ? customAudios.find((t) => t.name === savedCfg.selectedAudioName)
+            : null;
+          const chosen = matched || customAudios[0];
+          setActiveAudioTrack(chosen.id);
+          setActiveAudioName(chosen.name);
         }
 
-        // Configure initial subtitles from DB or fallback
+        // Configure initial subtitles respecting saved per-movie config
         let initialCaption = 'Tắt';
-        if (data.subtitles && data.subtitles.length > 0) {
+        if (savedCfg.selectedCaption !== undefined) {
+          initialCaption = savedCfg.selectedCaption;
+        } else if (data.subtitles && data.subtitles.length > 0) {
           const firstSub = data.subtitles[0];
           initialCaption = typeof firstSub === 'string' ? firstSub : firstSub.label || firstSub.name || 'Phụ đề 1';
         } else if (slug === 'spider-man-brand-new-day' && SUBTITLE_TRACKS[slug]) {
@@ -916,15 +918,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           sources: [vipSource],
         };
 
+        let initialSource = vipSource;
         if (data.episodes && data.episodes.length > 0) {
           const targetEp = initialEpisode
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
             : data.episodes[0];
           setCurrentEpisode(targetEp);
-          setCurrentSource(vipSource);
+          if (savedCfg.serverLabel && targetEp.sources) {
+            const matchedSrc = targetEp.sources.find((s) => s.label === savedCfg.serverLabel);
+            if (matchedSrc) initialSource = matchedSrc;
+          }
+          setCurrentSource(initialSource);
         } else {
           setCurrentEpisode(virtualEp);
-          setCurrentSource(vipSource);
+          setCurrentSource(initialSource);
         }
       })
       .catch((err) => {
@@ -965,6 +972,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        const savedCfg = getMovieConfig(slug);
+
         if (data.levels && data.levels.length > 0) {
           const qList: QualityLevel[] = data.levels.map((lvl, index) => ({
             id: index,
@@ -973,19 +982,35 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             bitrate: lvl.bitrate,
           }));
           setQualities(qList);
-          const sorted = sortQualitiesDescending(qList);
-          const topLvl = sorted[0];
-          if (topLvl && topLvl.height) {
-            const info = getQualityDisplayInfo(topLvl.height, topLvl.width);
-            setAutoQualityLabel(info.label);
-            setActiveResolution(info.resolution);
-            if (topLvl.bitrate) {
-              setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
+
+          if (savedCfg.selectedQualityId !== undefined && savedCfg.selectedQualityId >= 0) {
+            const targetQ = qList.find((q) => q.id === savedCfg.selectedQualityId);
+            if (targetQ) {
+              hls.currentLevel = targetQ.id;
+              hls.loadLevel = targetQ.id;
+              setActiveQuality(targetQ.id);
+              const info = getQualityDisplayInfo(targetQ.height, targetQ.width);
+              setAutoQualityLabel(info.label);
+              setActiveResolution(info.resolution);
+              if (targetQ.bitrate) {
+                setActiveBitrate(`${(targetQ.bitrate / 1000000).toFixed(1)} Mbps`);
+              }
+            }
+          } else {
+            const sorted = sortQualitiesDescending(qList);
+            const topLvl = sorted[0];
+            if (topLvl && topLvl.height) {
+              const info = getQualityDisplayInfo(topLvl.height, topLvl.width);
+              setAutoQualityLabel(info.label);
+              setActiveResolution(info.resolution);
+              if (topLvl.bitrate) {
+                setActiveBitrate(`${(topLvl.bitrate / 1000000).toFixed(1)} Mbps`);
+              }
             }
           }
         }
 
-        // Fix Audio Tracks menu: Populate immediately at MANIFEST_PARSED!
+        // Fix Audio Tracks menu: Populate immediately at MANIFEST_PARSED & restore saved audio
         const hlsAudios =
           data.audioTracks && data.audioTracks.length > 0
             ? data.audioTracks
@@ -999,10 +1024,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             name: tr.name || tr.lang || `Track ${tr.id + 1}`,
           }));
           setAudioTracks(tracks);
-          const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
-          setActiveAudioTrack(curId);
-          if (tracks[curId]) {
-            setActiveAudioName(tracks[curId].name);
+          const matched = savedCfg.selectedAudioName
+            ? tracks.find((t) => t.name === savedCfg.selectedAudioName)
+            : null;
+          if (matched) {
+            const trackNum = typeof matched.id === 'number' ? matched.id : 0;
+            hls.audioTrack = trackNum;
+            setActiveAudioTrack(matched.id);
+            setActiveAudioName(matched.name);
+          } else {
+            const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+            setActiveAudioTrack(curId);
+            if (tracks[curId]) {
+              setActiveAudioName(tracks[curId].name);
+            }
           }
         } else if (movie?.audio_tracks && movie.audio_tracks.length > 0) {
           const fallbackTracks = movie.audio_tracks.map((tr, idx) => ({
@@ -1013,11 +1048,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 : (tr as any).name || (tr as any).label || (tr as any).lang || `Audio ${idx + 1}`,
           }));
           setAudioTracks(fallbackTracks);
-          setActiveAudioTrack(fallbackTracks[0].id);
-          setActiveAudioName(fallbackTracks[0].name);
+          const matched = savedCfg.selectedAudioName
+            ? fallbackTracks.find((t) => t.name === savedCfg.selectedAudioName)
+            : null;
+          const chosen = matched || fallbackTracks[0];
+          setActiveAudioTrack(chosen.id);
+          setActiveAudioName(chosen.name);
         }
 
-        // Subtitles from manifest
+        // Subtitles from manifest & restore saved caption
         if (data.subtitleTracks && data.subtitleTracks.length > 0) {
           const subs: SubtitleTrackOption[] = data.subtitleTracks.map((tr) => ({
             id: `hls-${tr.id}`,
@@ -1026,6 +1065,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             url: tr.url,
           }));
           setHlsSubtitleTracks(subs);
+          if (savedCfg.selectedCaption) {
+            if (savedCfg.selectedCaption === 'Tắt') {
+              setSelectedCaption('Tắt');
+            } else {
+              const matched = subs.find((s) => s.label === savedCfg.selectedCaption);
+              if (matched) {
+                setSelectedCaption(matched.label);
+              }
+            }
+          }
         }
 
         // Seek on MANIFEST_PARSED: handle server switch or resume playback
@@ -1087,6 +1136,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             url: tr.url,
           }));
           setHlsSubtitleTracks(subs);
+          const savedCfg = getMovieConfig(slug);
+          if (savedCfg.selectedCaption) {
+            if (savedCfg.selectedCaption === 'Tắt') {
+              setSelectedCaption('Tắt');
+            } else {
+              const matched = subs.find((s) => s.label === savedCfg.selectedCaption);
+              if (matched) {
+                setSelectedCaption(matched.label);
+              }
+            }
+          }
         }
       });
 
@@ -1111,10 +1171,21 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             name: tr.name || tr.lang || `Track ${tr.id + 1}`,
           }));
           setAudioTracks(tracks);
-          const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
-          setActiveAudioTrack(curId);
-          if (tracks[curId]) {
-            setActiveAudioName(tracks[curId].name);
+          const savedCfg = getMovieConfig(slug);
+          const matched = savedCfg.selectedAudioName
+            ? tracks.find((t) => t.name === savedCfg.selectedAudioName)
+            : null;
+          if (matched) {
+            const trackNum = typeof matched.id === 'number' ? matched.id : 0;
+            hls.audioTrack = trackNum;
+            setActiveAudioTrack(matched.id);
+            setActiveAudioName(matched.name);
+          } else {
+            const curId = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+            setActiveAudioTrack(curId);
+            if (tracks[curId]) {
+              setActiveAudioName(tracks[curId].name);
+            }
           }
         }
       });
@@ -1277,6 +1348,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         }
       }
 
+      // Restore saved playback speed if any
+      const cfg = getMovieConfig(slug);
+      const speed = cfg.playbackSpeed !== undefined ? cfg.playbackSpeed : playbackSpeed;
+      if (speed && speed !== 1) {
+        videoRef.current.playbackRate = speed;
+      }
+
       // Resume playback check: seek if not resumed yet or if video.currentTime reset to 0
       if (!isStartFromBeginning) {
         const saved = getMovieProgress(slug, currentEpisode?.episode);
@@ -1411,6 +1489,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       }
     }
     setActiveQuality(id);
+    saveMovieConfig(slug, { selectedQualityId: id });
     if (id >= 0) {
       const q = qualities.find((item) => item.id === id);
       if (q) {
@@ -1464,6 +1543,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       displayAudioTracks.find((t) => String(t.id) === String(id))?.name ||
       `Track ${id}`;
     setActiveAudioName(targetName);
+    saveMovieConfig(slug, { selectedAudioName: targetName });
     setSettingsMenu('main');
   };
 
@@ -1473,13 +1553,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       savedSeekTimeRef.current = videoRef.current.currentTime;
     }
     setCurrentSource(src);
+    saveMovieConfig(slug, { serverLabel: src.label });
   };
 
   const handleSelectSpeed = (speed: number) => {
     if (videoRef.current) {
       videoRef.current.playbackRate = speed;
-      setPlaybackSpeed(speed);
     }
+    setPlaybackSpeed(speed);
+    saveMovieConfig(slug, { playbackSpeed: speed });
     setSettingsMenu('main');
   };
 
@@ -2567,7 +2649,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       {/* Off / Tắt option */}
                       <button
                         type="button"
-                        onClick={() => setSelectedCaption('Tắt')}
+                        onClick={() => handleSelectCaption('Tắt')}
                         style={{
                           minHeight: '36px',
                           background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.10)' : 'none',
@@ -2607,7 +2689,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                           <button
                             key={opt.id}
                             type="button"
-                            onClick={() => setSelectedCaption(opt.label)}
+                            onClick={() => handleSelectCaption(opt.label)}
                             style={{
                               minHeight: '36px',
                               background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
@@ -3013,10 +3095,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   onClick={() => {
                     if (selectedCaption === 'Tắt') {
                       if (availableSubtitleOptions.length > 0) {
-                        setSelectedCaption(availableSubtitleOptions[0].label);
+                        handleSelectCaption(availableSubtitleOptions[0].label);
                       }
                     } else {
-                      setSelectedCaption('Tắt');
+                      handleSelectCaption('Tắt');
                     }
                   }}
                   style={{
