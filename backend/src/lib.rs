@@ -19,7 +19,8 @@ use tracing::error;
 
 pub use admin::AdminService;
 pub use playlist_cache::{
-    handle_stream_file, handle_stream_master, PlaylistCache, PlaylistCacheService, StreamParams,
+    handle_stream_file, handle_stream_file_ep, handle_stream_master, handle_stream_master_ep,
+    PlaylistCache, PlaylistCacheService, StreamParams,
 };
 use crate::crawler::CrawlerService;
 use crate::db::Database;
@@ -66,6 +67,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/search/suggest", get(search_suggest))
         .route("/proxy/stream", get(handle_stream_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
+        .route("/stream/:slug/ep/:ep/master.m3u8", get(handle_stream_master_ep))
+        .route("/stream/:slug/ep/:ep/:file", get(handle_stream_file_ep))
         .route("/stream/:slug/:file", get(handle_stream_file))
         .route("/crawler/status", get(get_crawler_status))
         .route("/admin/login", post(admin::admin_login))

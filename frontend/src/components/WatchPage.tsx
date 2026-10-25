@@ -52,6 +52,26 @@ export interface SubtitleTrackOption {
   hlsTrackId?: number;
 }
 
+export function buildRefreshUrl(urlStr: string): string {
+  try {
+    const url = new URL(urlStr, window.location.origin);
+    url.searchParams.set('refresh', '1');
+    url.searchParams.set('_t', Date.now().toString());
+    if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+      return `${url.pathname}${url.search}`;
+    }
+    return url.toString();
+  } catch {
+    const separator = urlStr.includes('?') ? '&' : '?';
+    return `${urlStr}${separator}refresh=1&_t=${Date.now()}`;
+  }
+}
+
+export function getEpisodeHlsUrl(slug: string, epNum?: number): string {
+  const num = epNum && epNum > 1 ? epNum : 1;
+  return num > 1 ? `/api/stream/${slug}/ep/${num}/master.m3u8` : `/api/stream/${slug}/master.m3u8`;
+}
+
 interface WatchPageProps {
   slug: string;
   initialEpisode?: number;
@@ -368,17 +388,18 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     };
   }, [settingsOpen]);
 
-  // Single authentic Server VIP (4K Siêu Nhanh) connecting to /api/stream/${movie.slug}/master.m3u8
+  // Single authentic Server VIP (4K Siêu Nhanh) connecting to /api/stream/${movie.slug}/master.m3u8 (or ep master)
   const availableServers: Source[] = useMemo(() => {
     if (!movie?.slug) return [];
+    const streamPath = getEpisodeHlsUrl(movie.slug, currentEpisode?.episode);
     return [
       {
         label: 'Server VIP (4K Siêu Nhanh)',
-        hlsUrl: `/api/stream/${movie.slug}/master.m3u8`,
-        proxyStreamUrl: `/api/stream/${movie.slug}/master.m3u8`,
+        hlsUrl: streamPath,
+        proxyStreamUrl: streamPath,
       },
     ];
-  }, [movie?.slug]);
+  }, [movie?.slug, currentEpisode?.episode]);
 
   // Flexible subtitle tracks from HLS manifest, movie.subtitles, currentEpisode.subtitles, or local tracks
   const availableSubtitleOptions: SubtitleTrackOption[] = useMemo(() => {
@@ -898,12 +919,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           const firstSub = data.subtitles[0];
           initialCaption = typeof firstSub === 'string' ? firstSub : firstSub.label || firstSub.name || 'Phụ đề 1';
         } else if (slug === 'spider-man-brand-new-day' && SUBTITLE_TRACKS[slug]) {
-          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Bơ Film (Tiếng Việt)';
+          initialCaption = Object.keys(SUBTITLE_TRACKS[slug])[0] || 'Tiếng Việt';
         }
         setSelectedCaption(initialCaption);
 
-        // Sources & Server initialization: prioritize Server VIP connecting to /api/stream/${data.slug}/master.m3u8
-        const localMasterUrl = `/api/stream/${data.slug}/master.m3u8`;
+        // Sources & Server initialization: prioritize Server VIP connecting to /api/stream/${data.slug}/master.m3u8 (or ep master)
+        const initialEpNum = initialEpisode || 1;
+        const localMasterUrl = getEpisodeHlsUrl(data.slug, initialEpNum);
         const vipSource: Source = {
           label: 'Server VIP (4K Siêu Nhanh)',
           hlsUrl: localMasterUrl,
@@ -924,6 +946,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             ? data.episodes.find((e) => e.episode === initialEpisode) || data.episodes[0]
             : data.episodes[0];
           setCurrentEpisode(targetEp);
+          const epStreamUrl = getEpisodeHlsUrl(data.slug, targetEp.episode);
+          const epVipSource: Source = {
+            label: 'Server VIP (4K Siêu Nhanh)',
+            hlsUrl: epStreamUrl,
+            proxyStreamUrl: epStreamUrl,
+          };
+          initialSource = epVipSource;
           if (savedCfg.serverLabel && targetEp.sources) {
             const matchedSrc = targetEp.sources.find((s) => s.label === savedCfg.serverLabel);
             if (matchedSrc) initialSource = matchedSrc;
@@ -1226,45 +1255,33 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       hls.on(Hls.Events.ERROR, (_, data) => {
         const is403 = data.response && data.response.code === 403;
         if (data.fatal || is403) {
-          setStreamNotice('Đang làm mới luồng phát...');
-
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
+            default:
               if (retryCount < MAX_RETRIES) {
                 retryCount++;
+                const isRefresh = retryCount > 1 || is403;
+                const nextUrl = isRefresh ? buildRefreshUrl(streamUrl) : streamUrl;
+                setStreamNotice(`Đang làm mới luồng phát (thử lại ${retryCount}/${MAX_RETRIES})...`);
                 setTimeout(() => {
                   if (hlsRef.current) {
+                    if (isRefresh) {
+                      hlsRef.current.loadSource(nextUrl);
+                    }
                     hlsRef.current.startLoad();
                   }
                 }, 1000);
               } else {
-                retryCount = 0;
-                setTimeout(() => {
-                  if (hlsRef.current) {
-                    hlsRef.current.loadSource(streamUrl);
-                    hlsRef.current.startLoad();
-                  }
-                }, 1500);
+                if (hlsRef.current) {
+                  hlsRef.current.destroy();
+                  hlsRef.current = null;
+                }
+                setStreamNotice('Không thể tải luồng phát sau nhiều lần thử lại. Vui lòng chuyển sang máy chủ khác.');
               }
               break;
 
             case Hls.ErrorTypes.MEDIA_ERROR:
               hls.recoverMediaError();
-              break;
-
-            default:
-              if (is403) {
-                setTimeout(() => {
-                  if (hlsRef.current) {
-                    const freshUrl = `${streamUrl}&_retry=${Date.now()}`;
-                    hlsRef.current.loadSource(freshUrl);
-                    hlsRef.current.startLoad();
-                  }
-                }, 1000);
-              } else {
-                hls.destroy();
-                setStreamNotice('Lỗi kết nối luồng phát. Vui lòng chuyển sang máy chủ khác.');
-              }
               break;
           }
         }
@@ -1567,7 +1584,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
   const handleSelectEpisode = (ep: Episode) => {
     setCurrentEpisode(ep);
-    const localMasterUrl = movie?.slug ? `/api/stream/${movie.slug}/master.m3u8` : '';
+    hasResumedRef.current = false;
+    hasShownResumeToastRef.current = false;
+    lastSavedTimeRef.current = 0;
+    savedSeekTimeRef.current = 0;
+    const localMasterUrl = movie?.slug ? getEpisodeHlsUrl(movie.slug, ep.episode) : '';
     const vipSource: Source = {
       label: 'Server VIP (4K Siêu Nhanh)',
       hlsUrl: localMasterUrl,
@@ -2042,10 +2063,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   letterSpacing: '0.01em',
                   fontFamily: 'var(--font-body, "Inter", -apple-system, BlinkMacSystemFont, sans-serif)',
                   transition: 'all 0.15s ease',
+                  userSelect: 'none',
                   ...subtitleBgProps,
                 }}
-                dangerouslySetInnerHTML={{ __html: currentSubtitleText }}
-              />
+              >
+                {currentSubtitleText}
+              </span>
             </div>
           )}
 

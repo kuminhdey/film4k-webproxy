@@ -20,10 +20,16 @@ use crate::{
 
 static URI_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"URI="([^"]+)""#).unwrap());
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct StreamParams {
     #[serde(default)]
     pub refresh: Option<String>,
+    #[serde(default)]
+    pub ep: Option<i32>,
+    #[serde(default)]
+    pub season: Option<i32>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 impl StreamParams {
@@ -46,6 +52,30 @@ pub fn is_safe_filename(name: &str) -> bool {
 pub fn extract_filename(uri: &str) -> String {
     let clean = uri.split('?').next().unwrap_or(uri);
     clean.rsplit('/').next().unwrap_or(clean).to_string()
+}
+
+pub fn extract_expiration_timestamp(content: &str, stream_url: &str) -> Option<u64> {
+    if let Ok(u) = Url::parse(stream_url) {
+        for (k, v) in u.query_pairs() {
+            if k == "x-expires" || k == "expires" {
+                if let Ok(ts) = v.parse::<u64>() {
+                    return Some(ts);
+                }
+            }
+        }
+    }
+    for line in content.lines() {
+        if line.contains("x-expires=") || line.contains("expires=") {
+            if let Some(pos) = line.find("x-expires=") {
+                let rest = &line[pos + 10..];
+                let val_str = rest.split('&').next().unwrap_or(rest).split('"').next().unwrap_or(rest);
+                if let Ok(ts) = val_str.parse::<u64>() {
+                    return Some(ts);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
@@ -75,16 +105,31 @@ impl PlaylistCache {
         self.base_dir.clone()
     }
 
+    pub fn cache_slug_dir(&self, slug: &str, ep: Option<i32>) -> PathBuf {
+        match ep {
+            Some(e) if e > 1 => self.base_dir.join(format!("{}_ep{}", slug, e)),
+            _ => self.base_dir.join(slug),
+        }
+    }
+
     pub fn slug_dir(&self, slug: &str) -> PathBuf {
-        self.base_dir.join(slug)
+        self.cache_slug_dir(slug, None)
     }
 
     pub fn master_path(&self, slug: &str) -> PathBuf {
-        self.slug_dir(slug).join("master.m3u8")
+        self.master_path_for_ep(slug, None)
+    }
+
+    pub fn master_path_for_ep(&self, slug: &str, ep: Option<i32>) -> PathBuf {
+        self.cache_slug_dir(slug, ep).join("master.m3u8")
     }
 
     pub fn file_path(&self, slug: &str, file: &str) -> PathBuf {
-        self.slug_dir(slug).join(file)
+        self.file_path_for_ep(slug, None, file)
+    }
+
+    pub fn file_path_for_ep(&self, slug: &str, ep: Option<i32>, file: &str) -> PathBuf {
+        self.cache_slug_dir(slug, ep).join(file)
     }
 
     pub fn cache_count(&self) -> usize {
@@ -136,21 +181,54 @@ impl PlaylistCache {
         refresh: bool,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let master_file = self.master_path(slug);
+        self.get_master_for_episode(slug, None, refresh, db).await
+    }
+
+    pub async fn get_master_for_episode(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        refresh: bool,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let master_file = self.master_path_for_ep(slug, ep);
+        let slug_dir = self.cache_slug_dir(slug, ep);
 
         if !refresh && master_file.exists() {
-            if let Ok(content) = tokio::fs::read_to_string(&master_file).await {
-                if content.trim().starts_with("#EXTM3U") {
-                    return Ok(content);
+            // Check signed URL expiration via metadata
+            let meta_path = slug_dir.join(".metadata.json");
+            let mut is_expired = false;
+            if meta_path.exists() {
+                if let Ok(meta_str) = tokio::fs::read_to_string(&meta_path).await {
+                    if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        if let Some(exp) = meta_json.get("expires_at").and_then(|v| v.as_u64()) {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            if now >= exp.saturating_sub(60) {
+                                is_expired = true;
+                                warn!("Cached master playlist for '{:?}' expired at {}. Re-fetching...", slug, exp);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !is_expired {
+                if let Ok(content) = tokio::fs::read_to_string(&master_file).await {
+                    if content.trim().starts_with("#EXTM3U") {
+                        return Ok(content);
+                    }
                 }
             }
             warn!(
-                "Cached master.m3u8 for slug '{}' is empty or corrupt. Self-healing re-crawl...",
-                slug
+                "Cached master.m3u8 for slug '{}' (ep: {:?}) is stale or corrupt. Re-crawling...",
+                slug, ep
             );
         }
 
-        self.crawl_and_cache(slug, db).await
+        self.crawl_and_cache_for_episode(slug, ep, db).await
     }
 
     pub async fn get_file(
@@ -159,7 +237,17 @@ impl PlaylistCache {
         file: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let file_path = self.file_path(slug, file);
+        self.get_file_for_episode(slug, None, file, db).await
+    }
+
+    pub async fn get_file_for_episode(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        file: &str,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let file_path = self.file_path_for_ep(slug, ep, file);
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -171,10 +259,10 @@ impl PlaylistCache {
 
         // Self-healing: if file is not found, attempt crawl
         info!(
-            "Sub-playlist file '{}' not found on disk for slug '{}'. Attempting self-healing crawl...",
-            file, slug
+            "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}). Attempting self-healing crawl...",
+            file, slug, ep
         );
-        let _ = self.crawl_and_cache(slug, db).await;
+        let _ = self.crawl_and_cache_for_episode(slug, ep, db).await;
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -193,35 +281,84 @@ impl PlaylistCache {
         slug: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        info!("Crawling upstream playlists for slug '{}'...", slug);
+        self.crawl_and_cache_for_episode(slug, None, db).await
+    }
+
+    pub async fn crawl_and_cache_for_episode(
+        &self,
+        slug: &str,
+        ep_num: Option<i32>,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        info!("Crawling upstream playlists for slug '{}' (ep: {:?})...", slug, ep_num);
 
         // 1. Get fresh upstream master HLS URL from API or DB fallback
-        let master_hls_url = match fetch_upstream_title_hls(slug).await {
-            Some(url) => url,
-            None => {
+        let master_hls_url = match ep_num {
+            Some(e_num) if e_num > 1 => {
                 if let Some(db) = db {
                     if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
-                        if let Some(ep) = movie.episodes.first() {
-                            if let Some(src) = ep.sources.first() {
-                                if !src.hls_url.trim().is_empty() {
-                                    src.hls_url.clone()
+                        let target_ep = movie.episodes.iter().find(|e| e.episode == e_num);
+                        if let Some(ep) = target_ep {
+                            if let Some(src) = ep.sources.iter().find(|s| !s.hls_url.trim().is_empty()) {
+                                Some(src.hls_url.clone())
+                            } else if let Some(srv) = ep.servers.iter().find(|s| !s.hls_url.trim().is_empty()) {
+                                Some(srv.hls_url.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        let master_hls_url = match master_hls_url {
+            Some(url) => url,
+            None => match fetch_upstream_title_hls(slug).await {
+                Some(url) => url,
+                None => {
+                    if let Some(db) = db {
+                        if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
+                            let target_ep = if let Some(e_num) = ep_num {
+                                movie.episodes.iter().find(|e| e.episode == e_num)
+                            } else {
+                                movie.episodes.first()
+                            };
+
+                            if let Some(ep) = target_ep {
+                                if let Some(src) = ep.sources.first() {
+                                    if !src.hls_url.trim().is_empty() {
+                                        src.hls_url.clone()
+                                    } else {
+                                        return Err((
+                                            StatusCode::NOT_FOUND,
+                                            format!("No HLS stream URL available for slug '{}'", slug),
+                                        ));
+                                    }
                                 } else {
                                     return Err((
                                         StatusCode::NOT_FOUND,
-                                        format!("No HLS stream URL available for slug '{}'", slug),
+                                        format!("No stream sources available for slug '{}'", slug),
                                     ));
                                 }
-                            } else {
-                                return Err((
-                                    StatusCode::NOT_FOUND,
-                                    format!("No stream sources available for slug '{}'", slug),
-                                ));
-                            }
-                        } else if let Some(ref stream_val) = movie.stream {
-                            if let Some(s) = stream_val.as_str() {
-                                s.to_string()
-                            } else if let Some(s) = stream_val.get("hlsUrl").and_then(|u| u.as_str()) {
-                                s.to_string()
+                            } else if let Some(ref stream_val) = movie.stream {
+                                if let Some(s) = stream_val.as_str() {
+                                    s.to_string()
+                                } else if let Some(s) = stream_val.get("hlsUrl").and_then(|u| u.as_str()) {
+                                    s.to_string()
+                                } else {
+                                    return Err((
+                                        StatusCode::NOT_FOUND,
+                                        format!("No stream available for slug '{}'", slug),
+                                    ));
+                                }
                             } else {
                                 return Err((
                                     StatusCode::NOT_FOUND,
@@ -231,20 +368,15 @@ impl PlaylistCache {
                         } else {
                             return Err((
                                 StatusCode::NOT_FOUND,
-                                format!("No stream available for slug '{}'", slug),
+                                format!("Movie with slug '{}' not found upstream or in database", slug),
                             ));
                         }
                     } else {
                         return Err((
                             StatusCode::NOT_FOUND,
-                            format!("Movie with slug '{}' not found upstream or in database", slug),
+                            format!("Failed to retrieve upstream HLS URL for slug '{}'", slug),
                         ));
                     }
-                } else {
-                    return Err((
-                        StatusCode::NOT_FOUND,
-                        format!("Failed to retrieve upstream HLS URL for slug '{}'", slug),
-                    ));
                 }
             }
         };
@@ -303,14 +435,21 @@ impl PlaylistCache {
         let (rewritten_master, sub_playlists) =
             parse_master_and_extract_subs(&master_body, &master_url_parsed);
 
-        // Ensure local directory exists
-        let slug_dir = self.slug_dir(slug);
+        // Ensure local directory exists for this episode
+        let slug_dir = self.cache_slug_dir(slug, ep_num);
         tokio::fs::create_dir_all(&slug_dir).await.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to create playlist directory: {}", e),
             )
         })?;
+
+        // Extract expiration timestamp
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut expires_at = extract_expiration_timestamp(&master_body, &master_hls_url);
 
         // Download all sub-playlists in parallel
         let mut join_set = tokio::task::JoinSet::new();
@@ -331,19 +470,36 @@ impl PlaylistCache {
                     if resp.status().is_success() {
                         if let Ok(sub_body) = resp.text().await {
                             if let Ok(parsed_sub_url) = Url::parse(&sub_url) {
+                                let sub_exp = extract_expiration_timestamp(&sub_body, &sub_url);
                                 let processed = process_sub_playlist(&sub_body, &parsed_sub_url);
                                 let _ = tokio::fs::write(&file_dest, processed).await;
+                                return sub_exp;
                             }
                         }
                     }
                 }
+                None
             });
         }
 
-        while join_set.join_next().await.is_some() {}
+        while let Some(res) = join_set.join_next().await {
+            if let Ok(Some(exp)) = res {
+                if expires_at.is_none() || expires_at > Some(exp) {
+                    expires_at = Some(exp);
+                }
+            }
+        }
+
+        // Save metadata for expiration tracking
+        let meta_json = serde_json::json!({
+            "cached_at": now,
+            "expires_at": expires_at,
+            "source_url": master_hls_url
+        });
+        let _ = tokio::fs::write(slug_dir.join(".metadata.json"), meta_json.to_string()).await;
 
         // Save rewritten master.m3u8
-        let master_dest = self.master_path(slug);
+        let master_dest = self.master_path_for_ep(slug, ep_num);
         tokio::fs::write(&master_dest, &rewritten_master)
             .await
             .map_err(|e| {
@@ -354,8 +510,8 @@ impl PlaylistCache {
             })?;
 
         info!(
-            "Successfully cached all playlists for slug '{}' to {:?}",
-            slug, slug_dir
+            "Successfully cached all playlists for slug '{}' (ep: {:?}) to {:?}",
+            slug, ep_num, slug_dir
         );
         Ok(rewritten_master)
     }
@@ -466,7 +622,28 @@ pub async fn handle_stream_master(
 
     match state
         .playlist_cache
-        .get_master(&slug, params.is_refresh(), Some(&state.db))
+        .get_master_for_episode(&slug, params.ep, params.is_refresh(), Some(&state.db))
+        .await
+    {
+        Ok(content) => {
+            create_playlist_response(content, "application/vnd.apple.mpegurl; charset=utf-8")
+        }
+        Err((code, msg)) => (code, msg).into_response(),
+    }
+}
+
+pub async fn handle_stream_master_ep(
+    State(state): State<AppState>,
+    AxumPath((slug, ep)): AxumPath<(String, i32)>,
+    Query(params): Query<StreamParams>,
+) -> Response {
+    if !is_safe_filename(&slug) || ep <= 0 {
+        return (StatusCode::BAD_REQUEST, "Invalid slug or episode parameter").into_response();
+    }
+
+    match state
+        .playlist_cache
+        .get_master_for_episode(&slug, Some(ep), params.is_refresh(), Some(&state.db))
         .await
     {
         Ok(content) => {
@@ -499,7 +676,38 @@ pub async fn handle_stream_file(
 
     match state
         .playlist_cache
-        .get_file(&slug, &file, Some(&state.db))
+        .get_file_for_episode(&slug, params.ep, &file, Some(&state.db))
+        .await
+    {
+        Ok(content) => create_playlist_response(content, content_type),
+        Err((code, msg)) => (code, msg).into_response(),
+    }
+}
+
+pub async fn handle_stream_file_ep(
+    State(state): State<AppState>,
+    AxumPath((slug, ep, file)): AxumPath<(String, i32, String)>,
+    Query(params): Query<StreamParams>,
+) -> Response {
+    if !is_safe_filename(&slug) || !is_safe_filename(&file) || ep <= 0 {
+        return (StatusCode::BAD_REQUEST, "Invalid slug, episode, or file parameter").into_response();
+    }
+
+    if file == "master.m3u8" {
+        return handle_stream_master_ep(State(state), AxumPath((slug, ep)), Query(params)).await;
+    }
+
+    let content_type = if file.ends_with(".m3u8") {
+        "application/vnd.apple.mpegurl; charset=utf-8"
+    } else if file.ends_with(".vtt") {
+        "text/vtt; charset=utf-8"
+    } else {
+        "application/octet-stream"
+    };
+
+    match state
+        .playlist_cache
+        .get_file_for_episode(&slug, Some(ep), &file, Some(&state.db))
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
@@ -600,5 +808,54 @@ relative_segment.ts
         assert!(processed.contains("https://p16-ad-site-sign-sg.tiktokcdn.com/chunk01.image?lk3s=6d71dd51&x-expires=1824366813"));
         // Relative segment resolved to full url
         assert!(processed.contains("https://fiml4k.fun/api/hls/TOKEN/relative_segment.ts"));
+    }
+
+    #[test]
+    fn test_cache_slug_dir_isolation() {
+        let cache = PlaylistCache::new("/tmp/test_cache");
+        assert_eq!(
+            cache.cache_slug_dir("breaking-bad", None),
+            PathBuf::from("/tmp/test_cache/breaking-bad")
+        );
+        assert_eq!(
+            cache.cache_slug_dir("breaking-bad", Some(1)),
+            PathBuf::from("/tmp/test_cache/breaking-bad")
+        );
+        assert_eq!(
+            cache.cache_slug_dir("breaking-bad", Some(2)),
+            PathBuf::from("/tmp/test_cache/breaking-bad_ep2")
+        );
+        assert_eq!(
+            cache.master_path_for_ep("breaking-bad", Some(2)),
+            PathBuf::from("/tmp/test_cache/breaking-bad_ep2/master.m3u8")
+        );
+        assert_eq!(
+            cache.file_path_for_ep("breaking-bad", Some(2), "v0.m3u8"),
+            PathBuf::from("/tmp/test_cache/breaking-bad_ep2/v0.m3u8")
+        );
+    }
+
+    #[test]
+    fn test_extract_expiration_timestamp() {
+        let url_with_exp = "https://film4k.net/api/hls/master.m3u8?x-expires=1789000000";
+        assert_eq!(
+            extract_expiration_timestamp("", url_with_exp),
+            Some(1789000000)
+        );
+
+        let url_with_alt_exp = "https://film4k.net/api/hls/master.m3u8?expires=1789111111";
+        assert_eq!(
+            extract_expiration_timestamp("", url_with_alt_exp),
+            Some(1789111111)
+        );
+
+        let m3u8_body = "#EXTM3U\n#EXTINF:10.0,\nhttps://cdn.example.com/seg.ts?x-expires=1789222222&key=val\n";
+        assert_eq!(
+            extract_expiration_timestamp(m3u8_body, "https://film4k.net/master.m3u8"),
+            Some(1789222222)
+        );
+
+        let no_exp = "https://film4k.net/api/hls/master.m3u8";
+        assert_eq!(extract_expiration_timestamp("#EXTM3U\n", no_exp), None);
     }
 }

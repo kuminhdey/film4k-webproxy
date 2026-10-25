@@ -8,66 +8,27 @@ export interface SubtitleCue {
 
 export type SubtitleTrackMap = Record<string, SubtitleCue[]>;
 
-// Exact 1777 cues from original Film4k WebVTT subtitle track
-export const SPIDER_MAN_1777_CUES: SubtitleCue[] = spiderManData['Film4k.net'] as SubtitleCue[];
+// Exact cues from original Film4k WebVTT subtitle track
+export const SPIDER_MAN_1777_CUES: SubtitleCue[] = (spiderManData['Film4k.net'] || spiderManData['Tiếng Việt'] || []) as SubtitleCue[];
 
-// Full 38 international subtitle languages for spider-man-brand-new-day and cinema movies
-export const SUBTITLE_LANGUAGES_38: string[] = [
-  'Bơ Film (Tiếng Việt)',
-  'Tiếng Việt',
-  'English',
-  'English (SDH)',
-  'Español (Latinoamérica)',
-  'Español (España)',
-  'Français',
-  'Deutsch',
-  'Italiano',
-  'Português (Brasil)',
-  'Português (Portugal)',
-  'Русский',
-  '日本語 (Japanese)',
-  '한국어 (Korean)',
-  '简体中文 (Chinese Simplified)',
-  '繁體中文 (Chinese Traditional)',
-  'العربية (Arabic)',
-  'हिन्दी (Hindi)',
-  'ไทย (Thai)',
-  'Bahasa Indonesia',
-  'Bahasa Melayu',
-  'Türkçe',
-  'Polski',
-  'Nederlands',
-  'Svenska',
-  'Dansk',
-  'Norsk',
-  'Suomi',
-  'Ελληνικά (Greek)',
-  'Čeština',
-  'Magyar',
-  'Română',
-  'Українська',
-  'עברית (Hebrew)',
-  'Български',
-  'Hrvatski',
-  'Slovenčina',
-  'Filipino (Tagalog)',
-];
-
-const buildSpiderMan38Tracks = (): SubtitleTrackMap => {
-  const map: SubtitleTrackMap = { ...(spiderManData as SubtitleTrackMap) };
-  map['Bơ Film (Tiếng Việt)'] = SPIDER_MAN_1777_CUES;
-  map['Bơ Film Cinema'] = SPIDER_MAN_1777_CUES;
-  for (const lang of SUBTITLE_LANGUAGES_38) {
-    if (!map[lang]) {
-      map[lang] = SPIDER_MAN_1777_CUES;
-    }
+// Only real verified language tracks (Tiếng Việt, English) from actual subtitle assets
+const buildSpiderManTracks = (): SubtitleTrackMap => {
+  const map: SubtitleTrackMap = {};
+  const raw = spiderManData as Record<string, SubtitleCue[]>;
+  if (raw['Tiếng Việt']) {
+    map['Tiếng Việt'] = raw['Tiếng Việt'];
+  } else if (raw['Film4k.net']) {
+    map['Tiếng Việt'] = raw['Film4k.net'];
+  }
+  if (raw['English']) {
+    map['English'] = raw['English'];
   }
   return map;
 };
 
-// Full multi-track subtitle database (Film4k.net, Tiếng Việt, English + 38 international languages)
+// Verified subtitle tracks mapped strictly by slug and true language
 export const SUBTITLE_TRACKS: Record<string, SubtitleTrackMap> = {
-  'spider-man-brand-new-day': buildSpiderMan38Tracks(),
+  'spider-man-brand-new-day': buildSpiderManTracks(),
 };
 
 // Fallback sample subtitles mapped by slug (strictly per movie, no fallback to other movies)
@@ -120,7 +81,7 @@ export function getAvailableSubtitleTracks(slug: string): string[] {
 export function getSubtitleForTime(
   slug: string,
   currentTime: number,
-  trackName: string = 'Bơ Film (Tiếng Việt)'
+  trackName: string = 'Tiếng Việt'
 ): string | null {
   if (trackName === 'Tắt' || currentTime < 0) {
     return null;
@@ -132,10 +93,9 @@ export function getSubtitleForTime(
   if (movieTracks) {
     cues =
       movieTracks[trackName] ||
-      movieTracks['Bơ Film (Tiếng Việt)'] ||
-      movieTracks['Bơ Film Cinema'] ||
-      movieTracks['Film4k.net'] ||
-      movieTracks['Tiếng Việt'];
+      movieTracks['Tiếng Việt'] ||
+      movieTracks['English'] ||
+      movieTracks['Film4k.net'];
   }
 
   if (!cues || cues.length === 0) {

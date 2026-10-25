@@ -1374,3 +1374,70 @@ async fn test_api_movies_by_slugs() {
     assert_eq!(data_mixed.movies.len(), 1);
     assert_eq!(data_mixed.movies[0].slug, "hope");
 }
+
+#[tokio::test]
+async fn test_api_stream_episode_routing_and_validation() {
+    let (base_url, _db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Invalid episode <= 0 returns 400 Bad Request
+    let resp_zero = client
+        .get(format!("{}/api/stream/breaking-bad/ep/0/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_zero.status(), StatusCode::BAD_REQUEST);
+
+    let resp_neg = client
+        .get(format!("{}/api/stream/breaking-bad/ep/-1/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_neg.status(), StatusCode::BAD_REQUEST);
+
+    // 2. Unsafe slug returns 400 Bad Request
+    let resp_unsafe = client
+        .get(format!("{}/api/stream/..%2fsecret/ep/2/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_unsafe.status(), StatusCode::BAD_REQUEST);
+
+    let resp_unsafe_file = client
+        .get(format!("{}/api/stream/breaking-bad/ep/2/..%2fsecret.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_unsafe_file.status(), StatusCode::BAD_REQUEST);
+
+    // 3. Cache simulation for episode 2:
+    let ep2_dir = std::path::PathBuf::from("data/playlists/breaking-bad_ep2");
+    tokio::fs::create_dir_all(&ep2_dir).await.unwrap();
+    let sample_master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nv0.m3u8\n";
+    let sample_sub = "#EXTM3U\n#EXTINF:10.0,\nhttps://cdn.example.com/ep2_chunk01.ts\n";
+    tokio::fs::write(ep2_dir.join("master.m3u8"), sample_master).await.unwrap();
+    tokio::fs::write(ep2_dir.join("v0.m3u8"), sample_sub).await.unwrap();
+
+    // 4. Request episode 2 master.m3u8
+    let resp_ep2 = client
+        .get(format!("{}/api/stream/breaking-bad/ep/2/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_ep2.status(), StatusCode::OK);
+    let body_ep2 = resp_ep2.text().await.unwrap();
+    assert!(body_ep2.contains("v0.m3u8"));
+
+    // 5. Request episode 2 subplaylist file v0.m3u8
+    let resp_sub = client
+        .get(format!("{}/api/stream/breaking-bad/ep/2/v0.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_sub.status(), StatusCode::OK);
+    let body_sub = resp_sub.text().await.unwrap();
+    assert!(body_sub.contains("ep2_chunk01.ts"));
+
+    // Clean up test cache
+    let _ = tokio::fs::remove_dir_all(&ep2_dir).await;
+}
