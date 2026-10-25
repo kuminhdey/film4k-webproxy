@@ -9526,8 +9526,8 @@
     "totalEpisodes": 1,
     "stream": {
       "label": "Server 1",
-      "hlsUrl": "https://fiml4k.fun/api/hls/Xk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ/master.m3u8",
-      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FXk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ%2Fmaster.m3u8"
+      "hlsUrl": "https://fiml4k.fun/api/hls/Wjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ/master.m3u8",
+      "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FWjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ%2Fmaster.m3u8"
     },
     "episodes": [],
     "crawledAt": "2026-10-24T12:04:30.174Z",
@@ -9535,8 +9535,8 @@
       {
         "id": "server-vip-4k",
         "label": "Server VIP (4K CDN)",
-        "hlsUrl": "https://fiml4k.fun/api/hls/Xk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ/master.m3u8",
-        "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FXk8FTqiOqKttOFC6h5g6M5sE7r24KCpq8ry7ajlZjlNvHtpsHmA7IVlAi_ghpn9TZ9-LBJY9HbuFOccxv__-W3PeZHuKWrq35vR6nv1bKXH25RzXre9cWDTtBQ%2Fmaster.m3u8",
+        "hlsUrl": "https://fiml4k.fun/api/hls/Wjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ/master.m3u8",
+        "proxyStreamUrl": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FWjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ%2Fmaster.m3u8",
         "quality": "4K"
       },
       {

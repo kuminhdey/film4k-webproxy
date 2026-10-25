@@ -123,6 +123,25 @@ pub struct Movie {
     pub audio_tracks: Vec<AudioTrack>,
 }
 
+impl Movie {
+    pub fn get_primary_hls_url(&self) -> Option<String> {
+        self.servers
+            .first()
+            .map(|s| s.hls_url.clone())
+            .or_else(|| {
+                self.stream.as_ref().and_then(|st| match st {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Object(obj) => obj
+                        .get("hlsUrl")
+                        .or_else(|| obj.get("proxyStreamUrl"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    _ => None,
+                })
+            })
+    }
+}
+
 fn default_movie_type() -> String {
     "movie".to_string()
 }

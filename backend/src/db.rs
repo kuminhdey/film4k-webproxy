@@ -419,6 +419,78 @@ impl Database {
 
         Ok(movie_opt)
     }
+
+    pub fn find_slug_by_stream_url(&self, url: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+
+        // 1. If URL has /api/hls/<token>/..., extract token
+        if let Some(idx) = url.find("/api/hls/") {
+            let after = &url[idx + 9..];
+            let token_part = after.split('/').next().unwrap_or(after);
+            let token = token_part.split('?').next().unwrap_or(token_part);
+            if token.len() >= 4 {
+                let pattern = format!("%{}%", token);
+                if let Ok(slug) = conn.query_row(
+                    "SELECT slug FROM movies WHERE stream LIKE ?1 OR servers_json LIKE ?1 LIMIT 1",
+                    params![pattern],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    return Some(slug);
+                }
+            }
+        }
+
+        // 2. Direct full URL search
+        let pattern_full = format!("%{}%", url);
+        conn.query_row(
+            "SELECT slug FROM movies WHERE stream LIKE ?1 OR servers_json LIKE ?1 LIMIT 1",
+            params![pattern_full],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    }
+
+    pub fn update_movie_stream(&self, slug: &str, new_hls_url: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+
+        let current: Option<(Option<String>, String)> = conn.query_row(
+            "SELECT stream, servers_json FROM movies WHERE slug = ?1",
+            params![slug],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).ok();
+
+        if let Some((_, servers_json_str)) = current {
+            let mut servers: Vec<ServerSource> = serde_json::from_str(&servers_json_str).unwrap_or_default();
+            let proxy_url = format!("https://secret.dangducminh.io.vn/?url={}", crate::proxy::urlencoding::encode(new_hls_url));
+
+            if let Some(first) = servers.first_mut() {
+                first.hls_url = new_hls_url.to_string();
+                first.proxy_stream_url = Some(proxy_url);
+            } else {
+                servers.push(ServerSource {
+                    id: Some(serde_json::json!("server-vip-4k")),
+                    label: "Server VIP (4K CDN)".to_string(),
+                    hls_url: new_hls_url.to_string(),
+                    proxy_stream_url: Some(proxy_url),
+                    quality: Some("4K".to_string()),
+                });
+            }
+
+            let new_servers_json = serde_json::to_string(&servers).unwrap_or_else(|_| "[]".to_string());
+            let updated = conn.execute(
+                r#"
+                UPDATE movies
+                SET stream = ?1, servers_json = ?2, updated_at = CURRENT_TIMESTAMP
+                WHERE slug = ?3
+                "#,
+                params![new_hls_url, new_servers_json, slug],
+            )?;
+
+            info!("Updated stream & servers_json for movie {} to {}", slug, new_hls_url);
+            Ok(updated > 0)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 
@@ -590,5 +662,59 @@ mod tests {
         assert!(!jurassic.servers.is_empty());
         assert!(!jurassic.subtitles.is_empty());
         assert!(!jurassic.audio_tracks.is_empty());
+    }
+
+    #[test]
+    fn test_find_slug_and_update_movie_stream() {
+        let db = Database::new_in_memory().unwrap();
+
+        let movie = Movie {
+            id: None,
+            slug: "spider-man-brand-new-day".to_string(),
+            movie_type: "movie".to_string(),
+            title_vi: Some("Người Nhện".to_string()),
+            title_en: Some("Spider-Man".to_string()),
+            year: Some(2026),
+            quality: Some("4K".to_string()),
+            score: Some(8.5),
+            genres: vec!["Action".to_string()],
+            country: Some("US".to_string()),
+            poster: None,
+            backdrop: None,
+            overview: None,
+            total_episodes: Some(1),
+            stream: Some(serde_json::Value::String("https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8".to_string())),
+            episodes: vec![],
+            servers: vec![ServerSource {
+                id: Some(serde_json::json!("srv-vip")),
+                label: "Server VIP (4K CDN)".to_string(),
+                hls_url: "https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8".to_string(),
+                proxy_stream_url: None,
+                quality: Some("4K".to_string()),
+            }],
+            subtitles: vec![],
+            audio_tracks: vec![],
+        };
+
+        db.upsert_movie(&movie).unwrap();
+
+        // 1. Test finding slug by expired stream url
+        let slug = db.find_slug_by_stream_url("https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8");
+        assert_eq!(slug.as_deref(), Some("spider-man-brand-new-day"));
+
+        // 2. Test updating stream to fresh HLS url
+        let new_url = "https://fiml4k.fun/api/hls/Wjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ/master.m3u8";
+        let updated = db.update_movie_stream("spider-man-brand-new-day", new_url).unwrap();
+        assert!(updated);
+
+        // 3. Verify movie in DB now has fresh stream and updated server
+        let reloaded = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().unwrap();
+        assert_eq!(reloaded.stream, Some(serde_json::Value::String(new_url.to_string())));
+        assert_eq!(reloaded.servers[0].hls_url, new_url);
+        assert!(reloaded.servers[0].proxy_stream_url.as_ref().unwrap().contains("https%3A%2F%2Ffiml4k.fun"));
+
+        // 4. Test finding slug by new stream url
+        let slug_new = db.find_slug_by_stream_url(new_url);
+        assert_eq!(slug_new.as_deref(), Some("spider-man-brand-new-day"));
     }
 }
