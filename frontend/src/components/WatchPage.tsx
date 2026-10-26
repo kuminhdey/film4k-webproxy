@@ -1253,6 +1253,31 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       const MAX_RETRIES = 3;
 
       hls.on(Hls.Events.ERROR, (_, data) => {
+        // Isolate subtitle or non-critical auxiliary errors from fatal stream reload/destroy
+        const isSubtitleError =
+          data.details === Hls.ErrorDetails.SUBTITLE_LOAD_ERROR ||
+          data.details === (Hls.ErrorDetails as any).SUBTITLE_TRACK_EMPTY ||
+          data.details === (Hls.ErrorDetails as any).SUBTITLE_TRACK_LOAD_TIMEOUT ||
+          data.type === Hls.ErrorTypes.OTHER_ERROR ||
+          (typeof data.details === 'string' && data.details.toLowerCase().includes('subtitle')) ||
+          data.parent === 'subtitle' ||
+          (data.context && (data.context as any).type === 'subtitleTrack') ||
+          (data.frag && (data.frag as any).type === 'subtitle') ||
+          (typeof data.url === 'string' &&
+            (data.url.includes('.vtt') ||
+              data.url.toLowerCase().includes('subtitle') ||
+              data.url.toLowerCase().includes('sub/')));
+
+        if (isSubtitleError) {
+          console.warn('[HLS] Non-fatal subtitle error encountered, ignoring to allow video playback to continue:', {
+            details: data.details,
+            type: data.type,
+            responseCode: data.response?.code,
+            url: data.url,
+          });
+          return;
+        }
+
         const is403 = data.response && data.response.code === 403;
         if (data.fatal || is403) {
           switch (data.type) {

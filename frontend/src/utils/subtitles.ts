@@ -182,6 +182,11 @@ export async function loadVttTrack(url: string): Promise<SubtitleCue[]> {
   try {
     const res = await fetch(url);
     if (!res.ok) {
+      if (res.status === 403) {
+        console.warn(`[Subtitle] HTTP 403 Forbidden loading subtitle from ${url}. Safe fallback to empty cues.`);
+        vttUrlCache.set(url, []);
+        return [];
+      }
       if (res.status !== 404) {
         console.warn(`Failed to fetch subtitle from ${url}: HTTP ${res.status}`);
       }
@@ -214,6 +219,12 @@ export async function loadVttTrack(url: string): Promise<SubtitleCue[]> {
 
         const vttRes = await fetch(targetVttUrl);
         if (!vttRes.ok) {
+          if (vttRes.status === 403) {
+            console.warn(`[Subtitle] HTTP 403 Forbidden loading target VTT from ${targetVttUrl}. Safe fallback to empty cues.`);
+            vttUrlCache.set(targetVttUrl, []);
+            vttUrlCache.set(url, []);
+            return [];
+          }
           if (vttRes.status !== 404) {
             console.warn(`Failed to fetch target VTT from ${targetVttUrl}: HTTP ${vttRes.status}`);
           }
