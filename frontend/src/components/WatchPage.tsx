@@ -2107,8 +2107,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 position: 'absolute',
                 bottom: '72px',
                 right: '24px',
-                width: settingsMenu === 'captions' ? '300px' : '280px',
-                maxHeight: 'min(480px, calc(100vh - 120px))',
+                width: settingsMenu === 'captions' ? '320px' : '280px',
+                maxHeight: settingsMenu === 'captions' ? 'min(580px, calc(100vh - 96px))' : 'min(480px, calc(100vh - 120px))',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
@@ -2673,7 +2673,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '410px',
+                      maxHeight: '520px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -2686,12 +2686,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <div
                       className="cinema-menu-scroll"
                       style={{
-                        maxHeight: '135px',
+                        maxHeight: '260px',
                         overflowY: 'auto',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '2px',
-                        paddingRight: '2px',
+                        paddingRight: '4px',
+                        paddingBottom: '6px',
                       }}
                     >
                       {/* Off / Tắt option */}
@@ -2699,11 +2700,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         type="button"
                         onClick={() => handleSelectCaption('Tắt')}
                         style={{
-                          minHeight: '36px',
+                          minHeight: '38px',
                           background: selectedCaption === 'Tắt' ? 'rgba(255, 255, 255, 0.10)' : 'none',
                           border: 'none',
                           color: selectedCaption === 'Tắt' ? '#fff' : 'var(--muted-light, #b4bdd0)',
-                          padding: '7px 12px',
+                          padding: '8px 12px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -2739,11 +2740,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                             type="button"
                             onClick={() => handleSelectCaption(opt.label)}
                             style={{
-                              minHeight: '36px',
+                              minHeight: '38px',
                               background: isSelected ? 'rgba(255, 255, 255, 0.10)' : 'none',
                               border: 'none',
                               color: isSelected ? '#fff' : 'var(--muted-light, #b4bdd0)',
-                              padding: '7px 12px',
+                              padding: '8px 12px',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
@@ -2768,7 +2769,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                           >
                             <span
                               style={{
-                                maxWidth: '210px',
+                                maxWidth: '225px',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
