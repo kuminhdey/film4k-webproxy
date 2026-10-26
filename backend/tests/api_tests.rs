@@ -1509,3 +1509,107 @@ async fn test_api_proxy_stream_rejects_ip_literals_and_fails_closed_dns() {
     let text_dns = resp_dns.text().await.unwrap();
     assert!(text_dns.contains("Failed to resolve host via DNS"));
 }
+
+#[tokio::test]
+async fn test_api_stream_sub_endpoint_and_caching() {
+    let (base_url, _db) = spawn_test_server().await;
+    let client = Client::new();
+
+    let movie_sub_dir = std::path::PathBuf::from("data/playlists/sub-test-movie/sub");
+    tokio::fs::create_dir_all(&movie_sub_dir).await.unwrap();
+    let movie_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nBreaking Bad Movie Sub\n";
+    tokio::fs::write(movie_sub_dir.join("vietnamese.vtt"), movie_vtt)
+        .await
+        .unwrap();
+
+    let ep2_sub_dir = std::path::PathBuf::from("data/playlists/sub-test-movie_ep2/sub");
+    tokio::fs::create_dir_all(&ep2_sub_dir).await.unwrap();
+    let ep2_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nBreaking Bad Ep 2 Sub\n";
+    tokio::fs::write(ep2_sub_dir.join("vietnamese_ep2.vtt"), ep2_vtt)
+        .await
+        .unwrap();
+
+    // 1. Movie subtitle via /api/stream/:slug/sub/:file
+    let resp_sub = client
+        .get(format!("{}/api/stream/sub-test-movie/sub/vietnamese.vtt", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_sub.status(), StatusCode::OK);
+    assert_eq!(
+        resp_sub.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/vtt; charset=utf-8"
+    );
+    assert_eq!(
+        resp_sub.headers().get("access-control-allow-origin").unwrap().to_str().unwrap(),
+        "*"
+    );
+    let body_sub = resp_sub.text().await.unwrap();
+    assert!(body_sub.contains("Breaking Bad Movie Sub"));
+
+    // 2. Movie subtitle via root /stream/:slug/sub/:file
+    let resp_root_sub = client
+        .get(format!("{}/stream/sub-test-movie/sub/vietnamese.vtt", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_root_sub.status(), StatusCode::OK);
+    assert_eq!(
+        resp_root_sub.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/vtt; charset=utf-8"
+    );
+    assert_eq!(
+        resp_root_sub.headers().get("access-control-allow-origin").unwrap().to_str().unwrap(),
+        "*"
+    );
+
+    // 3. Episode 2 subtitle via /api/stream/:slug/ep/:ep/sub/:file
+    let resp_ep2 = client
+        .get(format!("{}/api/stream/sub-test-movie/ep/2/sub/vietnamese_ep2.vtt", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_ep2.status(), StatusCode::OK);
+    assert_eq!(
+        resp_ep2.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/vtt; charset=utf-8"
+    );
+    assert_eq!(
+        resp_ep2.headers().get("access-control-allow-origin").unwrap().to_str().unwrap(),
+        "*"
+    );
+    let body_ep2 = resp_ep2.text().await.unwrap();
+    assert!(body_ep2.contains("Breaking Bad Ep 2 Sub"));
+
+    // 4. Episode 2 subtitle via root /stream/:slug/ep/:ep/sub/:file
+    let resp_root_ep2 = client
+        .get(format!("{}/stream/sub-test-movie/ep/2/sub/vietnamese_ep2.vtt", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_root_ep2.status(), StatusCode::OK);
+    assert_eq!(
+        resp_root_ep2.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/vtt; charset=utf-8"
+    );
+
+    // 5. Unsafe filename validation
+    let resp_unsafe = client
+        .get(format!("{}/api/stream/sub-test-movie/sub/..%2Fetc%2Fpasswd", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_unsafe.status(), StatusCode::BAD_REQUEST);
+
+    // 6. Invalid episode validation (ep <= 0)
+    let resp_invalid_ep0 = client
+        .get(format!("{}/api/stream/sub-test-movie/ep/0/sub/vietnamese.vtt", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_invalid_ep0.status(), StatusCode::BAD_REQUEST);
+
+    // Clean up
+    let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie").await;
+    let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie_ep2").await;
+}

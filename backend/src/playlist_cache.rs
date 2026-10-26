@@ -365,6 +365,21 @@ impl PlaylistCache {
             }
         }
 
+        // Also check if cached in sub/ directory
+        let sub_file = self.cache_slug_dir(slug, ep).join("sub").join(file);
+        if sub_file.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&sub_file).await {
+                if !content.trim().is_empty() {
+                    return Ok(content);
+                }
+            }
+        }
+
+        // If file is a .vtt subtitle, fetch upstream via subtitle proxy
+        if file.ends_with(".vtt") {
+            return self.get_sub_for_episode(slug, ep, file).await;
+        }
+
         // Self-healing: if file is not found, attempt crawl
         info!(
             "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}). Attempting self-healing crawl...",
@@ -382,6 +397,86 @@ impl PlaylistCache {
             StatusCode::NOT_FOUND,
             format!("Playlist file '{}' for slug '{}' not found", file, slug),
         ))
+    }
+
+    pub async fn get_sub_for_episode(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        file: &str,
+    ) -> Result<String, (StatusCode, String)> {
+        let slug_dir = self.cache_slug_dir(slug, ep);
+        let sub_dir = slug_dir.join("sub");
+        let sub_file = sub_dir.join(file);
+        let direct_file = slug_dir.join(file);
+
+        // 1. Check if already cached on disk
+        if sub_file.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&sub_file).await {
+                if !content.trim().is_empty() {
+                    return Ok(content);
+                }
+            }
+        }
+        if direct_file.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&direct_file).await {
+                if !content.trim().is_empty() {
+                    return Ok(content);
+                }
+            }
+        }
+
+        // 2. Fetch upstream https://fiml4k.fun/api/subs/<filename> with Referer: https://fiml4k.fun/
+        let upstream_url = format!("https://fiml4k.fun/api/subs/{}", file);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+
+        let resp = client
+            .get(&upstream_url)
+            .header(header::REFERER, "https://fiml4k.fun/")
+            .header(
+                header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            )
+            .send()
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Failed to fetch upstream subtitle from {}: {}", upstream_url, e),
+                )
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err((
+                status,
+                format!("Upstream subtitle request failed with status: {}", status),
+            ));
+        }
+
+        let content = resp.text().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to read upstream subtitle body: {}", e),
+            )
+        })?;
+
+        // 3. Cache to disk
+        if let Err(e) = tokio::fs::create_dir_all(&sub_dir).await {
+            warn!("Failed to create sub directory {:?}: {}", sub_dir, e);
+        }
+        if let Err(e) = tokio::fs::write(&sub_file, &content).await {
+            warn!("Failed to cache subtitle file {:?}: {}", sub_file, e);
+        }
+
+        info!(
+            "Successfully fetched and cached subtitle '{}' for slug '{}' (ep: {:?})",
+            file, slug, ep
+        );
+        Ok(content)
     }
 
     pub async fn crawl_and_cache(
@@ -697,7 +792,11 @@ pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
             if stripped.contains("URI=\"") {
                 let rewritten = URI_REGEX.replace_all(line, |caps: &regex::Captures| {
                     let map_uri = &caps[1];
-                    if is_cdn_segment(map_uri) {
+                    let clean = map_uri.split('?').next().unwrap_or(map_uri);
+                    if clean.to_lowercase().ends_with(".vtt") {
+                        let filename = extract_filename(map_uri);
+                        format!("URI=\"sub/{}\"", filename)
+                    } else if is_cdn_segment(map_uri) {
                         format!("URI=\"{}\"", map_uri)
                     } else {
                         let full = resolve_relative_url(sub_url, map_uri);
@@ -709,8 +808,12 @@ pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
                 new_lines.push(line.to_string());
             }
         } else {
-            // Segment line: Keep direct ByteDance CDN chunk intact
-            if is_cdn_segment(stripped) {
+            // Segment line: rewrite .vtt subtitle URLs to relative sub/<filename>
+            let clean = stripped.split('?').next().unwrap_or(stripped);
+            if clean.to_lowercase().ends_with(".vtt") {
+                let filename = extract_filename(stripped);
+                new_lines.push(format!("sub/{}", filename));
+            } else if is_cdn_segment(stripped) {
                 new_lines.push(stripped.to_string());
             } else {
                 let full = resolve_relative_url(sub_url, stripped);
@@ -821,6 +924,44 @@ pub async fn handle_stream_file_ep(
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
+        Err((code, msg)) => (code, msg).into_response(),
+    }
+}
+
+pub async fn handle_stream_sub(
+    State(state): State<AppState>,
+    AxumPath((slug, file)): AxumPath<(String, String)>,
+    Query(params): Query<StreamParams>,
+) -> Response {
+    if !is_safe_filename(&slug) || !is_safe_filename(&file) {
+        return (StatusCode::BAD_REQUEST, "Invalid slug or file parameter").into_response();
+    }
+
+    match state
+        .playlist_cache
+        .get_sub_for_episode(&slug, params.ep, &file)
+        .await
+    {
+        Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
+        Err((code, msg)) => (code, msg).into_response(),
+    }
+}
+
+pub async fn handle_stream_sub_ep(
+    State(state): State<AppState>,
+    AxumPath((slug, ep, file)): AxumPath<(String, i32, String)>,
+    Query(_params): Query<StreamParams>,
+) -> Response {
+    if !is_safe_filename(&slug) || !is_safe_filename(&file) || ep <= 0 {
+        return (StatusCode::BAD_REQUEST, "Invalid slug, episode, or file parameter").into_response();
+    }
+
+    match state
+        .playlist_cache
+        .get_sub_for_episode(&slug, Some(ep), &file)
+        .await
+    {
+        Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
         Err((code, msg)) => (code, msg).into_response(),
     }
 }
@@ -1092,6 +1233,71 @@ relative_segment.ts
             .unwrap();
         let corrupted_res = cache.get_master(slug, false, None).await;
         assert!(corrupted_res.is_err());
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[test]
+    fn test_process_sub_playlist_rewrites_vtt_subtitles() {
+        let sub = r#"#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:30
+#EXTINF:30.000,
+https://fiml4k.fun/api/subs/vietnamese_123.vtt
+#EXTINF:30.000,
+/api/subs/english_456.vtt?token=xyz
+#EXTINF:30.000,
+relative_789.vtt
+#EXT-X-MAP:URI="https://fiml4k.fun/api/subs/map_sub.vtt"
+"#;
+        let sub_url = Url::parse("https://fiml4k.fun/api/hls/TOKEN/s0.m3u8").unwrap();
+        let processed = process_sub_playlist(sub, &sub_url);
+
+        assert!(processed.contains("sub/vietnamese_123.vtt"));
+        assert!(processed.contains("sub/english_456.vtt"));
+        assert!(processed.contains("sub/relative_789.vtt"));
+        assert!(processed.contains(r#"URI="sub/map_sub.vtt""#));
+    }
+
+    #[tokio::test]
+    async fn test_get_sub_for_episode_cached_disk() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_cache_sub_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache = PlaylistCache::new(&temp_dir);
+        let slug = "my-movie";
+
+        // Setup movie sub cache in sub/ directory
+        let sub_dir = cache.cache_slug_dir(slug, None).join("sub");
+        tokio::fs::create_dir_all(&sub_dir).await.unwrap();
+        let vtt_content = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello World\n";
+        tokio::fs::write(sub_dir.join("sub_vi.vtt"), vtt_content)
+            .await
+            .unwrap();
+
+        // 1. Fetch movie subtitle (None ep)
+        let res = cache.get_sub_for_episode(slug, None, "sub_vi.vtt").await;
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), vtt_content);
+
+        // 2. Setup episode 2 sub cache
+        let ep2_sub_dir = cache.cache_slug_dir(slug, Some(2)).join("sub");
+        tokio::fs::create_dir_all(&ep2_sub_dir).await.unwrap();
+        let ep2_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nEpisode 2 Sub\n";
+        tokio::fs::write(ep2_sub_dir.join("ep2_sub.vtt"), ep2_vtt)
+            .await
+            .unwrap();
+
+        let res_ep2 = cache
+            .get_sub_for_episode(slug, Some(2), "ep2_sub.vtt")
+            .await;
+        assert!(res_ep2.is_ok());
+        assert_eq!(res_ep2.unwrap(), ep2_vtt);
 
         // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
