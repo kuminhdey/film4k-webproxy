@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface MobileNavProps {
   activeTab: string;
@@ -12,6 +12,19 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onMoreClick,
 }) => {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowMoreMenu(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showMoreMenu]);
 
   return (
     <>
@@ -104,57 +117,69 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
       {/* More Menu Dropup for mobile */}
       {showMoreMenu && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '68px',
-            right: '16px',
-            background: 'var(--panel, #111622)',
-            border: '1px solid var(--border, #242b3c)',
-            borderRadius: '12px',
-            padding: '8px',
-            zIndex: 100,
-            boxShadow: 'var(--shadow-lg, 0 20px 40px rgba(0,0,0,0.8))',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            minWidth: '150px',
-          }}
-        >
-          <button
-            type="button"
-            className="chip"
-            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
-            onClick={() => {
-              onTabChange('movie');
-              setShowMoreMenu(false);
+        <>
+          <div
+            className="mobile-more-backdrop"
+            onClick={() => setShowMoreMenu(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 99,
+              background: 'transparent',
+            }}
+          />
+          <div
+            style={{
+              position: 'fixed',
+              bottom: 'calc(68px + env(safe-area-inset-bottom, 0px))',
+              right: '16px',
+              background: 'var(--panel, #111622)',
+              border: '1px solid var(--border, #242b3c)',
+              borderRadius: '12px',
+              padding: '8px',
+              zIndex: 100,
+              boxShadow: 'var(--shadow-lg, 0 20px 40px rgba(0,0,0,0.8))',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              minWidth: '150px',
             }}
           >
-            Phim Lẻ
-          </button>
-          <button
-            type="button"
-            className="chip"
-            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
-            onClick={() => {
-              onTabChange('tv');
-              setShowMoreMenu(false);
-            }}
-          >
-            Phim Bộ
-          </button>
-          <button
-            type="button"
-            className="chip"
-            style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start' }}
-            onClick={() => {
-              onTabChange('genres');
-              setShowMoreMenu(false);
-            }}
-          >
-            Thể Loại
-          </button>
-        </div>
+            <button
+              type="button"
+              className="chip"
+              style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start', minHeight: '42px', padding: '10px 14px' }}
+              onClick={() => {
+                onTabChange('movie');
+                setShowMoreMenu(false);
+              }}
+            >
+              Phim Lẻ
+            </button>
+            <button
+              type="button"
+              className="chip"
+              style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start', minHeight: '42px', padding: '10px 14px' }}
+              onClick={() => {
+                onTabChange('tv');
+                setShowMoreMenu(false);
+              }}
+            >
+              Phim Bộ
+            </button>
+            <button
+              type="button"
+              className="chip"
+              style={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start', minHeight: '42px', padding: '10px 14px' }}
+              onClick={() => {
+                onTabChange('genres');
+                setShowMoreMenu(false);
+              }}
+            >
+              Thể Loại
+            </button>
+          </div>
+        </>
       )}
     </>
   );

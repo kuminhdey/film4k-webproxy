@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { RotateCcw, X, SlidersHorizontal } from 'lucide-react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { RotateCcw, X, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export interface FilterBarProps {
   sort: string;
@@ -18,6 +18,178 @@ export interface FilterBarProps {
   onTrackChange?: (track: string) => void;
   onResetFilters?: () => void;
 }
+
+const ScrollableFilterChips: React.FC<{
+  children: React.ReactNode;
+  'aria-label'?: string;
+}> = ({ children, 'aria-label': ariaLabel }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 4);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      checkScroll();
+    });
+    ro.observe(el);
+
+    const onScroll = () => {
+      checkScroll();
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    return () => {
+      ro.disconnect();
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [checkScroll, children]);
+
+  const handleScrollLeft = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollBy({ left: -240, behavior: 'smooth' });
+    }
+  };
+
+  const handleScrollRight = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollBy({ left: 240, behavior: 'smooth' });
+    }
+  };
+
+  return (
+    <div
+      className="filter-chips-wrapper"
+      style={{
+        position: 'relative',
+        width: '100%',
+        minWidth: 0,
+        display: 'flex',
+        alignItems: 'center',
+      }}
+    >
+      {canScrollLeft && (
+        <div
+          className="filter-scroll-edge filter-scroll-edge-left"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '40px',
+            background: 'linear-gradient(to right, #0a150c 50%, rgba(10, 21, 12, 0) 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            zIndex: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          <button
+            type="button"
+            className="filter-arrow filter-arrow-left"
+            aria-label="Cuộn sang trái"
+            onClick={handleScrollLeft}
+            style={{
+              pointerEvents: 'auto',
+              width: '30px',
+              height: '30px',
+              borderRadius: '50%',
+              background: '#132b1a',
+              border: '1px solid #285436',
+              color: '#c6ff00',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.7)',
+              padding: 0,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <ChevronLeft size={16} />
+          </button>
+        </div>
+      )}
+
+      <div
+        ref={containerRef}
+        className="filter-chips"
+        aria-label={ariaLabel}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          overflowX: 'auto',
+          width: '100%',
+          padding: '4px 2px',
+          scrollBehavior: 'smooth',
+          WebkitOverflowScrolling: 'touch',
+          scrollbarWidth: 'none',
+          touchAction: 'pan-x',
+          overscrollBehaviorX: 'contain',
+        }}
+      >
+        {children}
+      </div>
+
+      {canScrollRight && (
+        <div
+          className="filter-scroll-edge filter-scroll-edge-right"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: '40px',
+            background: 'linear-gradient(to left, #0a150c 50%, rgba(10, 21, 12, 0) 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            zIndex: 10,
+            pointerEvents: 'none',
+          }}
+        >
+          <button
+            type="button"
+            className="filter-arrow filter-arrow-right"
+            aria-label="Cuộn sang phải"
+            onClick={handleScrollRight}
+            style={{
+              pointerEvents: 'auto',
+              width: '30px',
+              height: '30px',
+              borderRadius: '50%',
+              background: '#132b1a',
+              border: '1px solid #285436',
+              color: '#c6ff00',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.7)',
+              padding: 0,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const GENRES = [
   'Tất cả',
@@ -110,16 +282,6 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   onTrackChange,
   onResetFilters,
 }) => {
-  const genreRef = useRef<HTMLDivElement | null>(null);
-  const countryRef = useRef<HTMLDivElement | null>(null);
-  const yearRef = useRef<HTMLDivElement | null>(null);
-
-  const scrollRight = (ref: React.RefObject<HTMLDivElement | null>) => {
-    if (ref.current) {
-      ref.current.scrollBy({ left: 240, behavior: 'smooth' });
-    }
-  };
-
   // Compile list of active filters
   const activeFilters: { id: string; label: string; onRemove: () => void }[] = [];
 
@@ -302,158 +464,120 @@ export const FilterBar: React.FC<FilterBarProps> = ({
       {/* 1. Sắp xếp (Sort) */}
       <div className="filter-row">
         <span className="filter-label">Sắp xếp:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips">
-            {SORTS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={`chip ${sort === s.id ? 'on' : ''}`}
-                onClick={() => onSortChange(s.id)}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc sắp xếp">
+          {SORTS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`chip ${sort === s.id ? 'on' : ''}`}
+              onClick={() => onSortChange(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 2. Phân loại (Type) */}
       <div className="filter-row">
         <span className="filter-label">Phân loại:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips">
-            {TYPES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`chip ${type === t.id ? 'on' : ''}`}
-                onClick={() => onTypeChange(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc phân loại">
+          {TYPES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`chip ${type === t.id ? 'on' : ''}`}
+              onClick={() => onTypeChange(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 3. Độ phân giải (Quality) */}
       <div className="filter-row">
         <span className="filter-label">Độ phân giải:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips">
-            {RESOLUTIONS.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                className={`chip ${selectedResolution === r.id ? 'on' : ''}`}
-                onClick={() => onResolutionChange?.(r.id)}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc độ phân giải">
+          {RESOLUTIONS.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className={`chip ${selectedResolution === r.id ? 'on' : ''}`}
+              onClick={() => onResolutionChange?.(r.id)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 4. Bản dịch & Âm thanh (Track: Thuyết minh / Phụ đề) */}
       <div className="filter-row">
         <span className="filter-label">Bản dịch:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips">
-            {TRACKS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`chip ${selectedTrack === t.id ? 'on' : ''}`}
-                onClick={() => onTrackChange?.(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc bản dịch">
+          {TRACKS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`chip ${selectedTrack === t.id ? 'on' : ''}`}
+              onClick={() => onTrackChange?.(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 5. Năm phát hành (Year) */}
       <div className="filter-row">
         <span className="filter-label">Năm phát hành:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips" ref={yearRef}>
-            {YEARS.map((y) => (
-              <button
-                key={y.id}
-                type="button"
-                className={`chip ${selectedYear === y.id ? 'on' : ''}`}
-                onClick={() => onYearChange?.(y.id)}
-              >
-                {y.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="filter-arrow filter-arrow-right"
-            aria-label="Cuộn sang phải"
-            onClick={() => scrollRight(yearRef)}
-          >
-            ›
-          </button>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc năm phát hành">
+          {YEARS.map((y) => (
+            <button
+              key={y.id}
+              type="button"
+              className={`chip ${selectedYear === y.id ? 'on' : ''}`}
+              onClick={() => onYearChange?.(y.id)}
+            >
+              {y.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 6. Quốc gia (Country) */}
       <div className="filter-row">
         <span className="filter-label">Quốc gia:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips" ref={countryRef}>
-            {COUNTRIES.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`chip ${selectedCountry === c.id ? 'on' : ''}`}
-                onClick={() => onCountryChange?.(c.id)}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="filter-arrow filter-arrow-right"
-            aria-label="Cuộn sang phải"
-            onClick={() => scrollRight(countryRef)}
-          >
-            ›
-          </button>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc quốc gia">
+          {COUNTRIES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`chip ${selectedCountry === c.id ? 'on' : ''}`}
+              onClick={() => onCountryChange?.(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
 
       {/* 7. Thể loại (Genre) */}
       <div className="filter-row">
         <span className="filter-label">Thể loại:</span>
-        <div className="filter-chips-wrapper">
-          <div className="filter-chips" ref={genreRef}>
-            {GENRES.map((g) => (
-              <button
-                key={g}
-                type="button"
-                className={`chip ${(g === 'Tất cả' && !selectedGenre) || selectedGenre === g ? 'on' : ''}`}
-                onClick={() => onGenreChange(g === 'Tất cả' ? '' : g)}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="filter-arrow filter-arrow-right"
-            aria-label="Cuộn sang phải"
-            onClick={() => scrollRight(genreRef)}
-          >
-            ›
-          </button>
-        </div>
+        <ScrollableFilterChips aria-label="Bộ lọc thể loại">
+          {GENRES.map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={`chip ${(g === 'Tất cả' && !selectedGenre) || selectedGenre === g ? 'on' : ''}`}
+              onClick={() => onGenreChange(g === 'Tất cả' ? '' : g)}
+            >
+              {g}
+            </button>
+          ))}
+        </ScrollableFilterChips>
       </div>
     </div>
   );

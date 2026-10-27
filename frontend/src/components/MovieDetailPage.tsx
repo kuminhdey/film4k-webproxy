@@ -564,11 +564,15 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
           </div>
 
           <div
+            className="cinema-menu-scroll"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-              gap: '10px',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
+              gap: '8px',
               marginBottom: '32px',
+              maxHeight: movie.episodes.length > 24 ? '320px' : 'none',
+              overflowY: movie.episodes.length > 24 ? 'auto' : 'visible',
+              paddingRight: movie.episodes.length > 24 ? '4px' : 0,
             }}
           >
             {movie.episodes.map((ep) => (
@@ -579,12 +583,14 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
                 onClick={() => onNavigate(`/watch/${movie.slug}/${ep.episode}`)}
                 style={{
                   justifyContent: 'center',
-                  padding: '12px 8px',
-                  fontSize: '14px',
+                  minHeight: '44px',
+                  padding: '8px 4px',
+                  fontSize: '13px',
                   fontWeight: 700,
                   cursor: 'pointer',
                   background: 'var(--card)',
                   border: '1px solid var(--border)',
+                  borderRadius: '8px',
                 }}
               >
                 Tập {ep.episode}

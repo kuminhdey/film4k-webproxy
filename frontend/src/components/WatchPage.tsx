@@ -21,6 +21,9 @@ import {
   ArrowLeft,
   Home,
   Film,
+  RotateCcw,
+  RotateCw,
+  X,
 } from 'lucide-react';
 import { Movie, Episode, Source } from '../types';
 import { Film4kFragmentLoader, setStatsListener } from '../utils/hlsLoader';
@@ -94,7 +97,76 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [bufferedPercent, setBufferedPercent] = useState(0);
+
+  // Mobile viewport detection
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth <= 768;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Sync fullscreen state with document and iOS video events
+  useEffect(() => {
+    const handleFsChange = () => {
+      const isNativeFs = Boolean(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      if (isNativeFs) {
+        setIsFullscreen(true);
+      } else if (!isPseudoFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+
+    const v = videoRef.current;
+    const handleWebkitBegin = () => setIsFullscreen(true);
+    const handleWebkitEnd = () => {
+      if (!isPseudoFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+
+    if (v) {
+      v.addEventListener('webkitbeginfullscreen', handleWebkitBegin);
+      v.addEventListener('webkitendfullscreen', handleWebkitEnd);
+    }
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      if (v) {
+        v.removeEventListener('webkitbeginfullscreen', handleWebkitBegin);
+        v.removeEventListener('webkitendfullscreen', handleWebkitEnd);
+      }
+    };
+  }, [isPseudoFullscreen]);
+
+  // Lock body scroll when pseudo-fullscreen is active
+  useEffect(() => {
+    if (isPseudoFullscreen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isPseudoFullscreen]);
 
   // UI Overlays & Menu state (Closed by default as requested!)
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -221,6 +293,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const savedSeekTimeRef = useRef<number>(0);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const activeEpisodeRef = useRef<HTMLButtonElement | null>(null);
 
   // Auto next episode & Resume playback state
   const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
@@ -352,6 +425,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
     return () => clearTimeout(timer);
   }, [countdown, nextEpisode]);
+
+  // Auto-scroll active episode into view
+  useEffect(() => {
+    if (activeEpisodeRef.current) {
+      activeEpisodeRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  }, [currentEpisode?.episode]);
 
   // Save progress immediately on beforeunload and component unmount
   useEffect(() => {
@@ -1440,13 +1520,24 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     flushSaveProgress();
   };
 
-  const handleVideoClick = () => {
+  const handleVideoClick = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (settingsOpen || showStats) {
       setSettingsOpen(false);
       setShowStats(false);
       return;
     }
-    togglePlay();
+    if (isMobile) {
+      setControlsVisible((prev) => {
+        const next = !prev;
+        if (next) {
+          handleMouseMove();
+        }
+        return next;
+      });
+    } else {
+      togglePlay();
+    }
   };
 
   const togglePlay = () => {
@@ -1458,6 +1549,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
       videoRef.current.pause();
       setIsPlaying(false);
     }
+  };
+
+  const seekRelative = (seconds: number) => {
+    if (!videoRef.current) return;
+    const dur = duration || videoRef.current.duration || 0;
+    const target = Math.max(0, Math.min(dur, videoRef.current.currentTime + seconds));
+    videoRef.current.currentTime = target;
+    setCurrentTime(target);
+    handleMouseMove();
   };
 
   const toggleMute = () => {
@@ -1486,17 +1586,63 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     setCurrentTime(targetTime);
   };
 
+  const handleTouchSeek = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!scrubberRef.current || !videoRef.current || e.touches.length === 0) return;
+    const touch = e.touches[0];
+    const rect = scrubberRef.current.getBoundingClientRect();
+    const touchX = touch.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, touchX / rect.width));
+    const targetTime = pct * (duration || videoRef.current.duration || 1);
+    videoRef.current.currentTime = targetTime;
+    setCurrentTime(targetTime);
+  };
+
   const toggleFullscreen = () => {
     const el = playerContainerRef.current;
+    const v = videoRef.current;
     if (!el) return;
 
-    if (!document.fullscreenElement) {
+    if (isPseudoFullscreen) {
+      setIsPseudoFullscreen(false);
+      setIsFullscreen(false);
+      return;
+    }
+
+    const isNativeFs = Boolean(
+      document.fullscreenElement ||
+      (document as any).webkitFullscreenElement
+    );
+
+    if (!isNativeFs) {
       if (el.requestFullscreen) {
-        el.requestFullscreen().catch(() => {});
+        el.requestFullscreen()
+          .then(() => setIsFullscreen(true))
+          .catch(() => {
+            // Fallback for mobile browsers or permissions restrictions
+            setIsPseudoFullscreen(true);
+            setIsFullscreen(true);
+          });
       } else if ((el as any).webkitRequestFullscreen) {
-        (el as any).webkitRequestFullscreen();
+        try {
+          (el as any).webkitRequestFullscreen();
+          setIsFullscreen(true);
+        } catch {
+          setIsPseudoFullscreen(true);
+          setIsFullscreen(true);
+        }
+      } else if (v && (v as any).webkitEnterFullscreen) {
+        // Native iOS video fullscreen
+        try {
+          (v as any).webkitEnterFullscreen();
+          setIsFullscreen(true);
+        } catch {
+          setIsPseudoFullscreen(true);
+          setIsFullscreen(true);
+        }
+      } else {
+        setIsPseudoFullscreen(true);
+        setIsFullscreen(true);
       }
-      setIsFullscreen(true);
     } else {
       if (document.exitFullscreen) {
         document.exitFullscreen().catch(() => {});
@@ -1775,22 +1921,30 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
         {/* 🎬 DEDICATED CUSTOM FILM4K CINEMA PLAYER 🎬 */}
         <div
           ref={playerContainerRef}
-          className="player"
+          className={`player ${isPseudoFullscreen ? 'pseudo-fullscreen' : ''}`}
           onMouseMove={handleMouseMove}
+          onTouchStart={handleMouseMove}
           onMouseLeave={() => {
             if (isPlaying && !settingsOpen) setControlsVisible(false);
           }}
           style={{
-            position: 'relative',
+            position: isPseudoFullscreen ? 'fixed' : 'relative',
+            inset: isPseudoFullscreen ? 0 : undefined,
+            top: isPseudoFullscreen ? 0 : undefined,
+            left: isPseudoFullscreen ? 0 : undefined,
+            right: isPseudoFullscreen ? 0 : undefined,
+            bottom: isPseudoFullscreen ? 0 : undefined,
+            zIndex: isPseudoFullscreen ? 99999 : undefined,
             background: '#000',
-            width: '100%',
-            maxWidth: '1100px',
-            margin: '0 auto',
-            borderRadius: '16px',
+            width: isPseudoFullscreen ? '100vw' : '100%',
+            height: isPseudoFullscreen ? '100vh' : undefined,
+            maxWidth: isPseudoFullscreen ? 'none' : '1100px',
+            margin: isPseudoFullscreen ? 0 : '0 auto',
+            borderRadius: isPseudoFullscreen ? 0 : '16px',
             overflow: 'hidden',
-            aspectRatio: '16 / 9',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.95)',
-            border: '1px solid var(--border)',
+            aspectRatio: isPseudoFullscreen ? undefined : '16 / 9',
+            boxShadow: isPseudoFullscreen ? 'none' : '0 24px 60px rgba(0, 0, 0, 0.95)',
+            border: isPseudoFullscreen ? 'none' : '1px solid var(--border)',
             userSelect: 'none',
           }}
         >
@@ -1814,6 +1968,101 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             }}
             playsInline
           />
+
+          {/* Mobile Center Controls: Seek -10s, Big Play/Pause, Seek +10s */}
+          {isMobile && controlsVisible && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '24px',
+                zIndex: 36,
+                pointerEvents: 'auto',
+                animation: 'fadeIn 0.15s ease',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* -10s button */}
+              <button
+                type="button"
+                onClick={() => seekRelative(-10)}
+                aria-label="Lùi lại 10 giây"
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '50%',
+                  background: 'rgba(0, 0, 0, 0.65)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                  transition: 'transform 0.15s ease',
+                }}
+              >
+                <RotateCcw size={20} />
+              </button>
+
+              {/* Big Play/Pause button */}
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={isPlaying ? 'Tạm dừng video' : 'Phát video'}
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '50%',
+                  background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
+                  border: 'none',
+                  color: '#070e08',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  boxShadow: '0 4px 20px rgba(174, 234, 0, 0.6)',
+                  transition: 'transform 0.15s ease',
+                }}
+              >
+                {isPlaying ? (
+                  <Pause size={28} fill="currentColor" />
+                ) : (
+                  <Play size={28} fill="currentColor" style={{ marginLeft: '4px' }} />
+                )}
+              </button>
+
+              {/* +10s button */}
+              <button
+                type="button"
+                onClick={() => seekRelative(10)}
+                aria-label="Tua tới 10 giây"
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '50%',
+                  background: 'rgba(0, 0, 0, 0.65)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                  transition: 'transform 0.15s ease',
+                }}
+              >
+                <RotateCw size={20} />
+              </button>
+            </div>
+          )}
 
           {/* Resume Playback Toast with Restart Button */}
           {resumeToast && (
@@ -2099,31 +2348,156 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
           {/* 5. SETTINGS POPUP MENU (Quality, Audio, Speed, Captions) */}
           {settingsOpen && (
-            <div
-              ref={settingsRef}
-              onClick={(e) => e.stopPropagation()}
-              onWheel={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                bottom: '72px',
-                right: '24px',
-                width: settingsMenu === 'captions' ? '320px' : '280px',
-                maxHeight: settingsMenu === 'captions' ? 'min(580px, calc(100vh - 96px))' : 'min(480px, calc(100vh - 120px))',
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                background: 'rgba(17, 22, 34, 0.96)',
-                backdropFilter: 'blur(20px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                borderRadius: '14px',
-                zIndex: 50,
-                boxShadow: '0 20px 48px -8px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.12)',
-                color: '#fff',
-                fontSize: '13.5px',
-                transition: 'width 0.2s ease',
-              }}
-            >
+            <>
+              {/* Backdrop for mobile bottom sheet */}
+              {isMobile && (
+                <div
+                  className="cinema-bottom-sheet-backdrop"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSettingsOpen(false);
+                  }}
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0, 0, 0, 0.75)',
+                    backdropFilter: 'blur(6px)',
+                    WebkitBackdropFilter: 'blur(6px)',
+                    zIndex: 9998,
+                    animation: 'fadeIn 0.2s ease',
+                  }}
+                />
+              )}
+
+              <div
+                ref={settingsRef}
+                onClick={(e) => e.stopPropagation()}
+                onWheel={(e) => e.stopPropagation()}
+                style={
+                  isMobile
+                    ? {
+                        position: 'fixed',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        width: '100%',
+                        maxHeight: 'min(82vh, 580px)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        background: 'rgba(11, 20, 13, 0.98)',
+                        backdropFilter: 'blur(24px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                        borderTop: '1px solid #1e3f28',
+                        borderLeft: 'none',
+                        borderRight: 'none',
+                        borderBottom: 'none',
+                        borderTopLeftRadius: '20px',
+                        borderTopRightRadius: '20px',
+                        zIndex: 9999,
+                        boxShadow: '0 -16px 48px rgba(0, 0, 0, 0.9)',
+                        color: '#fff',
+                        fontSize: '14px',
+                        paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+                        animation: 'slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+                      }
+                    : {
+                        position: 'absolute',
+                        bottom: '72px',
+                        right: '24px',
+                        width: settingsMenu === 'captions' ? '320px' : '280px',
+                        maxHeight: settingsMenu === 'captions' ? 'min(580px, calc(100vh - 96px))' : 'min(480px, calc(100vh - 120px))',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        background: 'rgba(17, 22, 34, 0.96)',
+                        backdropFilter: 'blur(20px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        borderRadius: '14px',
+                        zIndex: 50,
+                        boxShadow: '0 20px 48px -8px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.12)',
+                        color: '#fff',
+                        fontSize: '13.5px',
+                        transition: 'width 0.2s ease',
+                      }
+                }
+              >
+                {/* Mobile drag handle */}
+                {isMobile && (
+                  <div style={{ width: '100%', padding: '10px 0 4px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+                    <div style={{ width: '40px', height: '4px', borderRadius: '999px', background: 'rgba(255, 255, 255, 0.3)' }} />
+                  </div>
+                )}
+
+                {/* Sheet / Menu Header on Mobile */}
+                {isMobile && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '4px 16px 10px',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {settingsMenu !== 'main' ? (
+                      <button
+                        type="button"
+                        onClick={() => setSettingsMenu('main')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#c6ff00',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '14px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          padding: '4px 0',
+                        }}
+                      >
+                        <ChevronLeft size={18} />
+                        <span>
+                          {settingsMenu === 'quality'
+                            ? 'Chất lượng video'
+                            : settingsMenu === 'audio'
+                            ? 'Bản dịch & Âm thanh'
+                            : settingsMenu === 'speed'
+                            ? 'Tốc độ phát'
+                            : 'Phụ đề & Tùy chỉnh'}
+                        </span>
+                      </button>
+                    ) : (
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#fcfdf7' }}>
+                        Cài đặt phát video
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOpen(false)}
+                      aria-label="Đóng cài đặt"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: 'none',
+                        borderRadius: '50%',
+                        width: '32px',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#b4bdd0',
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                )}
               {/* Main Settings Menu */}
               {settingsMenu === 'main' && (
                 <div
@@ -2976,6 +3350,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 </div>
               )}
             </div>
+            </>
           )}
 
           {/* 6. BOTTOM CUSTOM CONTROL BAR */}
@@ -3000,19 +3375,23 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <div
               ref={scrubberRef}
               onClick={handleSeek}
+              onTouchStart={handleTouchSeek}
+              onTouchMove={handleTouchSeek}
+              onTouchEnd={handleTouchSeek}
               style={{
                 width: '100%',
-                height: '14px',
+                height: isMobile ? '30px' : '16px',
                 display: 'flex',
                 alignItems: 'center',
                 cursor: 'pointer',
                 position: 'relative',
+                touchAction: 'none',
               }}
             >
               <div
                 style={{
                   width: '100%',
-                  height: '4px',
+                  height: isMobile ? '5px' : '4px',
                   background: 'rgba(255, 255, 255, 0.2)',
                   borderRadius: '999px',
                   position: 'relative',
@@ -3051,8 +3430,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   left: `${progressPercent}%`,
                   top: '50%',
                   transform: 'translate(-50%, -50%)',
-                  width: '12px',
-                  height: '12px',
+                  width: isMobile ? '16px' : '12px',
+                  height: isMobile ? '16px' : '12px',
                   borderRadius: '50%',
                   background: '#c6ff00',
                   boxShadow: '0 0 12px rgba(198, 255, 0, 0.8), 0 0 4px rgba(174, 234, 0, 0.9)',
@@ -3068,14 +3447,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 color: '#fff',
+                gap: isMobile ? '8px' : '16px',
               }}
             >
               {/* Left Controls: Play/Pause, Volume, Time */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
                 <button
                   type="button"
                   className="cinema-ctrl-btn"
                   onClick={togglePlay}
+                  aria-label={isPlaying ? 'Tạm dừng video (Space)' : 'Phát video (Space)'}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -3084,19 +3465,22 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    width: isMobile ? '38px' : '34px',
+                    height: isMobile ? '38px' : '34px',
                     padding: 0,
                   }}
                   title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
                 >
-                  {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                  {isPlaying ? <Pause size={isMobile ? 22 : 20} fill="currentColor" /> : <Play size={isMobile ? 22 : 20} fill="currentColor" />}
                 </button>
 
                 {/* Volume & Inline Slider */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <button
                     type="button"
                     className="cinema-ctrl-btn"
                     onClick={toggleMute}
+                    aria-label={isMuted || volume === 0 ? 'Bật âm thanh (Phím M)' : 'Tắt tiếng (Phím M)'}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -3104,31 +3488,37 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
+                      justifyContent: 'center',
+                      width: isMobile ? '38px' : '34px',
+                      height: isMobile ? '38px' : '34px',
                       padding: 0,
                     }}
                     title={isMuted ? 'Bật âm thanh (M)' : 'Tắt tiếng (M)'}
                   >
-                    {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                    {isMuted || volume === 0 ? <VolumeX size={isMobile ? 21 : 20} /> : <Volume2 size={isMobile ? 21 : 20} />}
                   </button>
 
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={isMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    style={{
-                      width: '68px',
-                      height: '4px',
-                      cursor: 'pointer',
-                      accentColor: 'var(--accent, #aeea00)',
-                    }}
-                  />
+                  {!isMobile && (
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={isMuted ? 0 : volume}
+                      onChange={handleVolumeChange}
+                      aria-label="Thanh điều chỉnh âm lượng"
+                      style={{
+                        width: '68px',
+                        height: '4px',
+                        cursor: 'pointer',
+                        accentColor: 'var(--accent, #aeea00)',
+                      }}
+                    />
+                  )}
                 </div>
 
                 {/* Time Display */}
-                <div style={{ fontSize: '13px', color: '#eef2fa', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                <div style={{ fontSize: isMobile ? '12px' : '13px', color: '#eef2fa', fontVariantNumeric: 'tabular-nums', fontWeight: 500, whiteSpace: 'nowrap' }}>
                   <span>{formatTime(currentTime)}</span>
                   <span style={{ color: 'var(--muted, #8b95ad)', margin: '0 4px' }}>/</span>
                   <span style={{ color: 'var(--muted-light, #b4bdd0)' }}>{formatTime(duration || 8700)}</span>
@@ -3136,7 +3526,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               </div>
 
               {/* Right Controls: Captions, Settings, AirPlay, PiP, Fullscreen */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '12px' }}>
                 {/* Captions button */}
                 <button
                   type="button"
@@ -3150,20 +3540,25 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       handleSelectCaption('Tắt');
                     }
                   }}
+                  aria-label={selectedCaption !== 'Tắt' ? `Phụ đề đang bật (${selectedCaption})` : 'Bật phụ đề'}
+                  aria-pressed={selectedCaption !== 'Tắt'}
                   style={{
                     background: selectedCaption !== 'Tắt' ? 'rgba(174, 234, 0, 0.16)' : 'none',
                     border: 'none',
-                    borderRadius: '6px',
+                    borderRadius: '8px',
                     color: selectedCaption !== 'Tắt' ? '#aeea00' : 'var(--muted, #8b95ad)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    padding: '6px',
+                    justifyContent: 'center',
+                    width: isMobile ? '38px' : '34px',
+                    height: isMobile ? '38px' : '34px',
+                    padding: 0,
                     transition: 'all 0.15s',
                   }}
                   title="Bật/Tắt phụ đề"
                 >
-                  <Subtitles size={20} />
+                  <Subtitles size={isMobile ? 21 : 20} />
                 </button>
 
                 {/* Settings Gear button */}
@@ -3176,6 +3571,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     setSettingsOpen(next);
                     if (next) setSettingsMenu('main');
                   }}
+                  aria-label="Cài đặt phát (Chất lượng, Âm thanh, Tốc độ, Phụ đề)"
+                  aria-expanded={settingsOpen}
                   style={{
                     background: settingsOpen ? 'rgba(174, 234, 0, 0.18)' : 'none',
                     border: 'none',
@@ -3185,57 +3582,73 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    padding: '6px',
+                    width: isMobile ? '38px' : '34px',
+                    height: isMobile ? '38px' : '34px',
+                    padding: 0,
                     transition: 'all 0.15s',
                   }}
                   title="Cài đặt phát (Chất lượng, Âm thanh, Tốc độ, Phụ đề)"
                 >
-                  <Settings size={20} />
+                  <Settings size={isMobile ? 21 : 20} />
                 </button>
 
-                {/* Cast / AirPlay icon */}
-                <button
-                  type="button"
-                  className="cinema-ctrl-btn"
-                  onClick={() => alert('Truyền luồng tới thiết bị Smart TV / AirPlay / Google Cast')}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '4px',
-                  }}
-                  title="Truyền thiết bị (AirPlay / Cast)"
-                >
-                  <Cast size={20} />
-                </button>
+                {/* Cast / AirPlay icon (Desktop only to prevent mobile overflow) */}
+                {!isMobile && (
+                  <button
+                    type="button"
+                    className="cinema-ctrl-btn"
+                    onClick={() => alert('Truyền luồng tới thiết bị Smart TV / AirPlay / Google Cast')}
+                    aria-label="Truyền thiết bị (AirPlay / Cast)"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '34px',
+                      height: '34px',
+                      padding: 0,
+                    }}
+                    title="Truyền thiết bị (AirPlay / Cast)"
+                  >
+                    <Cast size={20} />
+                  </button>
+                )}
 
-                {/* Picture-in-Picture */}
-                <button
-                  type="button"
-                  className="cinema-ctrl-btn"
-                  onClick={togglePiP}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '4px',
-                  }}
-                  title="Thu nhỏ hình trong hình (PiP)"
-                >
-                  <PictureInPicture size={20} />
-                </button>
+                {/* Picture-in-Picture (Desktop only) */}
+                {!isMobile && (
+                  <button
+                    type="button"
+                    className="cinema-ctrl-btn"
+                    onClick={togglePiP}
+                    aria-label="Thu nhỏ hình trong hình (PiP)"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '34px',
+                      height: '34px',
+                      padding: 0,
+                    }}
+                    title="Thu nhỏ hình trong hình (PiP)"
+                  >
+                    <PictureInPicture size={20} />
+                  </button>
+                )}
 
-                {/* Fullscreen */}
+                {/* Fullscreen Button with Full Accessibility */}
                 <button
                   type="button"
                   className="cinema-ctrl-btn"
                   onClick={toggleFullscreen}
+                  aria-label={isFullscreen ? 'Thoát chế độ toàn màn hình (Phím tắt: F hoặc Esc)' : 'Xem toàn màn hình (Phím tắt: F)'}
+                  aria-pressed={isFullscreen}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -3243,11 +3656,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    padding: '4px',
+                    justifyContent: 'center',
+                    width: isMobile ? '40px' : '36px',
+                    height: isMobile ? '40px' : '36px',
+                    borderRadius: '8px',
+                    padding: 0,
                   }}
-                  title="Toàn màn hình (F)"
+                  title={isFullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'}
                 >
-                  {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+                  {isFullscreen ? <Minimize size={isMobile ? 22 : 20} /> : <Maximize size={isMobile ? 22 : 20} />}
                 </button>
               </div>
             </div>
@@ -3394,30 +3811,69 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
         {/* Server Selection Chips / Badge */}
         <div className="wrap" style={{ maxWidth: '1100px', margin: '16px auto 0' }}>
-          <div className="servers" style={{ padding: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted, #8b95ad)', marginRight: '4px' }}>
+          <div
+            className="servers"
+            style={{
+              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flexWrap: 'wrap',
+              width: '100%',
+            }}
+          >
+            <span
+              style={{
+                fontSize: '13px',
+                fontWeight: 600,
+                color: 'var(--muted, #8b95ad)',
+                marginRight: '4px',
+                flexShrink: 0,
+              }}
+            >
               Máy chủ phát:
             </span>
-            {availableServers.length > 1 ? (
-              availableServers.map((src, i) => {
-                const isSelected = currentSource?.hlsUrl === src.hlsUrl || currentSource?.label === src.label;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`chip ${isSelected ? 'on' : ''}`}
-                    onClick={() => handleSelectServer(src)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {src.label || `Server ${i + 1}`}
-                  </button>
-                );
-              })
-            ) : (
-              <span className="chip on" style={{ cursor: 'default' }}>
-                Server VIP (4K CDN)
-              </span>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+              {availableServers.length > 1 ? (
+                availableServers.map((src, i) => {
+                  const isSelected = currentSource?.hlsUrl === src.hlsUrl || currentSource?.label === src.label;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className={`chip ${isSelected ? 'on' : ''}`}
+                      onClick={() => handleSelectServer(src)}
+                      style={{
+                        cursor: 'pointer',
+                        minHeight: '38px',
+                        padding: '8px 14px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRadius: '999px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {src.label || `Server ${i + 1}`}
+                    </button>
+                  );
+                })
+              ) : (
+                <span
+                  className="chip on"
+                  style={{
+                    cursor: 'default',
+                    minHeight: '38px',
+                    padding: '8px 14px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: '999px',
+                  }}
+                >
+                  Server VIP (4K CDN)
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -3426,7 +3882,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           <div className="wrap" style={{ maxWidth: '1100px', margin: '24px auto 0' }}>
             <div className="eps-head" style={{ margin: '0 0 12px' }}>
               <div>
-                <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', margin: 0 }}>
+                <h2 style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 700, color: '#fff', margin: 0 }}>
                   Danh sách tập phim ({movie.episodes.length})
                 </h2>
                 <span className="eps-current" style={{ color: 'var(--muted)', fontSize: '12px' }}>
@@ -3436,10 +3892,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             </div>
 
             <div
+              className="cinema-menu-scroll"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                gridTemplateColumns: isMobile ? 'repeat(auto-fill, minmax(70px, 1fr))' : 'repeat(auto-fill, minmax(88px, 1fr))',
                 gap: '8px',
+                maxHeight: movie.episodes.length > 24 ? (isMobile ? '300px' : '380px') : 'none',
+                overflowY: movie.episodes.length > 24 ? 'auto' : 'visible',
+                paddingRight: movie.episodes.length > 24 ? '4px' : 0,
               }}
             >
               {movie.episodes.map((ep) => {
@@ -3447,15 +3907,20 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 return (
                   <button
                     key={ep.episode}
+                    ref={isActive ? activeEpisodeRef : null}
                     type="button"
                     onClick={() => handleSelectEpisode(ep)}
                     className={`chip ${isActive ? 'on' : ''}`}
                     style={{
                       justifyContent: 'center',
-                      padding: '10px 4px',
+                      minHeight: '42px',
+                      padding: '8px 4px',
                       fontSize: '13px',
                       fontWeight: 700,
                       cursor: 'pointer',
+                      borderRadius: '8px',
+                      border: isActive ? '1px solid #aeea00' : '1px solid #1e3f28',
+                      boxShadow: isActive ? '0 0 12px rgba(174, 234, 0, 0.35)' : 'none',
                     }}
                   >
                     Tập {ep.episode}
