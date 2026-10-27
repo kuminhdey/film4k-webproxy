@@ -161,11 +161,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   useEffect(() => {
     if (isPseudoFullscreen) {
       document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
     }
     return () => {
       document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
     };
   }, [isPseudoFullscreen]);
 
@@ -1563,8 +1566,27 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
 
   const toggleMute = () => {
     if (!videoRef.current) return;
-    videoRef.current.muted = !videoRef.current.muted;
-    setIsMuted(videoRef.current.muted);
+    if (isMobile) {
+      if (isMuted || volume === 0) {
+        videoRef.current.muted = false;
+        videoRef.current.volume = 1;
+        setVolume(1);
+        setIsMuted(false);
+      } else {
+        videoRef.current.muted = true;
+        videoRef.current.volume = 0;
+        setVolume(0);
+        setIsMuted(true);
+      }
+      return;
+    }
+    const nextMuted = !videoRef.current.muted;
+    videoRef.current.muted = nextMuted;
+    setIsMuted(nextMuted);
+    if (!nextMuted && volume === 0) {
+      videoRef.current.volume = 1;
+      setVolume(1);
+    }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1606,6 +1628,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     if (isPseudoFullscreen) {
       setIsPseudoFullscreen(false);
       setIsFullscreen(false);
+      return;
+    }
+
+    if (isMobile) {
+      setIsPseudoFullscreen(true);
+      setIsFullscreen(true);
       return;
     }
 
@@ -1935,10 +1963,10 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             left: isPseudoFullscreen ? 0 : undefined,
             right: isPseudoFullscreen ? 0 : undefined,
             bottom: isPseudoFullscreen ? 0 : undefined,
-            zIndex: isPseudoFullscreen ? 99999 : undefined,
+            zIndex: isPseudoFullscreen ? 999999 : undefined,
             background: '#000',
             width: isPseudoFullscreen ? '100vw' : '100%',
-            height: isPseudoFullscreen ? '100vh' : undefined,
+            height: isPseudoFullscreen ? '100dvh' : undefined,
             maxWidth: isPseudoFullscreen ? 'none' : '1100px',
             margin: isPseudoFullscreen ? 0 : '0 auto',
             borderRadius: isPseudoFullscreen ? 0 : '16px',
@@ -3494,13 +3522,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      width: isMobile ? '38px' : '34px',
-                      height: isMobile ? '38px' : '34px',
+                      width: isMobile ? '44px' : '34px',
+                      height: isMobile ? '44px' : '34px',
+                      minWidth: isMobile ? '44px' : 'auto',
+                      minHeight: isMobile ? '44px' : 'auto',
+                      touchAction: 'manipulation',
+                      WebkitTapHighlightColor: 'transparent',
                       padding: 0,
                     }}
                     title={isMuted ? 'Bật âm thanh (M)' : 'Tắt tiếng (M)'}
                   >
-                    {isMuted || volume === 0 ? <VolumeX size={isMobile ? 21 : 20} /> : <Volume2 size={isMobile ? 21 : 20} />}
+                    {isMuted || volume === 0 ? <VolumeX size={isMobile ? 22 : 20} /> : <Volume2 size={isMobile ? 22 : 20} />}
                   </button>
 
                   {!isMobile && (
@@ -3668,6 +3700,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     minHeight: isMobile ? '44px' : 'auto',
                     flexShrink: 0,
                     zIndex: 2,
+                    touchAction: 'manipulation',
+                    WebkitTapHighlightColor: 'transparent',
                     borderRadius: '8px',
                     padding: 0,
                   }}

@@ -344,7 +344,8 @@ html, body, #root {
   max-width: none !important;
   border-radius: 0 !important;
   margin: 0 !important;
-  z-index: 99999 !important;
+  z-index: 999999 !important;
+  overflow: hidden !important;
   border: none !important;
 }
 
@@ -427,11 +428,34 @@ a:focus-visible {
   .mylist-page {
     padding: 20px 16px 64px !important;
   }
+  .filter-arrow,
+  .filter-arrow-left,
+  .filter-arrow-right,
   .filter-scroll-edge {
     display: none !important;
   }
   .filter-chips {
+    padding-left: 16px !important;
     padding-right: 16px !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-behavior: smooth !important;
   }
+  .hero-dot {
+    padding: 10px 4px !important;
+    background-clip: content-box !important;
+    box-sizing: content-box !important;
+    touch-action: manipulation !important;
+  }
+}
+
+/* Touch target polish for mobile */
+.ghost.locale,
+button.ghost.locale {
+  min-height: 38px !important;
+  min-width: 44px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  touch-action: manipulation !important;
 }
 
