@@ -381,3 +381,29 @@ a:focus-visible {
   outline: 2px solid #aeea00 !important;
   outline-offset: 2px !important;
 }
+
+/* Responsive MovieDetailPage: resolve asymmetric margin on mobile */
+@media (max-width: 768px) {
+  .title-poster-wrapper {
+    display: none !important;
+  }
+  .title-in {
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+  .title-text {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .title-cta {
+    width: 100% !important;
+  }
+}
+
+/* Bookmark button active feedback */
+.bookmark-btn.active {
+  background: var(--accent, #aeea00) !important;
+  color: #070e08 !important;
+  border-color: var(--accent, #aeea00) !important;
+  box-shadow: 0 0 16px rgba(174, 234, 0, 0.45) !important;
+}

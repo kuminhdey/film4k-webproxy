@@ -64,6 +64,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
       genres: movie.genres,
       total_episodes: movie.totalEpisodes,
     });
+    setInMyList(added);
     setToastMsg(added ? 'Đã thêm vào Danh sách của tôi' : 'Đã xóa khỏi Danh sách của tôi');
     setTimeout(() => setToastMsg(null), 3000);
   };
@@ -240,7 +241,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
           }}
         >
           {/* Movie Poster */}
-          <div style={{ flexShrink: 0 }}>
+          <div className="title-poster-wrapper" style={{ flexShrink: 0 }}>
             <img
               className="title-poster"
               src={posterUrl}
@@ -485,24 +486,26 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNaviga
 
               <button
                 type="button"
-                className="ghost-btn"
+                className={`ghost-btn bookmark-btn ${inMyList ? 'active' : ''}`}
                 onClick={handleToggleMyList}
                 style={{
                   padding: '12px 22px',
                   fontSize: '14px',
-                  fontWeight: 600,
+                  fontWeight: inMyList ? 700 : 600,
                   borderRadius: '12px',
                   cursor: 'pointer',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '8px',
-                  borderColor: inMyList ? '#aeea00' : undefined,
-                  color: inMyList ? '#aeea00' : undefined,
-                  background: inMyList ? 'rgba(174, 234, 0, 0.12)' : undefined,
+                  borderColor: inMyList ? 'var(--accent, #aeea00)' : undefined,
+                  color: inMyList ? '#070e08' : undefined,
+                  background: inMyList ? 'var(--accent, #aeea00)' : undefined,
+                  boxShadow: inMyList ? '0 0 16px rgba(174, 234, 0, 0.45)' : undefined,
+                  transition: 'all 0.2s ease',
                 }}
               >
-                {inMyList ? <Check size={18} color="#aeea00" /> : <Bookmark size={18} />}
-                <span>{inMyList ? '✓ Đã trong Danh sách' : '+ Danh sách của tôi'}</span>
+                {inMyList ? <Check size={18} color="#070e08" strokeWidth={2.5} /> : <Bookmark size={18} />}
+                <span>{inMyList ? '✓ Đã thêm vào DS' : '+ Danh sách của tôi'}</span>
               </button>
 
               <button
