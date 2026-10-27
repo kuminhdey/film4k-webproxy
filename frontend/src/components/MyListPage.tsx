@@ -44,7 +44,7 @@ export const MyListPage: React.FC<MyListPageProps> = ({ onNavigate }) => {
   };
 
   return (
-    <main className="wrap mylist-page" style={{ minHeight: '80vh', padding: '32px 0 64px' }}>
+    <main className="wrap mylist-page" style={{ minHeight: '80vh', padding: '24px 16px 64px' }}>
       {/* 1. Header Section */}
       <div
         style={{

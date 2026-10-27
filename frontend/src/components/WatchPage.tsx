@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Hls from 'hls.js';
 import {
   Settings,
@@ -2347,60 +2348,59 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
           )}
 
           {/* 5. SETTINGS POPUP MENU (Quality, Audio, Speed, Captions) */}
-          {settingsOpen && (
-            <>
-              {/* Backdrop for mobile bottom sheet */}
-              {isMobile && (
-                <div
-                  className="cinema-bottom-sheet-backdrop"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSettingsOpen(false);
-                  }}
-                  style={{
-                    position: 'fixed',
-                    inset: 0,
-                    background: 'rgba(0, 0, 0, 0.75)',
-                    backdropFilter: 'blur(6px)',
-                    WebkitBackdropFilter: 'blur(6px)',
-                    zIndex: 9998,
-                    animation: 'fadeIn 0.2s ease',
-                  }}
-                />
-              )}
+          {settingsOpen && (() => {
+            const settingsModalNode = (
+              <>
+                {/* Backdrop for mobile bottom sheet */}
+                {isMobile && (
+                  <div
+                    className="cinema-bottom-sheet-backdrop"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSettingsOpen(false);
+                    }}
+                    style={{
+                      position: 'fixed',
+                      inset: 0,
+                      background: 'rgba(0, 0, 0, 0.75)',
+                      backdropFilter: 'blur(6px)',
+                      WebkitBackdropFilter: 'blur(6px)',
+                      zIndex: 999998,
+                      animation: 'fadeIn 0.2s ease',
+                    }}
+                  />
+                )}
 
-              <div
-                ref={settingsRef}
-                onClick={(e) => e.stopPropagation()}
-                onWheel={(e) => e.stopPropagation()}
-                style={
-                  isMobile
-                    ? {
-                        position: 'fixed',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        width: '100%',
-                        maxHeight: 'min(82vh, 580px)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        overflow: 'hidden',
-                        background: 'rgba(11, 20, 13, 0.98)',
-                        backdropFilter: 'blur(24px) saturate(180%)',
-                        WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-                        borderTop: '1px solid #1e3f28',
-                        borderLeft: 'none',
-                        borderRight: 'none',
-                        borderBottom: 'none',
-                        borderTopLeftRadius: '20px',
-                        borderTopRightRadius: '20px',
-                        zIndex: 9999,
-                        boxShadow: '0 -16px 48px rgba(0, 0, 0, 0.9)',
-                        color: '#fff',
-                        fontSize: '14px',
-                        paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-                        animation: 'slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
-                      }
+                <div
+                  ref={settingsRef}
+                  onClick={(e) => e.stopPropagation()}
+                  onWheel={(e) => e.stopPropagation()}
+                  style={
+                    isMobile
+                      ? {
+                          position: 'fixed',
+                          inset: 'auto 0 0 0',
+                          width: '100%',
+                          maxHeight: 'min(85vh, 600px)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          overflow: 'hidden',
+                          background: 'rgba(11, 20, 13, 0.98)',
+                          backdropFilter: 'blur(24px) saturate(180%)',
+                          WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                          borderTop: '1px solid #1e3f28',
+                          borderLeft: 'none',
+                          borderRight: 'none',
+                          borderBottom: 'none',
+                          borderTopLeftRadius: '20px',
+                          borderTopRightRadius: '20px',
+                          zIndex: 999999,
+                          boxShadow: '0 -16px 48px rgba(0, 0, 0, 0.9)',
+                          color: '#fff',
+                          fontSize: '14px',
+                          paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+                          animation: 'slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+                        }
                     : {
                         position: 'absolute',
                         bottom: '72px',
@@ -2509,7 +2509,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     padding: '8px 6px',
                     overflowY: 'auto',
                     flex: 1,
-                    maxHeight: '380px',
+                    maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '380px',
                     overscrollBehavior: 'contain',
                     WebkitOverflowScrolling: 'touch',
                   }}
@@ -2726,7 +2726,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -2865,7 +2865,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -2959,7 +2959,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -3047,7 +3047,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: '520px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '520px',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -3060,7 +3060,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <div
                       className="cinema-menu-scroll"
                       style={{
-                        maxHeight: '260px',
+                        maxHeight: isMobile ? '160px' : '260px',
                         overflowY: 'auto',
                         display: 'flex',
                         flexDirection: 'column',
@@ -3349,9 +3349,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   </div>
                 </div>
               )}
-            </div>
+              </div>
             </>
-          )}
+          );
+
+          return isMobile && typeof document !== 'undefined'
+            ? createPortal(settingsModalNode, document.body)
+            : settingsModalNode;
+        })()}
 
           {/* 6. BOTTOM CUSTOM CONTROL BAR */}
           <div
@@ -3657,8 +3662,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    width: isMobile ? '40px' : '36px',
-                    height: isMobile ? '40px' : '36px',
+                    width: isMobile ? '44px' : '36px',
+                    height: isMobile ? '44px' : '36px',
+                    minWidth: isMobile ? '44px' : 'auto',
+                    minHeight: isMobile ? '44px' : 'auto',
+                    flexShrink: 0,
+                    zIndex: 2,
                     borderRadius: '8px',
                     padding: 0,
                   }}
@@ -3845,7 +3854,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       onClick={() => handleSelectServer(src)}
                       style={{
                         cursor: 'pointer',
-                        minHeight: '38px',
+                        minHeight: '40px',
                         padding: '8px 14px',
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -3863,7 +3872,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   className="chip on"
                   style={{
                     cursor: 'default',
-                    minHeight: '38px',
+                    minHeight: '40px',
                     padding: '8px 14px',
                     display: 'inline-flex',
                     alignItems: 'center',

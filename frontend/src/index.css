@@ -407,3 +407,31 @@ a:focus-visible {
   border-color: var(--accent, #aeea00) !important;
   box-shadow: 0 0 16px rgba(174, 234, 0, 0.45) !important;
 }
+
+/* Mobile Navigation 6-Column Single Row Layout */
+.mobile-nav {
+  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+}
+.mobile-nav-tab {
+  min-width: 0 !important;
+  width: 100% !important;
+  font-size: 10px !important;
+  padding: 6px 2px 4px !important;
+}
+
+/* Mobile responsive layout fixes */
+@media (max-width: 768px) {
+  .wrap {
+    padding: 0 16px !important;
+  }
+  .mylist-page {
+    padding: 20px 16px 64px !important;
+  }
+  .filter-scroll-edge {
+    display: none !important;
+  }
+  .filter-chips {
+    padding-right: 16px !important;
+  }
+}
+
