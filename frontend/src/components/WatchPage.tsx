@@ -294,6 +294,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
   const scrubberRef = useRef<HTMLDivElement | null>(null);
+  const isScrubbingRef = useRef<boolean>(false);
   const savedSeekTimeRef = useRef<number>(0);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -1620,6 +1621,32 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
     setCurrentTime(targetTime);
   };
 
+  const handleScrubberMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!scrubberRef.current || !videoRef.current) return;
+    isScrubbingRef.current = true;
+    const seekToMouse = (clientX: number) => {
+      if (!scrubberRef.current || !videoRef.current) return;
+      const rect = scrubberRef.current.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const targetTime = pct * (duration || videoRef.current.duration || 1);
+      videoRef.current.currentTime = targetTime;
+      setCurrentTime(targetTime);
+    };
+    seekToMouse(e.clientX);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isScrubbingRef.current) return;
+      seekToMouse(moveEvent.clientX);
+    };
+    const onMouseUp = () => {
+      isScrubbingRef.current = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
   const toggleFullscreen = () => {
     const el = playerContainerRef.current;
     const v = videoRef.current;
@@ -1685,10 +1712,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   const togglePiP = async () => {
     if (!videoRef.current) return;
     try {
+      const v = videoRef.current as any;
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
-      } else if (document.pictureInPictureEnabled) {
-        await videoRef.current.requestPictureInPicture();
+      } else if (document.pictureInPictureEnabled && v.requestPictureInPicture) {
+        await v.requestPictureInPicture();
+      } else if (v.webkitSupportsPresentationMode && typeof v.webkitSetPresentationMode === 'function') {
+        const mode = v.webkitPresentationMode;
+        v.webkitSetPresentationMode(mode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
       }
     } catch (err) {
       console.error('PiP error:', err);
@@ -3408,6 +3439,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             <div
               ref={scrubberRef}
               onClick={handleSeek}
+              onMouseDown={handleScrubberMouseDown}
               onTouchStart={handleTouchSeek}
               onTouchMove={handleTouchSeek}
               onTouchEnd={handleTouchSeek}
@@ -3540,16 +3572,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       type="range"
                       min="0"
                       max="1"
-                      step="0.05"
+                      step="0.01"
                       value={isMuted ? 0 : volume}
                       onChange={handleVolumeChange}
+                      className="cinema-volume-slider"
                       aria-label="Thanh điều chỉnh âm lượng"
-                      style={{
-                        width: '68px',
-                        height: '4px',
-                        cursor: 'pointer',
-                        accentColor: 'var(--accent, #aeea00)',
-                      }}
                     />
                   )}
                 </div>
@@ -3654,8 +3681,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                   </button>
                 )}
 
-                {/* Picture-in-Picture (Desktop only) */}
-                {!isMobile && (
+                {/* Picture-in-Picture (Desktop always, Mobile normal mode only) */}
+                {(!isMobile || !isPseudoFullscreen) && (
                   <button
                     type="button"
                     className="cinema-ctrl-btn"
@@ -3669,13 +3696,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      width: '34px',
-                      height: '34px',
+                      width: isMobile ? '44px' : '34px',
+                      height: isMobile ? '44px' : '34px',
+                      minWidth: isMobile ? '44px' : 'auto',
+                      minHeight: isMobile ? '44px' : 'auto',
+                      touchAction: 'manipulation',
+                      WebkitTapHighlightColor: 'transparent',
                       padding: 0,
                     }}
                     title="Thu nhỏ hình trong hình (PiP)"
                   >
-                    <PictureInPicture size={20} />
+                    <PictureInPicture size={isMobile ? 22 : 20} />
                   </button>
                 )}
 

@@ -459,3 +459,58 @@ button.ghost.locale {
   touch-action: manipulation !important;
 }
 
+/* Cinema Volume Slider */
+input.cinema-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 80px !important;
+  height: 5px !important;
+  background: rgba(255, 255, 255, 0.25) !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  outline: none !important;
+  cursor: pointer;
+  accent-color: var(--accent, #aeea00);
+}
+input.cinema-volume-slider::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: transparent;
+}
+input.cinema-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #c6ff00;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(198, 255, 0, 0.8);
+  border: none;
+  margin-top: -4px;
+}
+input.cinema-volume-slider::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+input.cinema-volume-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #c6ff00;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(198, 255, 0, 0.8);
+  border: none;
+}
+input.cinema-volume-slider:focus,
+input.cinema-volume-slider:active {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+
