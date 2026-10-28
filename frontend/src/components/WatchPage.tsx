@@ -219,8 +219,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     }
   };
 
-  // Determine whether this movie has multiple episodes (TV Series)
+  // Determine whether this movie has multiple episodes (TV Series) vs Single Movie (phim lẻ)
   const isSeries = (movie.total_episodes !== undefined && Number(movie.total_episodes) > 1) || items.length > 1;
+  const isSingleMovie = !isSeries;
   const epNum = parseEpisodeNumber(currentEpisode?.slug, currentEpisode?.name);
 
   // Extract categories/genres for related movies
@@ -255,11 +256,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         posterUrl={getImageUrl(movie.poster_url || movie.thumb_url)}
         playerMode={playerMode}
         onPlayerModeChange={setPlayerMode}
-        nextEpisode={nextEpisode ? { name: nextEpisode.name, slug: nextEpisode.slug } : undefined}
-        onNextEpisode={nextEpisode ? handleNextEpisode : undefined}
-        prevEpisode={prevEpisode ? { name: prevEpisode.name, slug: prevEpisode.slug } : undefined}
-        onPrevEpisode={prevEpisode ? handlePrevEpisode : undefined}
-        allEpisodes={items.map((ep) => ({ name: ep.name, slug: ep.slug }))}
+        nextEpisode={isSeries && nextEpisode ? { name: nextEpisode.name, slug: nextEpisode.slug } : undefined}
+        onNextEpisode={isSeries && nextEpisode ? handleNextEpisode : undefined}
+        prevEpisode={isSeries && prevEpisode ? { name: prevEpisode.name, slug: prevEpisode.slug } : undefined}
+        onPrevEpisode={isSeries && prevEpisode ? handlePrevEpisode : undefined}
+        allEpisodes={isSeries ? items.map((ep) => ({ name: ep.name, slug: ep.slug })) : undefined}
         currentEpisodeSlug={currentEpisode?.slug}
         onSelectEpisode={handleSelectEpisode}
         isTheater={isTheater}
@@ -276,10 +277,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({
           <div className="flex items-center gap-2 text-xs font-semibold text-[#cbe1c8] truncate min-w-0">
             <span className="w-2 h-2 rounded-full bg-lime-400 animate-pulse flex-shrink-0" />
             <span className="truncate">
-              {movie.name} —{' '}
-              <span className="text-lime-400 font-bold">
-                {currentEpisode?.name ? `Tập ${currentEpisode.name}` : ''}
-              </span>
+              {movie.name}
+              {isSeries && currentEpisode?.name && currentEpisode.name.toLowerCase() !== 'full' ? (
+                <>
+                  {' '}—{' '}
+                  <span className="text-lime-400 font-bold">
+                    Tập {currentEpisode.name}
+                  </span>
+                </>
+              ) : null}
             </span>
           </div>
           <button
@@ -315,7 +321,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         </button>
 
         <span className="text-xs text-[#8aa885] truncate max-w-[200px] sm:max-w-md">
-          {movie.name} — <span className="text-lime-400 font-bold">{currentEpisode?.name ? `Tập ${currentEpisode.name}` : ''}</span>
+          {movie.name}
+          {isSeries && currentEpisode?.name && currentEpisode.name.toLowerCase() !== 'full' ? (
+            <>
+              {' '}—{' '}
+              <span className="text-lime-400 font-bold">
+                Tập {currentEpisode.name}
+              </span>
+            </>
+          ) : null}
         </span>
       </div>
 
@@ -324,7 +338,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         {playerElement}
       </div>
 
-      {/* Episode Selector */}
+      {/* Episode Selector (Phim lẻ ẩn vùng chọn tập) */}
       <EpisodeSelector
         servers={servers}
         activeServerIndex={activeServerIndex}
@@ -334,6 +348,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         onSelectServer={setActiveServerIndex}
         onSelectEpisode={handleSelectEpisode}
         onSelectPlayerMode={setPlayerMode}
+        isSingleMovie={isSingleMovie}
       />
 
       {/* Movie Information Summary */}

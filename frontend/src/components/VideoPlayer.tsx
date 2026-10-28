@@ -24,6 +24,8 @@ import {
   Sun,
   ChevronsLeft,
   ChevronsRight,
+  ChevronLeft,
+  ChevronRight,
   PictureInPicture2,
   FastForward,
   Settings,
@@ -45,6 +47,8 @@ import {
   Waves,
   AudioLines,
   Moon,
+  Headphones,
+  Film,
 } from 'lucide-react';
 import {
   saveHistory,
@@ -55,6 +59,7 @@ import {
   formatTime,
 } from '../utils';
 import { Film4kFragmentLoader, resetCumulativeBytes } from '../utils/hlsLoader';
+import { getQualityDisplayInfo, sortQualitiesDescending } from '../utils/quality';
 
 type EqPreset = 'flat' | 'bass-boost' | 'vocal-clarity' | 'virtual-surround';
 
@@ -191,10 +196,51 @@ const shiftVtt = (vtt: string, offset: number): string => {
   );
 };
 
-interface HlsLevelInfo {
-  height?: number;
+export interface AudioTrackOption {
+  id: number;
+  name: string;
+  lang?: string;
+}
+
+export interface HlsSubtitleTrackOption {
+  id: number;
+  name: string;
+  lang?: string;
+  default?: boolean;
+}
+
+export interface HlsLevelInfo {
+  id: number;
+  height: number;
+  width?: number;
   bitrate?: number;
 }
+
+const isVietnameseAudio = (name: string, lang?: string) => {
+  const n = (name || '').toLowerCase();
+  const l = (lang || '').toLowerCase();
+  return (
+    l.includes('vi') ||
+    n.includes('vi') ||
+    n.includes('viet') ||
+    n.includes('thuyết minh') ||
+    n.includes('lồng tiếng') ||
+    n.includes('thuyet minh') ||
+    n.includes('long tieng')
+  );
+};
+
+const isVietnameseSubtitle = (name: string, lang?: string) => {
+  const n = (name || '').toLowerCase();
+  const l = (lang || '').toLowerCase();
+  return (
+    l.includes('vi') ||
+    n.includes('vi') ||
+    n.includes('viet') ||
+    n.includes('tiếng việt') ||
+    n.includes('tieng viet')
+  );
+};
 
 interface VideoPlayerProps {
   embedUrl: string;
@@ -319,6 +365,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [currentLevel, setCurrentLevel] = useState<number>(-1);
   const [activeHeight, setActiveHeight] = useState<number>(0);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [settingsSubmenu, setSettingsSubmenu] = useState<'main' | 'quality' | 'audio' | 'captions' | 'speed' | 'filters' | 'equalizer'>('main');
+  const [audioTracks, setAudioTracks] = useState<AudioTrackOption[]>([]);
+  const [currentAudioTrack, setCurrentAudioTrack] = useState<number>(0);
+  const [hlsSubtitleTracks, setHlsSubtitleTracks] = useState<HlsSubtitleTrackOption[]>([]);
+  const [currentSubtitleTrack, setCurrentSubtitleTrack] = useState<number>(-1);
+  const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const saved = localStorage.getItem('bofilm_player_autonext');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -1172,8 +1228,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleSubtitleSizeSelect = useCallback(
     (size: 'sm' | 'md' | 'lg') => {
+      setPrefs((prev) => ({ ...prev, subtitleSize: size }));
       setSubtitle((prev) => (prev ? { ...prev, size } : prev));
-      setShowSettingsMenu(false);
       triggerFeedback('Đã cập nhật cỡ chữ phụ đề', 'volume');
     },
     [triggerFeedback]
@@ -1182,6 +1238,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // ===== Subtitle styling: font color =====
   const handleSubtitleColorSelect = useCallback(
     (color: string) => {
+      setPrefs((prev) => ({ ...prev, subtitleColor: color }));
       setSubtitle((prev) => (prev ? { ...prev, color } : prev));
       triggerFeedback('Đã cập nhật màu chữ phụ đề', 'volume');
     },
@@ -1367,15 +1424,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   }, [triggerFeedback]);
 
-  // Quality label helper (height -> text) shared by menu + hover badge
-  const getQualityLabel = useCallback((height?: number) => {
+  // Quality label helper (height, width -> text) shared by menu + hover badge
+  const getQualityLabel = useCallback((height?: number, width?: number) => {
     if (!height) return 'Tự động';
-    if (height >= 2160) return '4K';
-    if (height >= 1080) return '1080p';
-    if (height >= 720) return '720p';
-    if (height >= 480) return '480p';
-    if (height >= 360) return '360p';
-    return `${height}p`;
+    return getQualityDisplayInfo(height, width).label;
   }, []);
 
   // HLS quality level selection (-1 = auto / adaptive)
@@ -1387,7 +1439,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (levelIndex !== -1) {
           const level = hlsRef.current.levels[levelIndex];
           if (level) {
-            triggerFeedback(`Chất lượng: ${getQualityLabel(level.height)}`);
+            const info = getQualityDisplayInfo(level.height, level.width);
+            triggerFeedback(`Chất lượng: ${info.label}`);
           }
         } else {
           triggerFeedback('Chất lượng: Tự động');
@@ -1401,15 +1454,90 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } else {
         localStorage.setItem('bofilm_player_quality', String(levelIndex));
       }
-      setShowSettingsMenu(false);
     },
-    [triggerFeedback, getQualityLabel]
+    [triggerFeedback]
   );
 
-  // Reset quality/levels state when episode or stream changes
+  // Audio track selection
+  const handleAudioSelect = useCallback(
+    (trackId: number) => {
+      setCurrentAudioTrack(trackId);
+      if (hlsRef.current) {
+        hlsRef.current.audioTrack = trackId;
+      }
+      const track = audioTracks.find((t) => t.id === trackId);
+      const trackName = track ? track.name : `Track ${trackId + 1}`;
+      try {
+        localStorage.setItem('bofilm_player_audio', trackName);
+      } catch {}
+      triggerFeedback(`Âm thanh: ${trackName}`);
+    },
+    [audioTracks, triggerFeedback]
+  );
+
+  // Subtitle track selection (-1 = Tắt, >=0 = HLS subtitle track id)
+  const handleSubtitleSelect = useCallback(
+    (trackId: number) => {
+      setCurrentSubtitleTrack(trackId);
+      if (trackId === -1) {
+        if (hlsRef.current) {
+          hlsRef.current.subtitleTrack = -1;
+        }
+        if (videoRef.current && videoRef.current.textTracks) {
+          for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+            videoRef.current.textTracks[i].mode = 'disabled';
+          }
+        }
+        if (subtitle?.enabled) {
+          setSubtitle((prev) => (prev ? { ...prev, enabled: false } : null));
+        }
+        try {
+          localStorage.setItem('bofilm_player_subtitle', 'off');
+        } catch {}
+        triggerFeedback('Đã tắt phụ đề', 'volume');
+      } else {
+        if (hlsRef.current) {
+          hlsRef.current.subtitleTrack = trackId;
+        }
+        if (videoRef.current && videoRef.current.textTracks) {
+          for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+            videoRef.current.textTracks[i].mode = i === trackId ? 'showing' : 'disabled';
+          }
+        }
+        if (subtitle?.enabled) {
+          setSubtitle((prev) => (prev ? { ...prev, enabled: false } : null));
+        }
+        const track = hlsSubtitleTracks.find((s) => s.id === trackId);
+        const trackName = track ? track.name : `Track ${trackId + 1}`;
+        try {
+          localStorage.setItem('bofilm_player_subtitle', trackName);
+        } catch {}
+        triggerFeedback(`Phụ đề: ${trackName}`);
+      }
+    },
+    [hlsSubtitleTracks, subtitle?.enabled, triggerFeedback]
+  );
+
+  // Auto next episode toggle
+  const handleToggleAutoNext = useCallback(() => {
+    setAutoNextEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('bofilm_player_autonext', String(next));
+      } catch {}
+      triggerFeedback(next ? 'Tự động chuyển tập: Bật' : 'Tự động chuyển tập: Tắt');
+      return next;
+    });
+  }, [triggerFeedback]);
+
+  // Reset quality/audio/subtitle levels state when episode or stream changes
   useEffect(() => {
     setHlsLevels([]);
     setActiveHeight(0);
+    setAudioTracks([]);
+    setCurrentAudioTrack(0);
+    setHlsSubtitleTracks([]);
+    setCurrentSubtitleTrack(-1);
     const saved = typeof window !== 'undefined' ? localStorage.getItem('bofilm_player_quality') : null;
     setCurrentLevel(saved !== null ? parseInt(saved, 10) : -1);
   }, [movieSlug, episodeSlug, serverIndex, m3u8Url]);
@@ -1742,24 +1870,100 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsInitializingHls(false);
           retryCountRef.current = 0;
-          // Expose multi-level qualities from the master manifest
+
+          // 1. Expose multi-level qualities from the master manifest
           if (hls.levels && hls.levels.length) {
-            const sortedIndices = hls.levels
-              .map((_, i) => i)
-              .sort((a, b) => (hls.levels[b].height || 0) - (hls.levels[a].height || 0));
-            setHlsLevels(sortedIndices.map((i) => hls.levels[i]));
-            // Restore persisted quality preference (closest available height)
+            const rawLevels: HlsLevelInfo[] = hls.levels.map((lvl, idx) => ({
+              id: idx,
+              height: lvl.height || 0,
+              width: lvl.width,
+              bitrate: lvl.bitrate,
+            }));
+            const sortedLevels = sortQualitiesDescending(rawLevels);
+            setHlsLevels(sortedLevels);
+            // Restore persisted quality preference
             const saved = localStorage.getItem('bofilm_player_quality');
             const savedIdx = saved !== null ? parseInt(saved, 10) : -1;
-            if (savedIdx !== -1 && savedIdx < hls.levels.length) {
-              hls.currentLevel = sortedIndices.includes(savedIdx) ? savedIdx : -1;
-              setCurrentLevel(sortedIndices.includes(savedIdx) ? savedIdx : -1);
+            if (savedIdx >= 0 && savedIdx < hls.levels.length) {
+              hls.currentLevel = savedIdx;
+              setCurrentLevel(savedIdx);
             } else {
               hls.currentLevel = -1;
+              setCurrentLevel(-1);
             }
           } else {
             setHlsLevels([]);
+            setCurrentLevel(-1);
           }
+
+          // 2. Expose audio tracks from the master manifest & restore / default to Vietnamese
+          const rawAudios = (hls.audioTracks && hls.audioTracks.length > 0) ? hls.audioTracks : [];
+          const parsedAudios: AudioTrackOption[] = rawAudios.map((tr, idx) => ({
+            id: typeof tr.id === 'number' ? tr.id : idx,
+            name: tr.name || tr.lang || `Audio ${idx + 1}`,
+            lang: tr.lang,
+          }));
+          setAudioTracks(parsedAudios);
+
+          if (parsedAudios.length > 0) {
+            const savedAudio = localStorage.getItem('bofilm_player_audio');
+            let chosenId = -1;
+            if (savedAudio) {
+              const match = parsedAudios.find(
+                (a) => a.name === savedAudio || String(a.id) === savedAudio
+              );
+              if (match) chosenId = match.id;
+            }
+            if (chosenId === -1) {
+              // Default to Vietnamese audio if present
+              const viTrack = parsedAudios.find((a) => isVietnameseAudio(a.name, a.lang));
+              chosenId = viTrack ? viTrack.id : parsedAudios[0].id;
+            }
+            hls.audioTrack = chosenId;
+            setCurrentAudioTrack(chosenId);
+          } else {
+            setCurrentAudioTrack(0);
+          }
+
+          // 3. Expose subtitle tracks from the master manifest & restore / default to Vietnamese
+          const rawSubs = (hls.subtitleTracks && hls.subtitleTracks.length > 0) ? hls.subtitleTracks : [];
+          const parsedSubs: HlsSubtitleTrackOption[] = rawSubs.map((tr, idx) => ({
+            id: typeof tr.id === 'number' ? tr.id : idx,
+            name: tr.name || tr.lang || `Track ${idx + 1}`,
+            lang: tr.lang,
+            default: tr.default,
+          }));
+          setHlsSubtitleTracks(parsedSubs);
+
+          if (parsedSubs.length > 0) {
+            const savedSub = localStorage.getItem('bofilm_player_subtitle');
+            if (savedSub === 'off') {
+              hls.subtitleTrack = -1;
+              setCurrentSubtitleTrack(-1);
+            } else if (savedSub) {
+              const match = parsedSubs.find(
+                (s) => s.name === savedSub || String(s.id) === savedSub
+              );
+              if (match) {
+                hls.subtitleTrack = match.id;
+                setCurrentSubtitleTrack(match.id);
+              } else {
+                const viSub = parsedSubs.find((s) => isVietnameseSubtitle(s.name, s.lang));
+                const subId = viSub ? viSub.id : parsedSubs[0].id;
+                hls.subtitleTrack = subId;
+                setCurrentSubtitleTrack(subId);
+              }
+            } else {
+              const viSub = parsedSubs.find((s) => isVietnameseSubtitle(s.name, s.lang));
+              const subId = viSub ? viSub.id : parsedSubs[0].id;
+              hls.subtitleTrack = subId;
+              setCurrentSubtitleTrack(subId);
+            }
+          } else {
+            hls.subtitleTrack = -1;
+            setCurrentSubtitleTrack(-1);
+          }
+
           if (savedPosition > 0 && Math.abs(video.currentTime - savedPosition) > 1) {
             video.currentTime = savedPosition;
           }
@@ -1772,6 +1976,44 @@ function parseEpisodeNum(slug?: string, name?: string): number {
           const level = hls.levels?.[data.level];
           if (level) {
             setActiveHeight(level.height || 0);
+          }
+        });
+
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event: any, data: any) => {
+          if (data.audioTracks && data.audioTracks.length > 0) {
+            const parsedAudios: AudioTrackOption[] = data.audioTracks.map((tr: any, idx: number) => ({
+              id: typeof tr.id === 'number' ? tr.id : idx,
+              name: tr.name || tr.lang || `Audio ${idx + 1}`,
+              lang: tr.lang,
+            }));
+            setAudioTracks(parsedAudios);
+            if (hls.audioTrack >= 0) {
+              setCurrentAudioTrack(hls.audioTrack);
+            }
+          }
+        });
+
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event: any, data: any) => {
+          if (typeof data.id === 'number') {
+            setCurrentAudioTrack(data.id);
+          }
+        });
+
+        hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_event: any, data: any) => {
+          if (data.subtitleTracks && data.subtitleTracks.length > 0) {
+            const parsedSubs: HlsSubtitleTrackOption[] = data.subtitleTracks.map((tr: any, idx: number) => ({
+              id: typeof tr.id === 'number' ? tr.id : idx,
+              name: tr.name || tr.lang || `Track ${idx + 1}`,
+              lang: tr.lang,
+              default: tr.default,
+            }));
+            setHlsSubtitleTracks(parsedSubs);
+          }
+        });
+
+        hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (_event: any, data: any) => {
+          if (typeof data.id === 'number') {
+            setCurrentSubtitleTrack(data.id);
           }
         });
 
@@ -2395,21 +2637,19 @@ function parseEpisodeNum(slug?: string, name?: string): number {
 
   return (
     <>
-      {/* Pro Tools: Dynamic subtitle cue styling */}
-      {subtitle && (
-        <style>
-          {`video::cue {
-            font-size: ${subtitle.size === 'sm' ? '0.85em' : subtitle.size === 'lg' ? '1.5em' : '1.1em'};
-            color: ${subtitle.color};
-            background: rgba(0, 0, 0, 0.65);
-            font-family: 'Segoe UI', Roboto, sans-serif;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.9);
-          }
-          video::-webkit-media-text-track-container {
-            transform: translateY(-8%) !important;
-          }`}
-        </style>
-      )}
+      {/* Pro Tools: Dynamic subtitle cue styling (applies to HLS and custom subtitles) */}
+      <style>
+        {`video::cue {
+          font-size: ${(subtitle?.size ?? prefs.subtitleSize) === 'sm' ? '0.85em' : (subtitle?.size ?? prefs.subtitleSize) === 'lg' ? '1.5em' : '1.1em'};
+          color: ${subtitle?.color ?? prefs.subtitleColor};
+          background: rgba(0, 0, 0, 0.65);
+          font-family: 'Segoe UI', Roboto, sans-serif;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+        }
+        video::-webkit-media-text-track-container {
+          transform: translateY(-8%) !important;
+        }`}
+      </style>
 
       {/* Dim Lights Backdrop */}
       {isDimmed && (
@@ -2840,7 +3080,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                 onEnded={() => {
                   setIsPlaying(false);
                   setShowControls(true);
-                  if (nextEpisode && onNextEpisode) {
+                  if (nextEpisode && onNextEpisode && autoNextEnabled) {
                     setAutoNextCountdown(15);
                   }
                 }}
@@ -3522,14 +3762,16 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                       <button
                         type="button"
                         onClick={() => {
-                          setShowSettingsMenu(!showSettingsMenu);
-                                          }}
+                          const next = !showSettingsMenu;
+                          setShowSettingsMenu(next);
+                          if (next) setSettingsSubmenu('main');
+                        }}
                         className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                           showSettingsMenu
                             ? 'bg-lime-500 text-black shadow-[0_0_12px_rgba(132,204,22,0.5)]'
                             : 'bg-white/10 hover:bg-white/20 text-[#cbe1c8] hover:text-white'
                         }`}
-                        title="Chất lượng & Tốc độ phát (Cài đặt)"
+                        title="Cài đặt phát video"
                       >
                         <Settings className={`w-3.5 h-3.5 ${showSettingsMenu ? 'rotate-90 transition-transform' : 'transition-transform'}`} />
                         <span className="hidden sm:inline">Cài đặt</span>
@@ -3538,213 +3780,573 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                       {showSettingsMenu && (
                         <div
                           style={{ maxHeight: menuMaxHeight ? `${menuMaxHeight}px` : undefined }}
-                          className="absolute bottom-full right-0 mb-2 bg-[#0a180b]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] w-max min-w-[240px] max-w-[calc(100vw-32px)] sm:max-w-xs overflow-y-auto z-50 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-150"
+                          className="absolute bottom-full right-0 mb-2 bg-[#0a180b]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] w-max min-w-[270px] max-w-[calc(100vw-32px)] sm:max-w-xs overflow-y-auto z-50 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-150"
                         >
-                          {/* Quality Section */}
-                          <div className="px-3 pt-2.5 pb-2">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <MonitorPlay className="w-3 h-3" />
-                              Chất lượng
+                          {/* Submenu Header (Back button if not in 'main') */}
+                          {settingsSubmenu !== 'main' && (
+                            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-white/5 sticky top-0 z-10 backdrop-blur-md">
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('main')}
+                                className="p-1 -ml-1 text-[#cbe1c8] hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
+                              >
+                                <ChevronLeft className="w-4 h-4 text-lime-400" />
+                                <span>Quay lại</span>
+                              </button>
+                              <span className="text-xs font-bold text-white ml-auto">
+                                {settingsSubmenu === 'quality' && 'Chất lượng'}
+                                {settingsSubmenu === 'audio' && 'Âm thanh & Lồng tiếng'}
+                                {settingsSubmenu === 'captions' && 'Phụ đề'}
+                                {settingsSubmenu === 'speed' && 'Tốc độ phát'}
+                                {settingsSubmenu === 'filters' && 'Bộ lọc hình ảnh'}
+                                {settingsSubmenu === 'equalizer' && 'Bộ chỉnh âm (Equalizer)'}
+                              </span>
                             </div>
-                            <div className="flex flex-col gap-0.5">
-                              {hlsLevels.length > 0 ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleQualitySelect(-1)}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                      currentLevel === -1
-                                        ? 'bg-lime-500/90 text-black shadow-md font-extrabold'
-                                        : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                          )}
+
+                          {/* SUBMENU: MAIN */}
+                          {settingsSubmenu === 'main' && (
+                            <div className="p-2 space-y-1">
+                              {/* 1. Chất lượng */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('quality')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <MonitorPlay className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Chất lượng</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885]">
+                                  <span>
+                                    {currentLevel === -1
+                                      ? (activeHeight > 0 ? `Tự động (${getQualityLabel(activeHeight)})` : 'Tự động')
+                                      : (() => {
+                                          const active = hlsLevels.find((l) => l.id === currentLevel);
+                                          return active ? getQualityDisplayInfo(active.height, active.width).label : 'Tự động';
+                                        })()}
+                                  </span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* 2. Âm thanh / Lồng tiếng */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('audio')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Headphones className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Âm thanh</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885] max-w-[140px] truncate">
+                                  <span className="truncate">
+                                    {audioTracks.find((t) => t.id === currentAudioTrack)?.name ||
+                                      (audioTracks.length > 0 ? audioTracks[0].name : 'Mặc định')}
+                                  </span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* 3. Phụ đề */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('captions')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Captions className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Phụ đề</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885] max-w-[140px] truncate">
+                                  <span className="truncate">
+                                    {subtitle?.enabled
+                                      ? subtitle.name
+                                      : currentSubtitleTrack >= 0
+                                      ? (hlsSubtitleTracks.find((s) => s.id === currentSubtitleTrack)?.name || 'Đang bật')
+                                      : 'Tắt'}
+                                  </span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* 4. Tốc độ phát */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('speed')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Gauge className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Tốc độ phát</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885]">
+                                  <span>{playbackSpeed === 1 ? '1x (Chuẩn)' : `${playbackSpeed}x`}</span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* 5. Bộ lọc hình ảnh */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('filters')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Palette className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Bộ lọc hình ảnh</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885]">
+                                  <span>{activeColorPreset !== 'custom' ? FILTER_PRESETS[activeColorPreset]?.label : 'Tùy chỉnh'}</span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* 6. Bộ chỉnh âm */}
+                              <button
+                                type="button"
+                                onClick={() => setSettingsSubmenu('equalizer')}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <SlidersHorizontal className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Bộ chỉnh âm</span>
+                                </span>
+                                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#8aa885]">
+                                  <span>{EQ_PRESETS[eqPreset]?.label || 'Chuẩn'}</span>
+                                  <ChevronRight className="w-3.5 h-3.5 text-[#8aa885] flex-shrink-0" />
+                                </span>
+                              </button>
+
+                              {/* Divider */}
+                              <div className="mx-2 my-1 border-t border-white/10" />
+
+                              {/* Quick Toggles */}
+                              {allEpisodes && allEpisodes.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={handleToggleAutoNext}
+                                  className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <Film className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                    <span>Tự động chuyển tập</span>
+                                  </span>
+                                  <span
+                                    className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${
+                                      autoNextEnabled ? 'bg-lime-500 justify-end' : 'bg-white/20 justify-start'
                                     }`}
                                   >
-                                    <span className="flex items-center gap-1.5">
-                                      Tự động
-                                      {currentLevel === -1 && activeHeight > 0 && (
-                                        <span className="text-[10px] font-bold opacity-80">
-                                          ({getQualityLabel(activeHeight)})
-                                        </span>
-                                      )}
+                                    <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                  </span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={handleNightAudioToggle}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                                title="Nén dải động: tiếng nhỏ rõ ràng, tiếng lớn không chói"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Moon className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Âm thanh ban đêm</span>
+                                </span>
+                                <span
+                                  className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${
+                                    nightAudio ? 'bg-lime-500 justify-end' : 'bg-white/20 justify-start'
+                                  }`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleAudioSaverToggle}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                                title="Chỉ nghe âm thanh, ẩn video để tiết kiệm pin & mạng"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <AudioLines className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Chỉ nghe âm thanh</span>
+                                </span>
+                                <span
+                                  className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${
+                                    audioSaver ? 'bg-lime-500 justify-end' : 'bg-white/20 justify-start'
+                                  }`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleAmbientGlowToggle}
+                                className="w-full px-3 py-2 rounded-xl text-xs font-bold text-left transition-colors cursor-pointer flex items-center justify-between text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                                  <span>Hào quang điện ảnh</span>
+                                </span>
+                                <span
+                                  className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${
+                                    ambientGlow ? 'bg-lime-500 justify-end' : 'bg-white/20 justify-start'
+                                  }`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                </span>
+                              </button>
+
+                              {/* Volume boost quick pills */}
+                              <div className="px-3 pt-2 pb-1">
+                                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                                  <span className="flex items-center gap-1.5">
+                                    <Gauge className="w-3 h-3" />
+                                    Khuếch đại âm thanh
+                                  </span>
+                                  <span className="text-lime-400 font-mono text-[10px]">{volumeBoost}%</span>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1">
+                                  {[100, 125, 150, 200].map((b) => (
+                                    <button
+                                      key={b}
+                                      type="button"
+                                      onClick={() => handleBoostSelect(b)}
+                                      className={`py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer text-center ${
+                                        volumeBoost === b
+                                          ? 'bg-lime-500 text-black shadow-sm font-extrabold'
+                                          : 'bg-white/5 text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                      }`}
+                                    >
+                                      {b}%
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* SUBMENU: QUALITY */}
+                          {settingsSubmenu === 'quality' && (
+                            <div className="p-2 flex flex-col gap-0.5">
+                              {/* Auto Option */}
+                              <button
+                                type="button"
+                                onClick={() => handleQualitySelect(-1)}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  currentLevel === -1
+                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <span>Tự động</span>
+                                  {currentLevel === -1 && activeHeight > 0 && (
+                                    <span className="text-[10px] font-bold opacity-80">
+                                      ({getQualityLabel(activeHeight)})
                                     </span>
-                                    {currentLevel === -1 && (
-                                      <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    )}
-                                  </button>
-                                  {hlsLevels.map((level) => {
-                                    const idx = hlsRef.current?.levels.findIndex((l) => l.height === level.height && l.bitrate === level.bitrate) ?? -1;
-                                    const isActive = idx !== -1 && currentLevel === idx;
-                                    const label = getQualityLabel(level.height);
-                                    return (
-                                      <button
-                                        key={`${level.height}-${idx}`}
-                                        type="button"
-                                        onClick={() => handleQualitySelect(idx)}
-                                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                          isActive
-                                            ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                            : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                        }`}
-                                      >
-                                        <span className="flex items-center gap-1.5">
-                                          {label}
-                                          {(level.height ?? 0) >= 1080 && (
-                                            <span
-                                              className={`text-[9px] px-1 py-px rounded font-black uppercase tracking-wide ${
-                                                isActive
-                                                  ? 'bg-black/20 text-black'
-                                                  : 'bg-lime-500/20 text-lime-300'
-                                              }`}
-                                            >
-                                              {(level.height ?? 0) >= 2160 ? '4K' : 'HD'}
-                                            </span>
-                                          )}
-                                          {level.bitrate ? (
-                                            <span
-                                              className={`text-[10px] font-semibold ${
-                                                isActive ? 'text-black/70' : 'text-[#8aa885]'
-                                              }`}
-                                            >
-                                              {(level.bitrate / 1000000).toFixed(1)} Mbps
-                                            </span>
-                                          ) : null}
+                                  )}
+                                </span>
+                                {currentLevel === -1 && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </button>
+
+                              {/* HLS Levels List */}
+                              {hlsLevels.length > 0 ? (
+                                hlsLevels.map((lvl) => {
+                                  const isActive = currentLevel === lvl.id;
+                                  const info = getQualityDisplayInfo(lvl.height, lvl.width);
+                                  return (
+                                    <button
+                                      key={lvl.id}
+                                      type="button"
+                                      onClick={() => handleQualitySelect(lvl.id)}
+                                      className={`px-3 py-2 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                        isActive
+                                          ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                      }`}
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        <span>{info.label}</span>
+                                        <span
+                                          className={`text-[9px] px-1.5 py-0.2 rounded font-black uppercase tracking-wide ${
+                                            isActive
+                                              ? 'bg-black/20 text-black'
+                                              : info.badge === '4K'
+                                              ? 'bg-[#aeea00]/20 text-[#aeea00] border border-[#aeea00]/40'
+                                              : 'bg-white/10 text-[#8aa885] border border-white/15'
+                                          }`}
+                                        >
+                                          {info.badge}
                                         </span>
-                                        {isActive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                                      </button>
-                                    );
-                                  })}
-                                </>
+                                        {lvl.bitrate ? (
+                                          <span
+                                            className={`text-[10px] font-semibold ${
+                                              isActive ? 'text-black/70' : 'text-[#8aa885]'
+                                            }`}
+                                          >
+                                            {(lvl.bitrate / 1000000).toFixed(1)} Mbps
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      {isActive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                    </button>
+                                  );
+                                })
                               ) : (
-                                <div className="px-2.5 py-1.5 text-[11px] font-semibold text-[#8aa885]">
-                                  Native HLS — Chất lượng tự động
+                                <div className="px-3 py-2 text-[11px] font-semibold text-[#8aa885]">
+                                  Native HLS — Tự động điều chỉnh chất lượng theo mạng
                                 </div>
                               )}
                             </div>
-                          </div>
+                          )}
 
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Pro Tools: Custom Subtitles Section (.srt / .vtt) */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <Captions className="w-3 h-3" />
-                              Phụ đề tùy chỉnh (.srt / .vtt)
+                          {/* SUBMENU: AUDIO */}
+                          {settingsSubmenu === 'audio' && (
+                            <div className="p-2 flex flex-col gap-0.5">
+                              {audioTracks.length > 0 ? (
+                                audioTracks.map((tr) => {
+                                  const isActive = currentAudioTrack === tr.id;
+                                  const isVN = isVietnameseAudio(tr.name, tr.lang);
+                                  return (
+                                    <button
+                                      key={tr.id}
+                                      type="button"
+                                      onClick={() => handleAudioSelect(tr.id)}
+                                      className={`px-3 py-2 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                        isActive
+                                          ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                      }`}
+                                    >
+                                      <span className="flex items-center gap-2 truncate">
+                                        <Headphones className="w-3.5 h-3.5 flex-shrink-0" />
+                                        <span className="truncate">{tr.name}</span>
+                                        {isVN && (
+                                          <span
+                                            className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wide flex-shrink-0 ${
+                                              isActive
+                                                ? 'bg-black/20 text-black'
+                                                : 'bg-lime-500/20 text-lime-300 border border-lime-500/30'
+                                            }`}
+                                          >
+                                            Tiếng Việt
+                                          </span>
+                                        )}
+                                      </span>
+                                      {isActive && <Check className="w-3.5 h-3.5 stroke-[3] flex-shrink-0" />}
+                                    </button>
+                                  );
+                                })
+                              ) : (
+                                <div className="px-3 py-4 text-center text-xs text-[#8aa885]">
+                                  Chỉ có 1 luồng âm thanh mặc định từ nguồn phát.
+                                </div>
+                              )}
                             </div>
-                            <div className="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                onClick={() => subtitleFileRef.current?.click()}
-                                className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center gap-2 text-[#cbe1c8] hover:bg-white/10 hover:text-white"
-                              >
-                                <FileUp className="w-3.5 h-3.5 text-lime-400" />
-                                <span>Tải lên tệp phụ đề…</span>
-                              </button>
-                              <input
-                                ref={subtitleFileRef}
-                                type="file"
-                                accept=".srt,.vtt,text/vtt,application/x-subrip"
-                                className="hidden"
-                                onChange={handleSubtitleFileChange}
-                              />
-                              {subtitle && (
-                                <>
-                                  <div className="px-2.5 py-1.5 text-[10px] text-[#8aa885] flex items-center justify-between gap-2">
-                                    <span className="truncate" title={subtitle.name}>
-                                      {subtitle.name}
-                                    </span>
+                          )}
+
+                          {/* SUBMENU: CAPTIONS */}
+                          {settingsSubmenu === 'captions' && (
+                            <div className="p-2 space-y-2">
+                              {/* Off option */}
+                              <div className="flex flex-col gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSubtitleSelect(-1)}
+                                  className={`px-3 py-2 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                    currentSubtitleTrack === -1 && (!subtitle || !subtitle.enabled)
+                                      ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                      : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  <span>Tắt phụ đề</span>
+                                  {currentSubtitleTrack === -1 && (!subtitle || !subtitle.enabled) && (
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  )}
+                                </button>
+
+                                {/* HLS native subtitle tracks */}
+                                {hlsSubtitleTracks.length > 0 && (
+                                  <div className="mt-1 pt-1 border-t border-white/10">
+                                    <div className="px-1 py-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                      Phụ đề nguồn phim ({hlsSubtitleTracks.length})
+                                    </div>
+                                    <div className="max-h-40 overflow-y-auto pr-1 flex flex-col gap-0.5">
+                                      {hlsSubtitleTracks.map((sub) => {
+                                        const isActive = currentSubtitleTrack === sub.id && (!subtitle || !subtitle.enabled);
+                                        const isVN = isVietnameseSubtitle(sub.name, sub.lang);
+                                        return (
+                                          <button
+                                            key={sub.id}
+                                            type="button"
+                                            onClick={() => handleSubtitleSelect(sub.id)}
+                                            className={`px-3 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                              isActive
+                                                ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                                : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                            }`}
+                                          >
+                                            <span className="flex items-center gap-1.5 truncate">
+                                              <span className="truncate">{sub.name}</span>
+                                              {isVN && (
+                                                <span
+                                                  className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wide flex-shrink-0 ${
+                                                    isActive
+                                                      ? 'bg-black/20 text-black'
+                                                      : 'bg-lime-500/20 text-lime-300 border border-lime-500/30'
+                                                  }`}
+                                                >
+                                                  Tiếng Việt
+                                                </span>
+                                              )}
+                                            </span>
+                                            {isActive && <Check className="w-3.5 h-3.5 stroke-[3] flex-shrink-0" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Custom Subtitles (.srt / .vtt) */}
+                              <div className="pt-2 border-t border-white/10">
+                                <div className="px-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                  Phụ đề ngoài (.srt / .vtt)
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => subtitleFileRef.current?.click()}
+                                  className="w-full px-3 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center gap-2 text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                                >
+                                  <FileUp className="w-3.5 h-3.5 text-lime-400" />
+                                  <span>Tải lên tệp phụ đề…</span>
+                                </button>
+                                <input
+                                  ref={subtitleFileRef}
+                                  type="file"
+                                  accept=".srt,.vtt,text/vtt,application/x-subrip"
+                                  className="hidden"
+                                  onChange={handleSubtitleFileChange}
+                                />
+                                {subtitle && (
+                                  <div className="mt-1 bg-white/5 rounded-xl p-2">
+                                    <div className="flex items-center justify-between gap-2 text-[11px] text-[#cbe1c8] mb-1.5">
+                                      <span className="truncate font-semibold" title={subtitle.name}>
+                                        {subtitle.name}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={handleSubtitleRemove}
+                                        className="text-[10px] font-bold text-red-400 hover:text-red-300 cursor-pointer flex-shrink-0"
+                                      >
+                                        Gỡ
+                                      </button>
+                                    </div>
                                     <button
                                       type="button"
-                                      onClick={handleSubtitleRemove}
-                                      className="flex-shrink-0 text-[10px] font-bold text-red-400 hover:text-red-300 cursor-pointer"
+                                      onClick={() => {
+                                        setSubtitle((prev) => (prev ? { ...prev, enabled: !prev.enabled } : prev));
+                                        if (!subtitle.enabled) {
+                                          setCurrentSubtitleTrack(-1);
+                                          if (hlsRef.current) hlsRef.current.subtitleTrack = -1;
+                                        }
+                                        triggerFeedback(
+                                          subtitle.enabled ? 'Đã tắt phụ đề ngoài' : 'Đã bật phụ đề ngoài',
+                                          'volume'
+                                        );
+                                      }}
+                                      className={`w-full px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                                        subtitle.enabled
+                                          ? 'bg-lime-500 text-black shadow-md'
+                                          : 'bg-white/10 text-[#cbe1c8] hover:bg-white/15'
+                                      }`}
                                     >
-                                      Gỡ
+                                      <span>{subtitle.enabled ? 'Đang bật phụ đề ngoài' : 'Đã tắt'}</span>
+                                      {subtitle.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                                     </button>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSubtitle((prev) => (prev ? { ...prev, enabled: !prev.enabled } : prev));
-                                      setShowSettingsMenu(false);
-                                      triggerFeedback(
-                                        subtitle.enabled ? 'Đã tắt phụ đề' : 'Đã bật phụ đề',
-                                        'volume'
-                                      );
-                                    }}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                      subtitle.enabled
-                                        ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                        : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    <span className="flex items-center gap-1.5">
-                                      <Captions className="w-3.5 h-3.5" />
-                                      {subtitle.enabled ? 'Đang bật phụ đề' : 'Đã tắt phụ đề'}
-                                    </span>
-                                    {subtitle.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                                  </button>
-                                  <div className="px-2.5 pt-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
-                                    <Type className="w-3 h-3" />
-                                    Cỡ chữ
+                                )}
+                              </div>
+
+                              {/* Appearance (Size, Color, Delay) */}
+                              <div className="pt-2 border-t border-white/10 space-y-2">
+                                <div className="px-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                  Giao diện phụ đề
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-bold text-[#8aa885] mb-1 flex items-center gap-1">
+                                    <Type className="w-3 h-3" /> Cỡ chữ
                                   </div>
-                                  <div className="flex gap-1 px-2.5 pb-1">
-                                    {(
-                                      [
-                                        { value: 'sm' as const, label: 'Nhỏ' },
-                                        { value: 'md' as const, label: 'Vừa' },
-                                        { value: 'lg' as const, label: 'Lớn' },
-                                      ]
-                                    ).map((sz) => (
+                                  <div className="grid grid-cols-3 gap-1">
+                                    {[
+                                      { value: 'sm' as const, label: 'Nhỏ' },
+                                      { value: 'md' as const, label: 'Vừa' },
+                                      { value: 'lg' as const, label: 'Lớn' },
+                                    ].map((sz) => (
                                       <button
                                         key={sz.value}
                                         type="button"
                                         onClick={() => handleSubtitleSizeSelect(sz.value)}
-                                        className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                                          subtitle.size === sz.value
-                                            ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                        className={`py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer text-center ${
+                                          (subtitle?.size || prefs.subtitleSize || 'md') === sz.value
+                                            ? 'bg-lime-500 text-black shadow-sm font-extrabold'
                                             : 'bg-white/5 text-[#cbe1c8] hover:bg-white/10 hover:text-white'
                                         }`}
                                       >
                                         {sz.label}
                                       </button>
-                                       ))}
-                                   </div>
-                                  <div className="px-2.5 pt-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
-                                    <Type className="w-3 h-3" />
-                                    Màu chữ
+                                    ))}
                                   </div>
-                                  <div className="flex gap-1 px-2.5 pb-1">
+                                </div>
+
+                                <div>
+                                  <div className="text-[10px] font-bold text-[#8aa885] mb-1 flex items-center gap-1">
+                                    <Type className="w-3 h-3" /> Màu chữ
+                                  </div>
+                                  <div className="flex gap-1">
                                     {SUBTITLE_COLORS.map((c) => (
                                       <button
                                         key={c.value}
                                         type="button"
                                         onClick={() => handleSubtitleColorSelect(c.value)}
                                         title={c.label}
-                                        className={`flex-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center ${
-                                          subtitle.color === c.value
-                                            ? 'bg-lime-500 shadow-md'
+                                        className={`flex-1 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center ${
+                                          (subtitle?.color || prefs.subtitleColor || '#ffffff') === c.value
+                                            ? 'bg-lime-500 shadow-sm'
                                             : 'bg-white/5 hover:bg-white/10'
                                         }`}
                                       >
                                         <span
-                                          className="w-3 h-3 rounded-full border border-black/40 shadow-sm"
+                                          className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm"
                                           style={{ background: c.value }}
                                         />
                                       </button>
                                     ))}
                                   </div>
-                                  <div className="px-2.5 pt-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
-                                    <Clock className="w-3 h-3" />
-                                    Đồng bộ thời gian ({subtitleDelay > 0 ? '+' : ''}
-                                    {subtitleDelay.toFixed(1)}s)
+                                </div>
+
+                                {/* Delay slider */}
+                                <div>
+                                  <div className="text-[10px] font-bold text-[#8aa885] mb-1 flex items-center justify-between">
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3" /> Lệch thời gian
+                                    </span>
+                                    <span className="text-lime-300 font-mono text-[10px]">
+                                      {subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s
+                                    </span>
                                   </div>
-                                  <div className="flex items-center gap-1.5 px-2.5 pb-1">
+                                  <div className="flex items-center gap-1.5">
                                     <button
                                       type="button"
                                       onClick={() => nudgeSubtitleDelay(-0.5)}
                                       disabled={subtitleDelay <= -5}
-                                      className="px-2 py-1 rounded-lg bg-white/5 text-[#cbe1c8] text-[11px] font-bold hover:bg-white/10 hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                                      title="Lùi phụ đề sớm hơn 0.5s"
+                                      className="px-2 py-0.5 rounded-lg bg-white/5 text-[#cbe1c8] text-[10px] font-bold hover:bg-white/10 disabled:opacity-40 cursor-pointer"
                                     >
-                                      −0.5s
+                                      -0.5s
                                     </button>
                                     <input
                                       type="range"
@@ -3755,260 +4357,177 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                                       onChange={(e) => {
                                         const next = parseFloat(e.target.value);
                                         setSubtitleDelay(next);
-                                        triggerFeedback(
-                                          `Lệch phụ đề: ${next > 0 ? '+' : ''}${next.toFixed(1)}s`,
-                                          'volume'
-                                        );
                                       }}
-                                      className="flex-1 min-w-[70px] h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400"
-                                      title="Lệch thời gian phụ đề (-5s đến +5s)"
+                                      className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400"
                                     />
                                     <button
                                       type="button"
                                       onClick={() => nudgeSubtitleDelay(0.5)}
                                       disabled={subtitleDelay >= 5}
-                                      className="px-2 py-1 rounded-lg bg-white/5 text-[#cbe1c8] text-[11px] font-bold hover:bg-white/10 hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                                      title="Lùi phụ đề muộn hơn 0.5s"
+                                      className="px-2 py-0.5 rounded-lg bg-white/5 text-[#cbe1c8] text-[10px] font-bold hover:bg-white/10 disabled:opacity-40 cursor-pointer"
                                     >
                                       +0.5s
                                     </button>
                                     {subtitleDelay !== 0 && (
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          setSubtitleDelay(0);
-                                          triggerFeedback('Đã đặt lại lệch phụ đề', 'volume');
-                                        }}
-                                        className="px-1.5 py-1 rounded-lg text-[10px] font-bold text-red-400 hover:text-red-300 cursor-pointer flex-shrink-0"
-                                        title="Đặt lại về 0"
+                                        onClick={() => setSubtitleDelay(0)}
+                                        className="text-[10px] font-bold text-red-400 hover:text-red-300 cursor-pointer"
                                       >
                                         Reset
                                       </button>
                                     )}
                                   </div>
-                                 </>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Speed Section: presets + fine slider (0.25x - 3.0x) */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <SlidersHorizontal className="w-3 h-3" />
-                              Tốc độ phát
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              {SPEED_OPTIONS.map((spd) => {
-                                const label =
-                                  spd === 1
-                                    ? '1x (Chuẩn)'
-                                    : spd === 0.25
-                                    ? '0.25x (Siêu chậm)'
-                                    : spd === 0.5
-                                    ? '0.5x (Chậm)'
-                                    : spd === 2
-                                    ? '2x (Nhanh)'
-                                    : spd === 3
-                                    ? '3x (Cực nhanh)'
-                                    : `${spd}x`;
-                                return (
-                                  <button
-                                    key={spd}
-                                    type="button"
-                                    onClick={() => handleSpeedSelect(spd)}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                      playbackSpeed === spd
-                                        ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                        : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                    }`}
-                                  >
-                                    <span>{label}</span>
-                                    {playbackSpeed === spd && (
-                                      <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {/* Fine-tune slider 0.25x - 3.0x */}
-                            <div className="mt-2 mb-1 px-1">
-                              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1">
-                                <span>Tinh chỉnh</span>
-                                <span className="text-lime-300 font-mono text-[11px] normal-case">
-                                  {playbackSpeed.toFixed(2).replace(/\.00$/, '').replace(/0$/, '')}x
-                                </span>
+                                </div>
                               </div>
-                              <input
-                                type="range"
-                                min="0.25"
-                                max="3"
-                                step="0.05"
-                                value={playbackSpeed}
-                                onChange={(e) => handleSpeedSelect(parseFloat(e.target.value), true)}
-                                className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400"
-                                title="Tinh chỉnh tốc độ phát 0.25x - 3.0x"
-                              />
                             </div>
-                            <button
-                              type="button"
-                              onClick={handlePitchPreserveToggle}
-                              className={`mt-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-left w-full transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                pitchPreserve
-                                  ? 'bg-lime-500/90 text-black shadow-md font-extrabold'
-                                  : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                              }`}
-                              title="Giữ cao độ giọng nói ổn định khi phát nhanh/chậm (pitch preservation)"
-                            >
-                              <span className="flex items-center gap-1.5">
-                                <AudioLines className="w-3.5 h-3.5" />
-                                Giữ cao độ giọng (pitch)
-                              </span>
-                              {pitchPreserve && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                            </button>
-                          </div>
+                          )}
 
-                          <div className="mx-3 border-t border-white/10" />
+                          {/* SUBMENU: SPEED */}
+                          {settingsSubmenu === 'speed' && (
+                            <div className="p-2 space-y-2">
+                              <div className="flex flex-col gap-0.5">
+                                {SPEED_OPTIONS.map((spd) => {
+                                  const label =
+                                    spd === 1
+                                      ? '1x (Chuẩn)'
+                                      : spd === 0.25
+                                      ? '0.25x (Siêu chậm)'
+                                      : spd === 0.5
+                                      ? '0.5x (Chậm)'
+                                      : spd === 2
+                                      ? '2x (Nhanh)'
+                                      : spd === 3
+                                      ? '3x (Cực nhanh)'
+                                      : `${spd}x`;
+                                  return (
+                                    <button
+                                      key={spd}
+                                      type="button"
+                                      onClick={() => handleSpeedSelect(spd)}
+                                      className={`px-3 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                        playbackSpeed === spd
+                                          ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                      }`}
+                                    >
+                                      <span>{label}</span>
+                                      {playbackSpeed === spd && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
 
-                          {/* Audio-Only Data Saver Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <Waves className="w-3 h-3" />
-                              Tiết kiệm dữ liệu (Chỉ audio)
-                            </div>
-                            <div className="flex flex-col gap-0.5">
+                              {/* Fine-tune slider 0.25x - 3.0x */}
+                              <div className="pt-2 border-t border-white/10">
+                                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1">
+                                  <span>Tinh chỉnh</span>
+                                  <span className="text-lime-300 font-mono text-[11px] normal-case">
+                                    {playbackSpeed.toFixed(2).replace(/\.00$/, '').replace(/0$/, '')}x
+                                  </span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="0.25"
+                                  max="3"
+                                  step="0.05"
+                                  value={playbackSpeed}
+                                  onChange={(e) => handleSpeedSelect(parseFloat(e.target.value), true)}
+                                  className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400"
+                                />
+                              </div>
+
                               <button
                                 type="button"
-                                onClick={handleAudioSaverToggle}
-                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                  audioSaver
-                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                onClick={handlePitchPreserveToggle}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold text-left w-full transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  pitchPreserve
+                                    ? 'bg-lime-500/90 text-black shadow-md font-extrabold'
                                     : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
                                 }`}
-                                title="Che hình ảnh, chỉ nghe âm thanh trực tiếp trên trình duyệt"
+                                title="Giữ cao độ giọng nói ổn định khi phát nhanh/chậm"
                               >
                                 <span className="flex items-center gap-1.5">
                                   <AudioLines className="w-3.5 h-3.5" />
-                                  {audioSaver ? 'Đang phát audio' : 'Chỉ nghe âm thanh'}
+                                  Giữ cao độ giọng (pitch)
                                 </span>
-                                {audioSaver && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                {pitchPreserve && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                               </button>
-                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
-                                Ẩn hình ảnh để tiết kiệm pin &amp; băng thông, hiển thị sóng âm động.
-                                Bấm nút khôi phục để xem lại video.
-                              </p>
                             </div>
-                          </div>
+                          )}
 
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Audio Volume Booster Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <Gauge className="w-3 h-3" />
-                              Khuếch đại âm thanh
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              {[100, 125, 150, 200].map((boost) => {
-                                const label =
-                                  boost === 100 ? '100% (Chuẩn)' : `${boost}%`;
-                                return (
+                          {/* SUBMENU: FILTERS */}
+                          {settingsSubmenu === 'filters' && (
+                            <div className="p-2 space-y-2">
+                              <div className="flex items-center justify-between gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] px-1">
+                                <span>Bộ lọc hình ảnh</span>
+                                <button
+                                  type="button"
+                                  onClick={handleFilterReset}
+                                  className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-bold text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors cursor-pointer"
+                                >
+                                  Đặt lại
+                                </button>
+                              </div>
+                              {/* Sliders */}
+                              <div className="space-y-2 px-1">
+                                {(
+                                  [
+                                    { key: 'brightness', value: brightness, setter: setBrightness, label: 'Độ sáng', icon: <Sun className="w-3 h-3" /> },
+                                    { key: 'contrast', value: contrast, setter: setContrast, label: 'Tương phản', icon: <Contrast className="w-3 h-3" /> },
+                                    { key: 'saturation', value: saturation, setter: setSaturation, label: 'Độ bão hòa', icon: <Palette className="w-3 h-3" /> },
+                                  ] as const
+                                ).map((row) => (
+                                  <div key={row.key} className="flex items-center gap-2">
+                                    <span className="flex items-center gap-1 w-[86px] text-[10px] font-bold text-[#8aa885] uppercase tracking-wide">
+                                      {row.icon}
+                                      {row.label}
+                                    </span>
+                                    <input
+                                      type="range"
+                                      min={0.5}
+                                      max={2}
+                                      step={0.05}
+                                      value={row.value}
+                                      onChange={(e) => row.setter(Number(e.target.value))}
+                                      className="flex-1 h-1 rounded-full accent-lime-400 cursor-pointer"
+                                    />
+                                    <span className="w-9 text-right text-[10px] font-mono font-bold text-lime-300">
+                                      {Math.round(row.value * 100)}%
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              {/* Presets */}
+                              <div className="pt-2 border-t border-white/10 flex flex-col gap-0.5">
+                                {(Object.keys(FILTER_PRESETS) as ColorPreset[]).map((preset) => (
                                   <button
-                                    key={boost}
+                                    key={preset}
                                     type="button"
-                                    onClick={() => handleBoostSelect(boost)}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                      volumeBoost === boost
+                                    onClick={() => handleFilterPresetSelect(preset)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                      activeColorPreset !== 'custom' && activeColorPreset === preset
                                         ? 'bg-lime-500 text-black shadow-md font-extrabold'
                                         : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
                                     }`}
                                   >
-                                    <span>{label}</span>
-                                    {volumeBoost === boost && (
-                                      <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    )}
+                                    <span>{FILTER_PRESETS[preset].label}</span>
+                                    {activeColorPreset === preset && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                                   </button>
-                                );
-                              })}
-                              {boostUnsupported && (
-                                <p className="px-2 py-1 text-[10px] text-yellow-400/80">
-                                  Trình duyệt không hỗ trợ khuếch đại âm thanh.
-                                </p>
-                              )}
-                              {!boostUnsupported && (
-                                <div className="flex items-center gap-2 px-2.5 py-1.5">
-                                  <input
-                                    type="range"
-                                    min={100}
-                                    max={200}
-                                    step={5}
-                                    value={volumeBoost}
-                                    onChange={(e) =>
-                                      handleBoostSliderChange(Number(e.target.value))
-                                    }
-                                    className="flex-1 h-1 rounded-full accent-fuchsia-400 cursor-pointer"
-                                    title="Kéo để khuếch đại âm lượng tới 200%"
-                                  />
-                                  <span
-                                    className={`w-16 text-right text-[10px] font-mono font-bold ${
-                                      volumeBoost > 100 ? 'text-fuchsia-300' : 'text-lime-300'
-                                    }`}
-                                  >
-                                    {volumeBoost > 100 ? `${volumeBoost}% Boost` : '100%'}
-                                  </span>
-                                </div>
-                              )}
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          )}
 
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Night Mode Audio Normalization Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <Moon className="w-3 h-3" />
-                              Âm thanh ban đêm
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                onClick={handleNightAudioToggle}
-                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                  nightAudio
-                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                }`}
-                                title="Nén dải động (DynamicsCompressor): tiếng lớn không quá to, thoại nhỏ vẫn nghe rõ"
-                              >
-                                <span className="flex items-center gap-1.5">
-                                  <Moon className="w-3.5 h-3.5" />
-                                  {nightAudio ? 'Đang chuẩn hóa' : 'Chuẩn hóa âm thanh'}
-                                </span>
-                                {nightAudio && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                              </button>
-                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
-                                Nén dải động qua Web Audio, phù hợp xem phim ban đêm mà không
-                                đánh thức người khác.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Audio Equalizer Presets Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <SlidersHorizontal className="w-3 h-3" />
-                              Bộ chỉnh âm (Equalizer)
-                            </div>
-                            <div className="flex flex-col gap-0.5">
+                          {/* SUBMENU: EQUALIZER */}
+                          {settingsSubmenu === 'equalizer' && (
+                            <div className="p-2 flex flex-col gap-0.5">
                               {(Object.keys(EQ_PRESETS) as EqPreset[]).map((preset) => (
                                 <button
                                   key={preset}
                                   type="button"
                                   onClick={() => handleEqPresetSelect(preset)}
-                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
                                     eqPreset === preset
                                       ? 'bg-lime-500 text-black shadow-md font-extrabold'
                                       : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
@@ -4019,112 +4538,10 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                                 </button>
                               ))}
                               <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
-                                Chỉnh dải trầm, thoại và cao qua Web Audio, ưu tiên này được lưu tự động.
+                                Chỉnh dải trầm, thoại và cao qua Web Audio, cài đặt được lưu tự động.
                               </p>
                             </div>
-                          </div>
-
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Video Color Filters Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center justify-between gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-2">
-                              <span className="flex items-center gap-1.5">
-                                <Palette className="w-3 h-3" />
-                                Bộ lọc hình ảnh
-                              </span>
-                              <button
-                                type="button"
-                                onClick={handleFilterReset}
-                                className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-bold text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors cursor-pointer"
-                                title="Đặt lại bộ lọc về mặc định"
-                              >
-                                Đặt lại
-                              </button>
-                            </div>
-                            {/* Sliders */}
-                            <div className="space-y-2 mb-2">
-                              {(
-                                [
-                                  { key: 'brightness', value: brightness, setter: setBrightness, label: 'Độ sáng', icon: <Sun className="w-3 h-3" /> },
-                                  { key: 'contrast', value: contrast, setter: setContrast, label: 'Tương phản', icon: <Contrast className="w-3 h-3" /> },
-                                  { key: 'saturation', value: saturation, setter: setSaturation, label: 'Độ bão hòa', icon: <Palette className="w-3 h-3" /> },
-                                ] as const
-                              ).map((row) => (
-                                <div key={row.key} className="flex items-center gap-2">
-                                  <span className="flex items-center gap-1 w-[86px] text-[10px] font-bold text-[#8aa885] uppercase tracking-wide">
-                                    {row.icon}
-                                    {row.label}
-                                  </span>
-                                  <input
-                                    type="range"
-                                    min={0.5}
-                                    max={2}
-                                    step={0.05}
-                                    value={row.value}
-                                    onChange={(e) => row.setter(Number(e.target.value))}
-                                    className="flex-1 h-1 rounded-full accent-lime-400 cursor-pointer"
-                                  />
-                                  <span className="w-9 text-right text-[10px] font-mono font-bold text-lime-300">
-                                    {Math.round(row.value * 100)}%
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            {/* Presets */}
-                            <div className="flex flex-col gap-0.5">
-                              {(Object.keys(FILTER_PRESETS) as ColorPreset[]).map((preset) => (
-                                <button
-                                  key={preset}
-                                  type="button"
-                                  onClick={() => handleFilterPresetSelect(preset)}
-                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                    activeColorPreset !== 'custom' && activeColorPreset === preset
-                                      ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                      : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                  }`}
-                                >
-                                  <span>{FILTER_PRESETS[preset].label}</span>
-                                  {activeColorPreset === preset && (
-                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                  )}
-                                </button>
-                              ))}
-                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
-                                Tinh chỉnh màu video trực tiếp trên trình duyệt, cài đặt được lưu tự động.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mx-3 border-t border-white/10" />
-
-                          {/* Cinematic Ambient Glow Section */}
-                          <div className="px-3 pt-2 pb-2.5">
-                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
-                              <Sparkles className="w-3 h-3" />
-                              Hào quang điện ảnh
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                onClick={handleAmbientGlowToggle}
-                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                  ambientGlow
-                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
-                                }`}
-                              >
-                                <span className="flex items-center gap-1.5">
-                                  <Sparkles className="w-3.5 h-3.5" />
-                                  {ambientGlow ? 'Đang phát sáng' : 'Đã tắt'}
-                                </span>
-                                {ambientGlow && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                              </button>
-                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
-                                Thêm ánh sáng bloom đổi màu động phía sau trình phát.
-                              </p>
-                            </div>
-                          </div>
+                          )}
                         </div>
                       )}
                     </div>
