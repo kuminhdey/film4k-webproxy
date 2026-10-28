@@ -207,7 +207,7 @@ export function movieDetailAdapter(raw: any): MovieDetail {
   if (Array.isArray(raw.episodes) && raw.episodes.length > 0) {
     // If it's already an array of servers
     if (raw.episodes[0].server_name && Array.isArray(raw.episodes[0].items)) {
-      episodeServers = raw.episodes;
+      episodeServers = [raw.episodes[0]];
     } else {
       const defaultServerItems: EpisodeItem[] = [];
 
@@ -247,7 +247,7 @@ export function movieDetailAdapter(raw: any): MovieDetail {
   } else {
     // Single movie without episode list
     const serversList =
-      Array.isArray(raw.servers) && raw.servers.length > 0 ? raw.servers : [null];
+      Array.isArray(raw.servers) && raw.servers.length > 0 ? [raw.servers[0]] : [null];
 
     episodeServers = serversList.map((srv: any, idx: number) => {
       const srvName = srv?.label || srv?.name || `Server VIP #${idx + 1}`;
