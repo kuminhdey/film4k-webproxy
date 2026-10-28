@@ -13,6 +13,7 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
       setSuggestions([]);
       setIsLoading(false);
       setIsOpen(false);
+      setActiveSuggestionIndex(-1);
       return;
     }
 
@@ -31,6 +33,7 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
         const items = await getSearchSuggestions(query, abortController.signal);
         if (!abortController.signal.aborted) {
           setSuggestions(items);
+          setActiveSuggestionIndex(-1);
           setIsLoading(false);
           setIsOpen(true);
         }
@@ -62,10 +65,27 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
     onSelectMovie(slug);
     setQuery('');
     setIsOpen(false);
+    setActiveSuggestionIndex(-1);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setIsOpen(false);
+      setActiveSuggestionIndex(-1);
+      return;
+    }
+    if (isOpen && suggestions.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      setActiveSuggestionIndex((current) => e.key === 'ArrowDown'
+        ? Math.min(current + 1, suggestions.length - 1)
+        : Math.max(current - 1, -1));
+      return;
+    }
     if (e.key === 'Enter' && query.trim()) {
+      if (isOpen && activeSuggestionIndex >= 0 && suggestions[activeSuggestionIndex]) {
+        handleSelect(suggestions[activeSuggestionIndex].slug);
+        return;
+      }
       // Trigger search page navigation
       window.history.pushState({}, '', `/tim-kiem?keyword=${encodeURIComponent(query.trim())}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
@@ -84,6 +104,9 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
           onKeyDown={handleKeyDown}
           placeholder="Tìm phim, diễn viên..."
           aria-label="Tìm kiếm phim hoặc diễn viên"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? 'live-search-suggestions' : undefined}
+          aria-activedescendant={activeSuggestionIndex >= 0 ? `live-search-option-${activeSuggestionIndex}` : undefined}
           className="w-full bg-[#0a180b]/90 border border-lime-500/25 rounded-full py-1.5 pl-8 pr-8 text-xs text-[#f4fbf0] placeholder-[#9cb897] focus:outline-none focus:border-lime-400 focus:ring-2 focus:ring-lime-400/40 transition-all shadow-inner"
         />
         <Search className="absolute left-2.5 w-3.5 h-3.5 text-[#9cb897] pointer-events-none" />
@@ -103,15 +126,16 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
 
       {/* Instant Suggestions Dropdown */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-[340px] sm:w-[400px] md:w-[440px] max-w-[92vw] bg-[#081509] border border-lime-500/30 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.9)] overflow-hidden z-50 backdrop-blur-2xl max-h-[520px] overflow-y-auto">
+        <div id="live-search-suggestions" className="absolute top-full right-0 mt-2 w-[340px] sm:w-[400px] md:w-[440px] max-w-[92vw] bg-[#081509] border border-lime-500/30 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.9)] overflow-hidden z-50 backdrop-blur-2xl max-h-[520px] overflow-y-auto">
           {suggestions.length > 0 ? (
             <div>
               <div className="py-2 divide-y divide-lime-500/10">
-                {suggestions.map((item) => (
-                  <div
+                {suggestions.map((item, index) => (
+                  <button type="button"
+                    id={`live-search-option-${index}`}
                     key={item.slug}
                     onClick={() => handleSelect(item.slug)}
-                    className="flex items-center gap-3 px-3.5 py-2.5 hover:bg-lime-950/40 cursor-pointer transition-colors group"
+                    className={`flex w-full text-left items-center gap-3 px-3.5 py-2.5 hover:bg-lime-950/40 cursor-pointer transition-colors group focus-visible:ring-2 focus-visible:ring-lime-400 ${index === activeSuggestionIndex ? 'bg-lime-950/40' : ''}`}
                   >
                     <div className="w-12 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-black/50 border border-lime-500/20">
                       {item.thumb_url ? (
@@ -156,20 +180,20 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
                         )}
                       </div>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
-              <div
+              <button type="button"
                 onClick={() => {
                   window.history.pushState({}, '', `/tim-kiem?keyword=${encodeURIComponent(query.trim())}`);
                   window.dispatchEvent(new PopStateEvent('popstate'));
                   setIsOpen(false);
                 }}
-                className="py-2.5 px-3 text-center text-xs font-semibold text-lime-400 hover:text-lime-300 hover:bg-lime-950/50 cursor-pointer transition-colors border-t border-lime-500/15 flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 px-3 text-center text-xs font-semibold text-lime-400 hover:text-lime-300 hover:bg-lime-950/50 cursor-pointer transition-colors border-t border-lime-500/15 flex items-center justify-center gap-1.5 focus-visible:ring-2 focus-visible:ring-lime-400"
               >
                 <Search className="w-3.5 h-3.5" />
                 <span>Xem tất cả kết quả cho "{query}"</span>
-              </div>
+              </button>
             </div>
           ) : !isLoading ? (
             <div className="p-4 text-center text-xs text-[#8aa885]">

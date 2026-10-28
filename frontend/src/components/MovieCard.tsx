@@ -40,11 +40,10 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   };
 
   return (
-    <a
-      href={`/phim/${movie.slug}`}
-      onClick={handleClick}
+    <div
       className="group relative flex flex-col h-full cursor-pointer transition-transform duration-300 hover:-translate-y-1.5"
     >
+      <a href={`/phim/${movie.slug}`} onClick={handleClick} aria-label={`Xem chi tiết ${movie.name}`} className="absolute inset-0 z-10 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-400" />
       {/* VIS-01: Responsive Border Radius (rounded-xl sm:rounded-2xl) & Aspect 2/3 */}
       <div className="relative aspect-[2/3] w-full rounded-xl sm:rounded-2xl overflow-hidden bg-[#071307] border border-lime-500/20 group-hover:border-lime-400/60 shadow-[0_4px_20px_rgba(0,0,0,0.6)] group-hover:shadow-[0_0_25px_rgba(132,204,22,0.35)] transition-all duration-300">
         
@@ -134,6 +133,6 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           )}
         </div>
       </div>
-    </a>
+    </div>
   );
 };

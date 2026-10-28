@@ -54,14 +54,16 @@ export function getEpisodeHlsUrl(
 interface WatchPageProps {
   slug: string;
   episodeSlug?: string;
+  initialServerIndex?: number;
   onBack: () => void;
-  onNavigateEpisode: (slug: string, epSlug: string) => void;
+  onNavigateEpisode: (slug: string, epSlug: string, serverIndex?: number) => void;
   onSelectMovie?: (slug: string) => void;
 }
 
 export const WatchPage: React.FC<WatchPageProps> = ({
   slug,
   episodeSlug,
+  initialServerIndex,
   onBack,
   onNavigateEpisode,
   onSelectMovie,
@@ -69,7 +71,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const [movie, setMovie] = useState<MovieDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeServerIndex, setActiveServerIndex] = useState(0);
+  const [activeServerIndex, setActiveServerIndex] = useState(initialServerIndex ?? 0);
   const [playerMode, setPlayerMode] = useState<'hls' | 'embed'>('hls');
   const [isTheater, setIsTheater] = useState(false);
 
@@ -115,13 +117,16 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     let isMounted = true;
     setLoading(true);
     setError(null);
-    setActiveServerIndex(0);
+    setActiveServerIndex(initialServerIndex ?? 0);
 
     getMovieDetail(slug).then((data) => {
       if (!isMounted) return;
       if (data) {
         setMovie(data);
-        setActiveServerIndex(0);
+        setActiveServerIndex(
+          initialServerIndex !== undefined && initialServerIndex >= 0 && initialServerIndex < (data.episodes?.length ?? 0)
+            ? initialServerIndex : 0
+        );
       } else {
         setError('Không thể tải thông tin xem phim. Vui lòng thử lại sau.');
       }
@@ -132,6 +137,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({
       isMounted = false;
     };
   }, [slug]);
+
+  useEffect(() => {
+    if (movie) {
+      setActiveServerIndex(
+        initialServerIndex !== undefined && initialServerIndex >= 0 && initialServerIndex < (movie.episodes?.length ?? 0)
+          ? initialServerIndex : 0
+      );
+    }
+  }, [initialServerIndex, movie]);
 
   useEffect(() => {
     setPlayerMode('hls');
@@ -204,7 +218,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({
 
   const handleSelectEpisode = (epSlug: string) => {
     setPlayerMode('hls');
-    onNavigateEpisode(slug, epSlug);
+    onNavigateEpisode(slug, epSlug, activeServerIndex);
+  };
+
+  const handleSelectServer = (index: number) => {
+    if (index < 0 || index >= servers.length) return;
+    setActiveServerIndex(index);
+    setPlayerMode('hls');
+    onNavigateEpisode(slug, currentEpisode?.slug || episodeSlug || 'tap-1', index);
   };
 
   const handleNextEpisode = () => {
@@ -345,7 +366,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
           activeServerIndex={activeServerIndex}
           activeEpisodeSlug={currentEpisode?.slug || ''}
           movieSlug={movie.slug}
-          onSelectServer={setActiveServerIndex}
+          onSelectServer={handleSelectServer}
           onSelectEpisode={handleSelectEpisode}
           isSingleMovie={isSingleMovie}
         />
