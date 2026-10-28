@@ -24,23 +24,24 @@ RUN npm run build
 # Stage 2: Build Backend (Rust Axum Tokio)
 FROM rust:1.85.0-bookworm AS backend-builder
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-WORKDIR /app/backend
+WORKDIR /app
 
 # Cache dependencies with --locked
-COPY backend/Cargo.toml backend/Cargo.lock ./
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs && cargo build --locked --release && rm -rf src
+COPY Cargo.toml Cargo.lock ./
+COPY backend/Cargo.toml ./backend/
+RUN mkdir -p backend/src && echo "fn main() {}" > backend/src/main.rs && echo "" > backend/src/lib.rs && cargo build --locked --release -p webproxy_backend && rm -rf backend/src
 
 # Immutable build provenance build-argument (strictly required and non-empty)
 ARG BUILD_COMMIT
 RUN if [ -z "$BUILD_COMMIT" ]; then echo "ERROR: BUILD_COMMIT build argument is required and cannot be empty!" >&2; exit 1; fi
 
 # Copy backend source
-COPY backend/src ./src
-COPY backend/tests ./tests
+COPY backend/src ./backend/src
+COPY backend/tests ./backend/tests
 
 # Pass BUILD_COMMIT into cargo build environment so option_env!("BUILD_COMMIT") compiles into binary
 ENV BUILD_COMMIT=${BUILD_COMMIT}
-RUN touch src/main.rs src/lib.rs && cargo build --locked --release
+RUN touch backend/src/main.rs backend/src/lib.rs && cargo build --locked --release -p webproxy_backend
 
 # Stage 3: Lightweight Production Runtime
 FROM debian:bookworm-20250224-slim
@@ -63,7 +64,7 @@ LABEL org.opencontainers.image.title="film4k-webproxy" \
       org.opencontainers.image.revision="${BUILD_COMMIT}"
 
 # Copy binary, static SPA assets, seed database, and ops scripts
-COPY --from=backend-builder /app/backend/target/release/webproxy_backend /app/webproxy_backend
+COPY --from=backend-builder /app/target/release/webproxy_backend /app/webproxy_backend
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 COPY film4k_master_database.json /app/film4k_master_database.json
 COPY scripts /app/scripts
