@@ -1,676 +1,330 @@
-import React, { useEffect, useState } from 'react';
-import { Bookmark, Check } from 'lucide-react';
-import { Movie, MovieSummary } from '../types';
-import { isInMyList, toggleMyList } from '../utils/myList';
-import { getMovieProgress, removeWatchProgress, WatchProgressItem } from '../utils/watchProgress';
+import React, { useState, useEffect } from 'react';
+import { Play, Bookmark, Clock, Calendar, Globe, Film, ArrowLeft, Loader2, Share2, Check, Server } from 'lucide-react';
+import { getMovieDetail } from '../api';
+import { MovieDetail } from '../types';
+import { FilmSynopsis } from './FilmSynopsis';
+import { RelatedMoviesRow } from './RelatedMoviesRow';
+import { getImageUrl, isFavorite, toggleFavorite } from '../utils';
 
 interface MovieDetailPageProps {
   slug: string;
-  onNavigate: (path: string) => void;
+  onBack: () => void;
+  onWatch: (slug: string, epSlug?: string) => void;
+  onSelectMovie: (slug: string) => void;
 }
 
-export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({ slug, onNavigate }) => {
-  const [movie, setMovie] = useState<Movie | null>(null);
-  const [related, setRelated] = useState<MovieSummary[]>([]);
+export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
+  slug,
+  onBack,
+  onWatch,
+  onSelectMovie,
+}) => {
+  const [movie, setMovie] = useState<MovieDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [inMyList, setInMyList] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [savedProgress, setSavedProgress] = useState<WatchProgressItem | null>(null);
+  const [fav, setFav] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [activeServerIndex, setActiveServerIndex] = useState(0);
 
   useEffect(() => {
-    const checkProgress = () => {
-      if (slug) {
-        const p = getMovieProgress(slug);
-        if (p && p.currentTime >= 10) {
-          setSavedProgress(p);
-        } else {
-          setSavedProgress(null);
-        }
-      }
-    };
-    checkProgress();
-    window.addEventListener('bofilm_progress_updated', checkProgress);
-    window.addEventListener('storage', checkProgress);
-    return () => {
-      window.removeEventListener('bofilm_progress_updated', checkProgress);
-      window.removeEventListener('storage', checkProgress);
-    };
-  }, [slug]);
-
-  useEffect(() => {
-    if (movie) {
-      setInMyList(isInMyList(movie.slug));
-    }
-    const handleUpdate = () => {
-      if (movie) setInMyList(isInMyList(movie.slug));
-    };
-    window.addEventListener('bofilm_mylist_updated', handleUpdate);
-    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
-  }, [movie]);
-
-  const handleToggleMyList = () => {
-    if (!movie) return;
-    const added = toggleMyList({
-      slug: movie.slug,
-      title_vi: movie.title_vi,
-      title_en: movie.title_en,
-      poster: movie.poster,
-      backdrop: movie.backdrop,
-      year: movie.year,
-      quality: movie.quality,
-      score: movie.score,
-      movie_type: movie.type,
-      genres: movie.genres,
-      total_episodes: movie.totalEpisodes,
-    });
-    setInMyList(added);
-    setToastMsg(added ? 'Đã thêm vào Danh sách của tôi' : 'Đã xóa khỏi Danh sách của tôi');
-    setTimeout(() => setToastMsg(null), 3000);
-  };
-
-  useEffect(() => {
+    let isMounted = true;
     setLoading(true);
     setError(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setActiveServerIndex(0);
 
-    fetch(`/api/movies/${slug}`)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Movie not found (${res.status})`);
-        }
-        return res.json();
-      })
-      .then((data: Movie) => {
+    getMovieDetail(slug).then((data) => {
+      if (!isMounted) return;
+      if (data) {
         setMovie(data);
-        setLoading(false);
+        setActiveServerIndex(0);
+        setFav(isFavorite(slug));
+      } else {
+        setError('Không thể tải thông tin phim. Vui lòng thử lại sau.');
+      }
+      setLoading(false);
+    });
 
-        // Fetch recommendations for this movie (/api/movies/:slug/recommendations with fallback)
-        fetch(`/api/movies/${slug}/recommendations`)
-          .then((r) => {
-            if (!r.ok) throw new Error('Recommendations endpoint error');
-            return r.json();
-          })
-          .then((recData) => {
-            const list: MovieSummary[] = Array.isArray(recData)
-              ? recData
-              : Array.isArray(recData.recommendations)
-              ? recData.recommendations
-              : Array.isArray(recData.movies)
-              ? recData.movies
-              : [];
-            if (list.length > 0) {
-              setRelated(list.filter((m) => m.slug !== slug).slice(0, 12));
-            } else {
-              throw new Error('Empty recommendations');
-            }
-          })
-          .catch(() => {
-            // Fallback: fetch movies by primary genre or general pool
-            const primaryGenre = data.genres && data.genres.length > 0 ? encodeURIComponent(data.genres[0]) : '';
-            const fallbackUrl = primaryGenre
-              ? `/api/movies?genre=${primaryGenre}&limit=12`
-              : `/api/movies?limit=12`;
-
-            fetch(fallbackUrl)
-              .then((r) => r.json())
-              .then((res) => {
-                const items: MovieSummary[] = res.movies || [];
-                const filtered = items.filter((m) => m.slug !== slug).slice(0, 10);
-                if (filtered.length > 0) {
-                  setRelated(filtered);
-                } else if (primaryGenre) {
-                  // Fallback further to general pool if genre filter returned empty
-                  fetch('/api/movies?limit=12')
-                    .then((r2) => r2.json())
-                    .then((res2) => {
-                      if (res2.movies) {
-                        setRelated(res2.movies.filter((m: MovieSummary) => m.slug !== slug).slice(0, 10));
-                      }
-                    })
-                    .catch(() => {});
-                }
-              })
-              .catch(() => {});
-          });
-      })
-      .catch((err) => {
-        console.error('Error fetching movie details:', err);
-        setError(err.message || 'Không thể tải thông tin phim');
-        setLoading(false);
-      });
+    return () => {
+      isMounted = false;
+    };
   }, [slug]);
+
+  const handleToggleFav = () => {
+    const res = toggleFavorite(slug);
+    setFav(res);
+  };
+
+  const handleShare = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="title-loading wrap" style={{ padding: '40px 0' }}>
-        <div
-          style={{
-            height: '380px',
-            borderRadius: '20px',
-            background: 'linear-gradient(105deg, var(--card) 20%, var(--card-hover) 38%, var(--card) 56%)',
-            backgroundSize: '220% 100%',
-            animation: '1.45s linear infinite skeleton-shimmer',
-            marginBottom: '28px',
-          }}
-        />
-        <div style={{ color: 'var(--muted)', textAlign: 'center', padding: '20px' }}>
-          Đang nạp chi tiết phim từ Bơ Film CDN...
-        </div>
+      <div className="py-32 flex flex-col items-center justify-center text-center">
+        <Loader2 className="w-12 h-12 text-lime-400 animate-spin mb-3" />
+        <p className="text-sm font-semibold text-[#8aa885]">
+          Đang tải thông tin phim Bơ Film...
+        </p>
       </div>
     );
   }
 
   if (error || !movie) {
     return (
-      <div className="wrap" style={{ padding: '60px 0', textAlign: 'center' }}>
-        <div className="player-error" style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'left' }}>
-          <h3 style={{ margin: 0, color: '#fff' }}>Không tìm thấy phim</h3>
-          <p className="player-error-text">
-            Phim với mã định danh "{slug}" không tồn tại hoặc đã được chuyển vùng.
-          </p>
-          <button
-            className="player-error-help"
-            onClick={() => onNavigate('/')}
-            style={{ cursor: 'pointer', border: 'none' }}
-          >
-            ← Quay lại Trang Chủ
-          </button>
-        </div>
+      <div className="py-24 text-center max-w-md mx-auto space-y-4">
+        <p className="text-red-400 text-sm font-semibold">{error || 'Không tìm thấy phim'}</p>
+        <button
+          onClick={onBack}
+          className="px-5 py-2 rounded-xl bg-lime-500 text-black text-xs font-bold hover:bg-lime-400 transition-colors inline-flex items-center gap-1.5"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Quay lại</span>
+        </button>
       </div>
     );
   }
 
-  const displayTitle = movie.title_vi || movie.title_en || 'Chi tiết phim';
-  const year = movie.year || 2026;
-  const score = movie.score ? movie.score.toFixed(1) : '8.5';
-  const quality = movie.quality || '4K UHD';
-  const posterUrl = movie.poster || 'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg';
-  const backdropUrl = movie.backdrop || posterUrl;
+  const bgImage = movie.poster_url || movie.thumb_url;
+  const servers = movie.episodes || [];
+  const currentServer = servers[activeServerIndex] || servers[0];
+  const firstEp = currentServer?.items?.[0] || servers[0]?.items?.[0];
+
+  const yearStr =
+    typeof movie.year === 'object' ? JSON.stringify(movie.year) : movie.year;
+
+  // Extract categories/genres
+  const genresList: string[] = [];
+  if (movie.category) {
+    Object.values(movie.category).forEach((cg) => {
+      if (cg?.list) {
+        cg.list.forEach((item) => {
+          if (item?.name) genresList.push(item.name);
+        });
+      }
+    });
+  }
 
   return (
-    <div className="title" style={{ minHeight: '80vh' }}>
-      {/* 1. Backdrop Hero Section */}
-      <section
-        className="title-hero"
-        style={{
-          position: 'relative',
-          overflow: 'hidden',
-          borderBottom: '1px solid var(--border-subtle)',
-          minHeight: '440px',
-        }}
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* Back Button */}
+      <button
+        onClick={onBack}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#071307] border border-lime-500/20 text-[#cbe1c8] hover:text-lime-300 hover:border-lime-500/40 text-xs font-semibold transition-colors"
       >
-        {/* Backdrop Image */}
-        <img
-          className="title-art"
-          src={backdropUrl}
-          alt={displayTitle}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            opacity: 0.28,
-            filter: 'blur(3px) brightness(0.65)',
-            transform: 'scale(1.05)',
-          }}
-        />
+        <ArrowLeft className="w-4 h-4" />
+        <span>Quay lại</span>
+      </button>
 
-        {/* Gradient overlays for cinematic depth */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background:
-              'linear-gradient(to top, var(--bg) 0%, rgba(7, 9, 15, 0.75) 50%, rgba(7, 9, 15, 0.4) 100%)',
-          }}
-        />
-
-        {/* Hero Content Container */}
-        <div
-          className="title-in wrap"
-          style={{
-            position: 'relative',
-            zIndex: 2,
-            display: 'flex',
-            gap: '36px',
-            paddingTop: '36px',
-            paddingBottom: '36px',
-            alignItems: 'flex-start',
-          }}
-        >
-          {/* Movie Poster */}
-          <div className="title-poster-wrapper" style={{ flexShrink: 0 }}>
+      {/* Main Detail Header Container */}
+      <div className="relative rounded-3xl overflow-hidden bg-[#071307] border border-lime-500/25 shadow-2xl p-4 sm:p-6 md:p-8">
+        {/* Blurred Backdrop */}
+        {bgImage && (
+          <div className="absolute inset-0 z-0">
             <img
-              className="title-poster"
-              src={posterUrl}
-              alt={displayTitle}
-              style={{
-                width: '210px',
-                borderRadius: '16px',
-                boxShadow: '0 24px 50px rgba(0, 0, 0, 0.85)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                display: 'block',
-              }}
+              src={getImageUrl(bgImage)}
+              alt={movie.name}
+              className="w-full h-full object-cover filter blur-2xl opacity-20 transform scale-110"
             />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#071307] via-[#071307]/80 to-transparent" />
+          </div>
+        )}
+
+        <div className="relative z-10 flex flex-col md:flex-row gap-6 md:gap-8">
+          {/* Poster Column */}
+          <div className="w-48 sm:w-56 md:w-64 flex-shrink-0 mx-auto md:mx-0">
+            <div className="aspect-[2/3] w-full rounded-2xl overflow-hidden bg-black/60 border border-lime-500/30 shadow-[0_10px_35px_rgba(0,0,0,0.8)] relative group">
+              <img
+                src={getImageUrl(movie.thumb_url || movie.poster_url)}
+                alt={movie.name}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+              {movie.current_episode && (
+                <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-md bg-lime-500 text-black text-xs font-black shadow-md">
+                  {movie.current_episode}
+                </div>
+              )}
+              {movie.quality && (
+                <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/75 border border-yellow-400/40 text-[#fef08a] text-xs font-bold">
+                  {movie.quality}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Metadata & Actions */}
-          <div className="title-text" style={{ flex: 1 }}>
-            <h1
-              style={{
-                fontSize: 'clamp(26px, 3.5vw, 42px)',
-                fontWeight: 800,
-                margin: '0 0 8px',
-                color: '#fff',
-                lineHeight: 1.15,
-                letterSpacing: '-0.02em',
-              }}
-            >
-              {displayTitle}{' '}
-              <span className="year" style={{ color: 'var(--muted)', fontSize: '0.65em', fontWeight: 600 }}>
-                ({year})
-              </span>
-            </h1>
+          {/* Details Column */}
+          <div className="flex-1 space-y-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-[#f4fbf0] tracking-tight leading-tight">
+                {movie.name}
+              </h1>
+              {movie.original_name && (
+                <p className="text-sm sm:text-base font-bold text-lime-400 mt-1">
+                  {movie.original_name}
+                </p>
+              )}
+            </div>
 
-            {movie.title_en && movie.title_vi && (
-              <div
-                style={{
-                  color: 'var(--muted-light)',
-                  fontSize: '17px',
-                  marginBottom: '14px',
-                  fontWeight: 500,
-                }}
-              >
-                {movie.title_en}
+            {/* Meta Chips */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {yearStr && (
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-lime-950/60 border border-lime-500/20 text-[#cbe1c8] font-semibold">
+                  <Calendar className="w-3.5 h-3.5 text-lime-400" />
+                  <span>Năm {yearStr}</span>
+                </span>
+              )}
+              {movie.time && (
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-lime-950/60 border border-lime-500/20 text-[#cbe1c8] font-semibold">
+                  <Clock className="w-3.5 h-3.5 text-lime-400" />
+                  <span>{movie.time}</span>
+                </span>
+              )}
+              {movie.language && (
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-lime-950/60 border border-lime-500/20 text-[#cbe1c8] font-semibold">
+                  <Globe className="w-3.5 h-3.5 text-lime-400" />
+                  <span>{movie.language}</span>
+                </span>
+              )}
+            </div>
+
+            {/* Genres List */}
+            {genresList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {genresList.map((g, idx) => (
+                  <span
+                    key={idx}
+                    className="px-2.5 py-1 rounded-full bg-[#050e05] border border-lime-500/15 text-[11px] font-medium text-lime-300/90"
+                  >
+                    {g}
+                  </span>
+                ))}
               </div>
             )}
 
-            {/* Badges / Meta row */}
-            <div
-              className="title-meta"
-              style={{
-                display: 'flex',
-                gap: '8px',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                margin: '12px 0 16px',
-              }}
-            >
-              <span
-                className="score"
-                style={{
-                  background: 'var(--accent-gold-soft)',
-                  color: 'var(--accent-gold)',
-                  border: '1px solid #e8c48a59',
-                  borderRadius: '999px',
-                  padding: '4px 12px',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                }}
-              >
-                ★ {score}
-              </span>
-
-              <span
-                className="res"
-                style={{
-                  background: '#ffffff0f',
-                  color: '#b4bdd0',
-                  border: '1px solid #ffffff1a',
-                  borderRadius: '999px',
-                  padding: '4px 12px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-              >
-                {quality}
-              </span>
-
-              {movie.country && (
-                <span
-                  className="chip"
-                  style={{
-                    background: '#ffffff08',
-                    border: '1px solid #ffffff14',
-                    borderRadius: '999px',
-                    padding: '4px 12px',
-                    fontSize: '12px',
-                  }}
-                >
-                  {movie.country}
-                </span>
+            {/* Crew / Cast */}
+            <div className="space-y-1.5 text-xs text-[#a3c49e] pt-2 border-t border-lime-500/15">
+              {movie.director && (
+                <p>
+                  <span className="text-[#8aa885] font-semibold">Đạo diễn:</span>{' '}
+                  <span className="text-[#f4fbf0]">{movie.director}</span>
+                </p>
               )}
-
-              {movie.genres?.map((g) => (
-                <span
-                  key={g}
-                  className="chip"
-                  style={{
-                    background: '#ffffff08',
-                    border: '1px solid #ffffff14',
-                    borderRadius: '999px',
-                    padding: '4px 12px',
-                    fontSize: '12px',
-                  }}
-                >
-                  {g}
-                </span>
-              ))}
+              {movie.casts && (
+                <p>
+                  <span className="text-[#8aa885] font-semibold">Diễn viên:</span>{' '}
+                  <span className="text-[#f4fbf0]">{movie.casts}</span>
+                </p>
+              )}
             </div>
 
-            {/* Audio & Subtitle Features */}
-            <div
-              className="title-langs"
-              style={{
-                display: 'flex',
-                gap: '12px',
-                color: 'var(--muted)',
-                fontSize: '13px',
-                marginBottom: '18px',
-                flexWrap: 'wrap',
-              }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                🔊 Dolby Atmos 5.1 / Stereo
-              </span>
-              <span>•</span>
-              <span>💬 Phụ đề Tiếng Việt</span>
-              <span>•</span>
-              <span>🎙 Lồng tiếng / Thuyết minh</span>
-            </div>
-
-            {/* Synopsis / Overview */}
-            <p
-              className="ov"
-              style={{
-                color: 'var(--muted-light)',
-                fontSize: '15px',
-                lineHeight: 1.7,
-                maxWidth: '78ch',
-                marginBottom: '26px',
-              }}
-            >
-              {movie.overview ||
-                'Trải nghiệm tuyệt phẩm điện ảnh với chất lượng hình ảnh 4K Ultra HD sắc nét và hệ thống âm thanh vòm chuẩn rạp chiếu phim.'}
-            </p>
-
-            {/* Action CTA Buttons */}
-            <div className="title-cta" style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
-              {savedProgress ? (
-                <>
-                  {(() => {
-                    const mins = Math.floor(savedProgress.currentTime / 60);
-                    const secs = Math.floor(savedProgress.currentTime % 60);
-                    const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-                    const continuePath =
-                      savedProgress.episode && savedProgress.episode > 1
-                        ? `/watch/${movie.slug}/${savedProgress.episode}`
-                        : `/watch/${movie.slug}`;
-                    const restartPath =
-                      savedProgress.episode && savedProgress.episode > 1
-                        ? `/watch/${movie.slug}/${savedProgress.episode}?start=0`
-                        : `/watch/${movie.slug}?start=0`;
-
-                    return (
-                      <>
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => onNavigate(continuePath)}
-                          style={{
-                            padding: '12px 26px',
-                            fontSize: '15px',
-                            fontWeight: 700,
-                            borderRadius: '12px',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                          }}
-                        >
-                          <span>▶</span>
-                          <span>Tiếp tục xem (phút {timeFormatted})</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="ghost-btn"
-                          onClick={() => {
-                            removeWatchProgress(movie.slug, savedProgress.episode);
-                            onNavigate(restartPath);
-                          }}
-                          style={{
-                            padding: '12px 20px',
-                            fontSize: '14px',
-                            fontWeight: 700,
-                            borderRadius: '12px',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            borderColor: '#aeea00',
-                            color: '#aeea00',
-                            background: 'rgba(174, 234, 0, 0.08)',
-                          }}
-                          title="Xem lại phim từ đầu (00:00)"
-                        >
-                          <span>↺</span>
-                          <span>Xem từ đầu</span>
-                        </button>
-                      </>
-                    );
-                  })()}
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => onNavigate(`/watch/${movie.slug}`)}
-                  style={{
-                    padding: '12px 28px',
-                    fontSize: '15px',
-                    fontWeight: 700,
-                    borderRadius: '12px',
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                  }}
-                >
-                  <span>▶</span>
-                  <span>Phát ngay (4K UHD)</span>
-                </button>
-              )}
-
+            {/* Actions */}
+            <div className="flex flex-wrap items-center gap-3 pt-3">
               <button
-                type="button"
-                className={`ghost-btn bookmark-btn ${inMyList ? 'active' : ''}`}
-                onClick={handleToggleMyList}
-                style={{
-                  padding: '12px 22px',
-                  fontSize: '14px',
-                  fontWeight: inMyList ? 700 : 600,
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  borderColor: inMyList ? 'var(--accent, #aeea00)' : undefined,
-                  color: inMyList ? '#070e08' : undefined,
-                  background: inMyList ? 'var(--accent, #aeea00)' : undefined,
-                  boxShadow: inMyList ? '0 0 16px rgba(174, 234, 0, 0.45)' : undefined,
-                  transition: 'all 0.2s ease',
-                }}
+                onClick={() => onWatch(slug, firstEp?.slug)}
+                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-black font-black text-sm transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(132,204,22,0.5)] cursor-pointer"
               >
-                {inMyList ? <Check size={18} color="#070e08" strokeWidth={2.5} /> : <Bookmark size={18} />}
-                <span>{inMyList ? '✓ Đã thêm vào DS' : '+ Danh sách của tôi'}</span>
+                <Play className="w-5 h-5 fill-black" />
+                <span>Xem Phim Ngay</span>
               </button>
 
               <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => onNavigate('/')}
-                style={{
-                  padding: '12px 20px',
-                  fontSize: '14px',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
+                onClick={handleToggleFav}
+                className={`flex items-center gap-2 px-4 py-3 rounded-xl border text-xs font-bold transition-all ${
+                  fav
+                    ? 'bg-lime-500/20 text-lime-300 border-lime-500/50 shadow-sm'
+                    : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] border-lime-500/20'
+                }`}
               >
-                ← Quay lại Trang Chủ
+                <Bookmark className="w-4 h-4 fill-current" />
+                <span>{fav ? 'Đã lưu yêu thích' : 'Lưu yêu thích'}</span>
+              </button>
+
+              <button
+                onClick={handleShare}
+                className="p-3 rounded-xl bg-lime-950/40 hover:bg-lime-900/60 border border-lime-500/20 text-[#cbe1c8] hover:text-lime-300 transition-colors"
+                title="Chia sẻ liên kết phim"
+              >
+                {copied ? <Check className="w-4 h-4 text-lime-400" /> : <Share2 className="w-4 h-4" />}
               </button>
             </div>
-
-            {/* Bookmark Toast Feedback */}
-            {toastMsg && (
-              <div
-                style={{
-                  marginTop: '14px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 18px',
-                  borderRadius: '30px',
-                  background: 'rgba(10, 21, 12, 0.94)',
-                  border: '1px solid #1e3f28',
-                  color: '#aeea00',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-                  animation: 'fadeIn 0.2s ease',
-                }}
-              >
-                <span>🥑 {toastMsg}</span>
-              </div>
-            )}
           </div>
         </div>
-      </section>
+      </div>
 
-      {/* 2. Episode Selection Section (for TV Series) */}
-      {movie.episodes && movie.episodes.length > 0 && (
-        <section className="wrap eps-sec" style={{ marginTop: '36px' }}>
-          <div className="eps-head" style={{ marginBottom: '16px' }}>
-            <div>
-              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#fff', margin: 0 }}>
-                Danh sách tập phim ({movie.episodes.length})
-              </h2>
-              <span className="eps-current" style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', display: 'block' }}>
-                Chọn tập để xem trực tiếp với tốc độ cao 300+ Mbps
-              </span>
-            </div>
+      {/* Film Synopsis */}
+      <div className="bg-[#071307] border border-lime-500/20 rounded-2xl p-5 shadow-lg">
+        <FilmSynopsis htmlContent={movie.description} />
+      </div>
+
+      {/* Quick Episode Grid */}
+      {currentServer?.items && currentServer.items.length > 0 && (
+        <div className="bg-[#071307] border border-lime-500/20 rounded-2xl p-5 space-y-4 shadow-lg">
+          <div className="flex items-center justify-between border-b border-lime-500/15 pb-3">
+            <h3 className="text-base font-bold text-lime-300 flex items-center gap-2">
+              <Film className="w-4 h-4" />
+              <span>Danh Sách Tập Phim</span>
+            </h3>
+            <span className="text-xs text-[#8aa885]">
+              {currentServer.items.length} tập
+            </span>
           </div>
 
-          <div
-            className="cinema-menu-scroll"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
-              gap: '8px',
-              marginBottom: '32px',
-              maxHeight: movie.episodes.length > 24 ? '320px' : 'none',
-              overflowY: movie.episodes.length > 24 ? 'auto' : 'visible',
-              paddingRight: movie.episodes.length > 24 ? '4px' : 0,
-            }}
-          >
-            {movie.episodes.map((ep) => (
+          {/* Thanh chọn Server (Tabs: Vietsub, Lồng Tiếng, Thuyết Minh) khi phim có nhiều server */}
+          {servers.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+              <span className="text-xs font-bold text-lime-400 uppercase tracking-wider flex items-center gap-1.5 mr-1">
+                <Server className="w-3.5 h-3.5" />
+                <span>Phiên Bản / Server:</span>
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {servers.map((srv, idx) => {
+                  const isActive = idx === activeServerIndex;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setActiveServerIndex(idx)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-lime-500 text-black shadow-[0_0_12px_rgba(132,204,22,0.4)] font-extrabold'
+                          : 'bg-[#0a180b] hover:bg-lime-950/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
+                      }`}
+                    >
+                      {isActive && <Check className="w-3.5 h-3.5" />}
+                      <span>{srv.server_name || `Server #${idx + 1}`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2 max-h-96 overflow-y-auto pr-1">
+            {currentServer.items.map((ep) => (
               <button
-                key={ep.episode}
-                type="button"
-                className="chip"
-                onClick={() => onNavigate(`/watch/${movie.slug}/${ep.episode}`)}
-                style={{
-                  justifyContent: 'center',
-                  minHeight: '44px',
-                  padding: '8px 4px',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  background: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '8px',
-                }}
+                key={ep.slug}
+                onClick={() => onWatch(slug, ep.slug)}
+                className="flex items-center justify-center p-2 rounded-xl text-xs font-bold bg-[#0a180b] hover:bg-lime-500 hover:text-black text-[#d8ebd5] border border-lime-500/20 hover:border-lime-400 transition-all min-h-[44px] cursor-pointer"
               >
-                Tập {ep.episode}
+                <span>Tập {ep.name}</span>
               </button>
             ))}
           </div>
-        </section>
+        </div>
       )}
 
-      {/* 3. Smart Recommendations Rail: Phim tương tự bạn có thể thích */}
-      {related.length > 0 && (
-        <section className="wrap row-sec" style={{ marginTop: '48px', marginBottom: '64px' }}>
-          <div className="head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <div>
-              <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#fcfdf7', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Phim tương tự bạn có thể thích</span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: '#070e08',
-                    background: '#aeea00',
-                    padding: '2px 8px',
-                    borderRadius: '999px',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                  }}
-                >
-                  Gợi ý AI
-                </span>
-              </h2>
-              <p style={{ color: 'var(--muted, #94a896)', fontSize: '13px', margin: '4px 0 0 0' }}>
-                Đề xuất dựa trên thể loại, diễn viên và sở thích xem phim 4K của bạn
-              </p>
-            </div>
-          </div>
-
-          <div className="catalog-grid">
-            {related.map((rel) => {
-              const relTitle = rel.title_vi || rel.title_en || 'Phim';
-              const relPoster = rel.poster || rel.backdrop || 'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg';
-              const relScore = rel.score ? rel.score.toFixed(1) : '8.0';
-              const relRes = rel.quality || '4K UHD';
-              return (
-                <div className="hov" key={rel.slug}>
-                  <a
-                    className="card"
-                    href={`/movie/${rel.slug}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                      onNavigate(`/movie/${rel.slug}`);
-                    }}
-                  >
-                    <div className="thumb">
-                      <img alt={relTitle} loading="lazy" decoding="async" src={relPoster} />
-                      <span className="play" aria-hidden="true">
-                        ▶
-                      </span>
-                      <span className="card-res">{relRes}</span>
-                      <span className="card-vi">TM|PD</span>
-                      <span className="card-score">
-                        <b aria-hidden="true" style={{ color: '#fbbf24' }}>★</b>
-                        {relScore}
-                      </span>
-                    </div>
-                    <h3>{relTitle}</h3>
-                    <p>
-                      {rel.year || 2026} · {rel.genres?.[0] || 'Phim 4K'}
-                    </p>
-                  </a>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* Related Movies Shelf */}
+      <RelatedMoviesRow
+        currentSlug={slug}
+        genres={genresList}
+        onSelectMovie={onSelectMovie}
+      />
     </div>
   );
 };

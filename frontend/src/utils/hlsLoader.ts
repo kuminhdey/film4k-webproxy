@@ -3,18 +3,31 @@ import Hls from 'hls.js';
 // PNG signature: 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'
 const PNG_SIG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
+/**
+ * Strip fake PNG header from obfuscated MPEG-TS video chunks.
+ * Checks for PNG magic bytes, parses until IEND chunk or finds
+ * the MPEG-TS packet sync byte (0x47 / 71).
+ */
 export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
   if (!buffer || buffer.byteLength < PNG_SIG.length) {
     return buffer;
   }
 
   const bytes = new Uint8Array(buffer);
+  let isPng = true;
   for (let i = 0; i < PNG_SIG.length; i++) {
     if (bytes[i] !== PNG_SIG[i]) {
-      return buffer; // Not a PNG obfuscated chunk
+      isPng = false;
+      break;
     }
   }
 
+  // Not a PNG obfuscated chunk - return original buffer
+  if (!isPng) {
+    return buffer;
+  }
+
+  // First method: Standard PNG chunk parser searching for 'IEND' chunk
   const dataView = new DataView(buffer);
   let offset = PNG_SIG.length;
 
@@ -22,20 +35,46 @@ export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
     const chunkLength = dataView.getUint32(offset, false);
     const chunkEnd = offset + 12 + chunkLength;
     if (chunkEnd > bytes.length) {
-      return buffer;
+      break;
     }
 
-    // Check for 'IEND' chunk: 73, 69, 78, 68
+    // Check for 'IEND' chunk: 73, 69, 78, 68 ('I', 'E', 'N', 'D')
     if (
       bytes[offset + 4] === 73 &&
       bytes[offset + 5] === 69 &&
       bytes[offset + 6] === 78 &&
       bytes[offset + 7] === 68
     ) {
-      // Clean video media payload starts right after IEND chunk!
-      return buffer.slice(chunkEnd);
+      // Clean video media payload starts right after IEND chunk.
+      // Check if MPEG-TS sync byte 0x47 is at or near chunkEnd.
+      if (chunkEnd < bytes.length) {
+        if (bytes[chunkEnd] === 0x47) {
+          return buffer.slice(chunkEnd);
+        }
+        for (let j = chunkEnd; j < Math.min(chunkEnd + 64, bytes.length); j++) {
+          if (bytes[j] === 0x47) {
+            return buffer.slice(j);
+          }
+        }
+        return buffer.slice(chunkEnd);
+      }
     }
     offset = chunkEnd;
+  }
+
+  // Second method: Search for MPEG-TS sync byte 0x47 (71)
+  // If the stream server injects a fake PNG header without clean IEND chunk structure,
+  // scan after the PNG signature for the first 0x47 sync byte that repeats with 188-byte TS packet spacing.
+  for (let i = PNG_SIG.length; i < bytes.length; i++) {
+    if (bytes[i] === 0x47) {
+      // Verify MPEG-TS 188-byte packet boundary
+      if (i + 188 < bytes.length && bytes[i + 188] === 0x47) {
+        return buffer.slice(i);
+      }
+      if (i + 188 >= bytes.length) {
+        return buffer.slice(i);
+      }
+    }
   }
 
   return buffer;
@@ -69,6 +108,14 @@ let cumulativeBytesLoaded = 0;
 
 export function setStatsListener(cb: StatsCallback | null) {
   globalStatsListener = cb;
+}
+
+export function resetCumulativeBytes(): void {
+  cumulativeBytesLoaded = 0;
+}
+
+export function getCumulativeBytesLoaded(): number {
+  return cumulativeBytesLoaded;
 }
 
 export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {

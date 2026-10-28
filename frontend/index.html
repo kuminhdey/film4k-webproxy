@@ -3,21 +3,68 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <title>Bơ Film — Phim 4K Cinema Siêu Nét</title>
-    <meta name="description" content="Bơ Film — Xem Phim 4K Cinema Siêu Nét Vietsub Thuyết Minh Đỉnh Cao" />
-    <link rel="icon" href="/logo.png" />
-    <link rel="apple-touch-icon" href="/logo.png" />
-    <meta name="theme-color" content="#070e08" />
+    <title>Bơ Film — Avocado Cinema | Phim Online Đỉnh Cao</title>
+    <meta name="description" content="Bơ Film (Avocado Cinema) - Web xem phim trực tuyến miễn phí tốc độ cao, chất lượng Full HD vietsub, thuyết minh. Cập nhật phim bộ, phim lẻ, TV Shows mới nhất liên tục." />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png" />
+    <meta name="theme-color" content="#060b05" />
+    <meta name="application-name" content="Bơ Film" />
+    <meta name="apple-mobile-web-app-title" content="Bơ Film" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="preconnect" href="https://image.tmdb.org" crossorigin="" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-TileColor" content="#060b05" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // Self-healing recovery for stale PWA service worker caches and chunk load mismatches
+      window.addEventListener('error', function (e) {
+        var msg = (e && e.message) ? e.message : '';
+        if (
+          msg.indexOf('Loading chunk') !== -1 ||
+          msg.indexOf('dynamically imported module') !== -1 ||
+          msg.indexOf('Failed to fetch dynamically imported module') !== -1 ||
+          msg.indexOf('before initialization') !== -1
+        ) {
+          if (!sessionStorage.getItem('bofilm_cache_healed')) {
+            sessionStorage.setItem('bofilm_cache_healed', '1');
+            console.warn('[BơFilm Recovery] Stale cache detected, purging service worker and caches...');
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                regs.forEach(function (r) { r.unregister(); });
+              });
+            }
+            if ('caches' in window) {
+              caches.keys().then(function (keys) {
+                keys.forEach(function (k) { caches.delete(k); });
+              });
+            }
+            setTimeout(function () {
+              window.location.reload();
+            }, 100);
+          }
+        }
+      });
+    </script>
   </head>
-  <body style="background: #070e08; color: #fcfdf7; margin: 0; min-height: 100vh;">
-    <div id="root"></div>
+  <body class="bg-[#060b05] text-[#f4fbf0] min-h-screen selection:bg-lime-500 selection:text-black">
+    <div id="root">
+      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #060b05; color: #84cc16; font-family: sans-serif;">
+        <div style="width: 48px; height: 48px; border-radius: 12px; background: rgba(132, 204, 22, 0.15); border: 1px solid rgba(132, 204, 22, 0.3); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; animation: pulse 1.5s infinite;">
+          <span style="font-size: 24px;">🥑</span>
+        </div>
+        <div style="font-size: 13px; font-weight: 600; color: #d4ebd2; letter-spacing: 0.5px;">Bơ Film Avocado Cinema</div>
+        <div style="font-size: 11px; color: #8aa885; margin-top: 6px;">Đang tải rạp phim...</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

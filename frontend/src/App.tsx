@@ -1,828 +1,589 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Sidebar } from './components/Sidebar';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Film,
+  Sparkles,
+  LayoutGrid,
+  List,
+  ChevronRight,
+  Flame,
+  Tv,
+  Clapperboard,
+  Loader2,
+} from 'lucide-react';
 import { Header } from './components/Header';
+import { Footer } from './components/Footer';
 import { HeroBanner } from './components/HeroBanner';
-import { FilterBar } from './components/FilterBar';
-import { TopRail } from './components/TopRail';
-import { MovieRail } from './components/MovieRail';
-import { MobileNav } from './components/MobileNav';
+import { MovieCard } from './components/MovieCard';
+import { MovieTableView } from './components/MovieTableView';
 import { MovieDetailPage } from './components/MovieDetailPage';
-import { WatchPage } from './components/WatchPage';
-import { AdminDashboard } from './components/AdminDashboard';
-import { ContinueWatchingRail } from './components/ContinueWatchingRail';
+import { CatalogView } from './components/CatalogView';
 import { MyListPage } from './components/MyListPage';
-import { MovieSummary, MoviesResponse, HomeResponse } from './types';
-import { Loader2, Bookmark } from 'lucide-react';
-import { isInMyList, toggleMyList } from './utils/myList';
+import { HistoryPage } from './components/HistoryPage';
+import { ContinueWatchingRow } from './components/ContinueWatchingRow';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
-const PAGE_LIMIT = 48;
+// Code-splitting (PERF-01): Lazy load heavy components to isolate hls.js and admin assets
+const WatchPage = React.lazy(() =>
+  import('./components/WatchPage').then((m) => ({ default: m.WatchPage }))
+);
+const AdminDashboard = React.lazy(() =>
+  import('./components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+import { getHome, getMovies } from './api';
+import { HomeResponse, MovieItem, Paginate, FilterOptions } from './types';
+import { CATEGORIES, GENRES, COUNTRIES } from './constants';
 
 interface RouteState {
-  view: 'home' | 'movie' | 'watch' | 'admin' | 'mylist';
+  view:
+    | 'home'
+    | 'detail'
+    | 'watch'
+    | 'category'
+    | 'genre'
+    | 'country'
+    | 'year'
+    | 'search'
+    | 'favorites'
+    | 'history'
+    | 'admin';
   slug?: string;
-  episode?: number;
+  episodeSlug?: string;
+  keyword?: string;
 }
 
-function parseCurrentRoute(): RouteState {
+function parseRoute(): RouteState {
   const path = window.location.pathname;
+  const searchParams = new URLSearchParams(window.location.search);
 
   // Admin route: /admin or /admin/*
   if (path === '/admin' || path.startsWith('/admin/')) {
-    return {
-      view: 'admin',
-    };
+    return { view: 'admin' };
   }
 
-  // My List route: /mylist or /favourites
-  if (path === '/mylist' || path === '/favourites') {
-    return {
-      view: 'mylist',
-    };
+  if (path === '/yeu-thich') {
+    return { view: 'favorites' };
+  }
+  if (path === '/lich-su') {
+    return { view: 'history' };
+  }
+  if (path === '/tim-kiem') {
+    return { view: 'search', keyword: searchParams.get('keyword') || '' };
   }
 
-  // Watch route: /watch/:slug or /watch/:slug/:ep
-  const watchMatch = path.match(/^\/watch\/([^/]+)(?:\/(\d+))?/);
+  // Watch route: /xem-phim/:slug/:ep or /watch/:slug/:ep
+  const watchMatch =
+    path.match(/^\/xem-phim\/([^/]+)(?:\/([^/]+))?/) ||
+    path.match(/^\/watch\/([^/]+)(?:\/([^/]+))?/);
   if (watchMatch) {
     return {
       view: 'watch',
       slug: watchMatch[1],
-      episode: watchMatch[2] ? parseInt(watchMatch[2], 10) : undefined,
+      episodeSlug: watchMatch[2],
     };
   }
 
-  // Movie detail route: /movie/:slug
-  const movieMatch = path.match(/^\/movie\/([^/]+)/);
-  if (movieMatch) {
+  // Detail route: /phim/:slug or /movie/:slug
+  const detailMatch =
+    path.match(/^\/phim\/([^/]+)/) || path.match(/^\/movie\/([^/]+)/);
+  if (detailMatch) {
     return {
-      view: 'movie',
-      slug: movieMatch[1],
+      view: 'detail',
+      slug: detailMatch[1],
     };
+  }
+
+  // Category: /danh-sach/:slug
+  const catMatch = path.match(/^\/danh-sach\/([^/]+)/);
+  if (catMatch) {
+    return { view: 'category', slug: catMatch[1] };
+  }
+
+  // Genre: /the-loai/:slug
+  const genreMatch = path.match(/^\/the-loai\/([^/]+)/);
+  if (genreMatch) {
+    return { view: 'genre', slug: genreMatch[1] };
+  }
+
+  // Country: /quoc-gia/:slug
+  const countryMatch = path.match(/^\/quoc-gia\/([^/]+)/);
+  if (countryMatch) {
+    return { view: 'country', slug: countryMatch[1] };
+  }
+
+  // Year: /nam-phat-hanh/:year
+  const yearMatch = path.match(/^\/nam-phat-hanh\/([^/]+)/);
+  if (yearMatch) {
+    return { view: 'year', slug: yearMatch[1] };
   }
 
   return { view: 'home' };
 }
 
-export const App: React.FC = () => {
-  const [route, setRoute] = useState<RouteState>(parseCurrentRoute);
-  const [movies, setMovies] = useState<MovieSummary[]>([]);
-  const [total, setTotal] = useState(0);
+export default function App() {
+  const [route, setRoute] = useState<RouteState>(parseRoute);
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [homeData, setHomeData] = useState<HomeResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [activeTab, setActiveTab] = useState('all');
-  const [sort, setSort] = useState('latest');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedGenre, setSelectedGenre] = useState('');
-  const [selectedCountry, setSelectedCountry] = useState('all');
-  const [selectedYear, setSelectedYear] = useState('all');
-  const [selectedResolution, setSelectedResolution] = useState('all');
-  const [selectedTrack, setSelectedTrack] = useState('all');
+  const [homeLoading, setHomeLoading] = useState(true);
 
-  // Client-side Navigation Handler
+  // Home latest shelf view mode: grid vs table
+  const [latestViewMode, setLatestViewMode] = useState<'grid' | 'table'>('grid');
+
+  // Catalog state for non-home routes
+  const [catalogMovies, setCatalogMovies] = useState<MovieItem[]>([]);
+  const [catalogPaginate, setCatalogPaginate] = useState<Paginate | undefined>();
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogFilters, setCatalogFilters] = useState<FilterOptions>({
+    page: 1,
+  });
+
+  // Client-side Navigation
   const navigateTo = (path: string) => {
     window.history.pushState({}, '', path);
-    setRoute(parseCurrentRoute());
+    setCurrentPath(path);
+    setRoute(parseRoute());
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Reset all active filters to default
-  const handleResetFilters = useCallback(() => {
-    setSort('latest');
-    setActiveTab('all');
-    setSelectedGenre('');
-    setSelectedCountry('all');
-    setSelectedYear('all');
-    setSelectedResolution('all');
-    setSelectedTrack('all');
-    setSearchQuery('');
-  }, []);
-
-  // Listen to browser Back/Forward navigation
   useEffect(() => {
     const handlePopState = () => {
-      setRoute(parseCurrentRoute());
+      setCurrentPath(window.location.pathname);
+      setRoute(parseRoute());
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Sync route if pathname tab changes (e.g. /explore, /genres)
+  // Load Home Data on initial mount
   useEffect(() => {
-    const p = window.location.pathname.replace(/^\//, '');
-    if (['explore', 'genres', 'television', 'sports', 'mylist'].includes(p)) {
-      setActiveTab(p);
-    }
-  }, []);
-
-  // Listen to My List updates for catalog cards
-  const [, setBookmarkTick] = useState(0);
-  useEffect(() => {
-    const handleListUpdate = () => setBookmarkTick((t) => t + 1);
-    window.addEventListener('bofilm_mylist_updated', handleListUpdate);
-    return () => window.removeEventListener('bofilm_mylist_updated', handleListUpdate);
-  }, []);
-
-  // Build query params helper for multi-dimensional filter matrix
-  const buildParams = useCallback(
-    (offset: number, search?: string, type?: string) => {
-      const params = new URLSearchParams();
-      const tabType = type ?? activeTab;
-      const q = search !== undefined ? search : searchQuery;
-      if (tabType === 'movie' || tabType === 'tv') {
-        params.set('type', tabType);
-      }
-      if (q.trim()) {
-        params.set('search', q.trim());
-      }
-      if (selectedGenre) {
-        params.set('genre', selectedGenre);
-      }
-      if (selectedCountry && selectedCountry !== 'all') {
-        params.set('country', selectedCountry);
-      }
-      if (selectedYear && selectedYear !== 'all') {
-        params.set('year', selectedYear);
-      }
-      if (selectedResolution && selectedResolution !== 'all') {
-        params.set('quality', selectedResolution);
-      }
-      if (selectedTrack && selectedTrack !== 'all') {
-        params.set('track', selectedTrack);
-      }
-      if (sort && sort !== 'latest') {
-        params.set('sort', sort);
-      }
-      params.set('limit', String(PAGE_LIMIT));
-      params.set('offset', String(offset));
-      return params;
-    },
-    [activeTab, searchQuery, selectedGenre, selectedCountry, selectedYear, selectedResolution, selectedTrack, sort]
-  );
-
-  // Fetch initial page (replaces current list)
-  const fetchMovies = useCallback(
-    (search?: string, type?: string) => {
-      setLoading(true);
-      const params = buildParams(0, search, type);
-      fetch(`/api/movies?${params.toString()}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('Network response was not ok');
-          return res.json();
-        })
-        .then((data: MoviesResponse) => {
-          setMovies(data.movies || []);
-          setTotal(data.total || 0);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error('Failed to fetch movies:', err);
-          setLoading(false);
-        });
-    },
-    [buildParams]
-  );
-
-  // Fetch Home curated layout (/api/home matching web gốc)
-  const fetchHome = useCallback(() => {
-    setLoading(true);
-    fetch('/api/home')
-      .then((res) => {
-        if (!res.ok) throw new Error(`Home endpoint returned status ${res.status}`);
-        return res.json();
-      })
-      .then((data: HomeResponse) => {
-        const list = Array.isArray(data.list)
-          ? data.list
-          : Array.isArray((data as any).movies)
-          ? (data as any).movies
-          : [];
+    getHome().then((data) => {
+      if (data) {
         setHomeData(data);
-        setMovies(list);
-        setTotal(typeof data.total === 'number' ? data.total : list.length);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.warn('/api/home not ready or failed, falling back to /api/movies:', err);
-        setHomeData(null);
-        fetchMovies('', 'all');
-      });
-  }, [fetchMovies]);
-
-  // "Load More" – appends to current list
-  const fetchMore = useCallback(() => {
-    if (loadingMore || loading) return;
-    setLoadingMore(true);
-    const params = buildParams(movies.length);
-    fetch(`/api/movies?${params.toString()}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then((data: MoviesResponse) => {
-        setMovies((prev) => [...prev, ...(data.movies || [])]);
-        setTotal(data.total || 0);
-        setLoadingMore(false);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch more movies:', err);
-        setLoadingMore(false);
-      });
-  }, [loadingMore, loading, movies.length, buildParams]);
-
-  // When activeTab, searchQuery, or filters change → load appropriate data
-  useEffect(() => {
-    setMovies([]);
-    const isDefaultHome =
-      route.view === 'home' &&
-      !searchQuery.trim() &&
-      !selectedGenre &&
-      selectedCountry === 'all' &&
-      selectedYear === 'all' &&
-      selectedResolution === 'all' &&
-      selectedTrack === 'all' &&
-      sort === 'latest' &&
-      activeTab === 'all';
-
-    if (isDefaultHome) {
-      fetchHome();
-    } else {
-      setHomeData(null);
-      fetchMovies(searchQuery, activeTab);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, searchQuery, selectedGenre, selectedCountry, selectedYear, selectedResolution, selectedTrack, sort, route.view]);
-
-  // Client-side filtering & sorting
-  const filteredMovies = useMemo(() => {
-    let result = [...movies];
-
-    if (selectedGenre) {
-      result = result.filter(
-        (m) => m.genres && m.genres.some((g) => g.toLowerCase().includes(selectedGenre.toLowerCase()))
-      );
-    }
-
-    if (selectedResolution !== 'all') {
-      result = result.filter((m) =>
-        m.quality?.toLowerCase().includes(selectedResolution.toLowerCase())
-      );
-    }
-
-    if (selectedYear !== 'all') {
-      if (selectedYear === '2020-2021') {
-        result = result.filter((m) => (m.year || 0) >= 2020 && (m.year || 0) <= 2021);
-      } else if (selectedYear === '2015-2019') {
-        result = result.filter((m) => (m.year || 0) >= 2015 && (m.year || 0) <= 2019);
-      } else if (selectedYear === 'before-2015') {
-        result = result.filter((m) => (m.year || 0) < 2015);
-      } else {
-        const yr = parseInt(selectedYear, 10);
-        if (!isNaN(yr)) {
-          result = result.filter((m) => m.year === yr);
-        }
       }
-    }
+      setHomeLoading(false);
+    });
+  }, []);
 
-    if (selectedCountry !== 'all') {
-      result = result.filter((m) => {
-        const c = (m.country || '').toLowerCase();
-        const t = (m.title_vi || '').toLowerCase() + ' ' + (m.title_en || '').toLowerCase();
-        if (selectedCountry === 'au-my') return c.includes('mỹ') || c.includes('âu') || c.includes('us') || c.includes('uk') || t.includes('mỹ');
-        if (selectedCountry === 'han-quoc') return c.includes('hàn') || c.includes('korea');
-        if (selectedCountry === 'trung-quoc') return c.includes('trung') || c.includes('china');
-        if (selectedCountry === 'nhat-ban') return c.includes('nhật') || c.includes('japan');
-        if (selectedCountry === 'thai-lan') return c.includes('thái') || c.includes('thai');
-        if (selectedCountry === 'viet-nam') return c.includes('việt') || c.includes('vietnam');
-        if (selectedCountry === 'hong-kong') return c.includes('hồng kông') || c.includes('hong kong');
-        if (selectedCountry === 'anh') return c.includes('anh') || c.includes('uk');
-        if (selectedCountry === 'phap') return c.includes('pháp') || c.includes('france');
-        if (selectedCountry === 'an-do') return c.includes('ấn độ') || c.includes('india');
-        return c.includes(selectedCountry);
+  // Load Catalog Data when on catalog/search/category/genre/country/year view
+  useEffect(() => {
+    if (
+      route.view === 'category' ||
+      route.view === 'genre' ||
+      route.view === 'country' ||
+      route.view === 'year' ||
+      route.view === 'search'
+    ) {
+      setCatalogLoading(true);
+
+      const params: FilterOptions = {
+        page: catalogFilters.page || 1,
+        category: route.view === 'category' ? route.slug : catalogFilters.category,
+        genre: route.view === 'genre' ? route.slug : catalogFilters.genre,
+        country: route.view === 'country' ? route.slug : catalogFilters.country,
+        year: route.view === 'year' ? route.slug : catalogFilters.year,
+        sort: catalogFilters.sort,
+        keyword: route.view === 'search' ? route.keyword : catalogFilters.keyword,
+      };
+
+      getMovies(params).then((res) => {
+        if (res) {
+          setCatalogMovies(res.items || []);
+          setCatalogPaginate(res.paginate);
+        } else {
+          setCatalogMovies([]);
+        }
+        setCatalogLoading(false);
       });
     }
+  }, [route, catalogFilters]);
 
-    if (selectedTrack !== 'all') {
-      result = result.filter((m) => {
-        const combined = ((m.title_vi || '') + ' ' + (m.title_en || '') + ' ' + (m.quality || '')).toLowerCase();
-        if (selectedTrack === 'tm') return combined.includes('thuyết minh') || combined.includes('tm') || !combined.includes('raw');
-        if (selectedTrack === 'pd') return combined.includes('phụ đề') || combined.includes('vietsub') || combined.includes('pd');
-        if (selectedTrack === 'lt') return combined.includes('lồng tiếng') || combined.includes('lt');
-        return true;
-      });
+  // Catalog Title Generator
+  const getCatalogMeta = () => {
+    if (route.view === 'category') {
+      const cat = CATEGORIES.find((c) => c.slug === route.slug);
+      return {
+        title: cat?.name || 'Danh Sách Phim',
+        subtitle: cat?.description || 'Tuyển tập phim đặc sắc trên Bơ Film',
+      };
     }
-
-    if (sort === 'score') {
-      result.sort((a, b) => (b.score || 0) - (a.score || 0));
-    } else if (sort === 'year') {
-      result.sort((a, b) => (b.year || 0) - (a.year || 0));
-    } else if (sort === 'views') {
-      result.sort((a, b) => (b.id || 0) - (a.id || 0));
+    if (route.view === 'genre') {
+      const g = GENRES.find((item) => item.slug === route.slug);
+      return {
+        title: `Phim Thể Loại ${g?.name || route.slug}`,
+        subtitle: `Tổng hợp các bộ phim thuộc thể loại ${g?.name || route.slug}`,
+      };
     }
-
-    return result;
-  }, [movies, selectedGenre, selectedResolution, selectedYear, selectedCountry, selectedTrack, sort]);
-
-  // Featured movies for HeroBanner (priority: data.hero -> backdrop pool -> slice)
-  const heroMovies = useMemo(() => {
-    if (homeData?.hero && homeData.hero.length > 0) {
-      return homeData.hero;
+    if (route.view === 'country') {
+      const c = COUNTRIES.find((item) => item.slug === route.slug);
+      return {
+        title: `Phim Quốc Gia ${c?.name || route.slug}`,
+        subtitle: `Tuyển chọn điện ảnh và truyền hình từ ${c?.name || route.slug}`,
+      };
     }
-    const pool = movies.filter((m) => m.backdrop);
-    return pool.length > 0 ? pool.slice(0, 5) : movies.slice(0, 5);
-  }, [homeData?.hero, movies]);
-
-  // Top 10 movies for TopRail (priority: data.top -> sort score)
-  const top10Movies = useMemo(() => {
-    if (homeData?.top && homeData.top.length > 0) {
-      return homeData.top;
+    if (route.view === 'year') {
+      return {
+        title: `Phim Phát Hành Năm ${route.slug}`,
+        subtitle: `Những tác phẩm điện ảnh ra mắt trong năm ${route.slug}`,
+      };
     }
-    const sorted = [...movies].sort((a, b) => (b.score || 0) - (a.score || 0));
-    return sorted.slice(0, 10);
-  }, [homeData?.top, movies]);
-
-  // TV Series for MovieRail (priority: data.newSeries -> filter tv)
-  const seriesMovies = useMemo(() => {
-    if (homeData?.newSeries && homeData.newSeries.length > 0) {
-      return homeData.newSeries;
+    if (route.view === 'search') {
+      return {
+        title: `Kết Quả Tìm Kiếm: "${route.keyword || ''}"`,
+        subtitle: 'Các bộ phim phù hợp với từ khóa của bạn',
+      };
     }
-    return movies.filter((m) => m.movie_type === 'tv' || (m.total_episodes && m.total_episodes > 1));
-  }, [homeData?.newSeries, movies]);
-
-  // Single Feature Movies for MovieRail (priority: data.newMovies -> filter movie)
-  const singleMovies = useMemo(() => {
-    if (homeData?.newMovies && homeData.newMovies.length > 0) {
-      return homeData.newMovies;
-    }
-    return movies.filter((m) => m.movie_type === 'movie' || !m.total_episodes || m.total_episodes <= 1);
-  }, [homeData?.newMovies, movies]);
-
-  const handleCardClick = (movie: MovieSummary) => {
-    navigateTo(`/movie/${movie.slug}`);
+    return { title: 'Kho Phim Bơ Film', subtitle: 'Khám phá hàng ngàn bộ phim' };
   };
 
-  const handlePlayClick = (movie: MovieSummary) => {
-    navigateTo(`/watch/${movie.slug}`);
-  };
-
-  const isFilteredView = Boolean(
-    searchQuery.trim() ||
-      selectedGenre ||
-      selectedCountry !== 'all' ||
-      selectedYear !== 'all' ||
-      selectedResolution !== 'all' ||
-      selectedTrack !== 'all' ||
-      sort !== 'latest' ||
-      activeTab === 'movie' ||
-      activeTab === 'tv' ||
-      activeTab === 'explore' ||
-      activeTab === 'genres' ||
-      activeTab === 'television' ||
-      activeTab === 'sports' ||
-      activeTab === 'favourites'
+// Route loading fallback component (Cinematic taste: subtle pulse, deep black backdrop)
+function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[50vh] py-16 px-4">
+      <div className="relative flex items-center justify-center">
+        <div className="w-12 h-12 rounded-full border-2 border-lime-500/20 border-t-lime-400 animate-spin" />
+        <Film className="w-5 h-5 text-lime-400 absolute" />
+      </div>
+      <p className="mt-4 text-xs font-medium uppercase tracking-widest text-zinc-400 animate-pulse">
+        {label}
+      </p>
+    </div>
   );
+}
 
-  const hasMore = movies.length < total;
-  const allLoaded = !loading && movies.length >= total && total > 0;
-
+  // Render Admin Dashboard full-page when on /admin
   if (route.view === 'admin') {
-    return <AdminDashboard onNavigate={navigateTo} />;
+    return (
+      <React.Suspense fallback={<PageLoadingFallback label="Đang tải trang quản trị..." />}>
+        <AdminDashboard onNavigate={navigateTo} />
+      </React.Suspense>
+    );
   }
 
   return (
-    <div className="shell">
-      {/* 1. Left Sidebar Navigation */}
-      <Sidebar
-        activeTab={activeTab}
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'mylist' || tab === 'favourites') {
-            navigateTo('/mylist');
-            return;
-          }
-          if (route.view !== 'home') {
-            navigateTo('/');
-          }
-          if (tab === 'all') {
-            setSelectedGenre('');
-            setSearchQuery('');
-          }
-        }}
-        onQuickCode={() => alert('Chức năng Ghép nối TV / Quick Code Login')}
-        onSignIn={() => alert('Đăng nhập tài khoản Bơ Film')}
-        onPairDevice={() => alert('Ghép nối thiết bị TV')}
-        onSettings={() => alert('Cài đặt giao diện và hệ thống')}
-      />
+    <div className="min-h-screen bg-[#060b05] text-[#f4fbf0] flex flex-col selection:bg-lime-500 selection:text-black">
+      {/* Header */}
+      <Header currentPath={currentPath} onNavigate={navigateTo} />
 
-      {/* 2. Main Content Shell */}
-      <div className="shell-main">
-        {/* Sticky Header */}
-        <Header
-          onSearch={(q) => {
-            setSearchQuery(q);
-            if (route.view !== 'home') {
-              navigateTo('/');
-            }
-          }}
-          onSelectMovie={(slug) => {
-            navigateTo(`/movie/${slug}`);
-          }}
-          onBrandClick={() => {
-            setActiveTab('all');
-            setSearchQuery('');
-            setSelectedGenre('');
-            navigateTo('/');
-          }}
-          onPairClick={() => alert('Ghép nối TV / Device')}
-          onAppClick={() => alert('Ứng dụng Bơ Film cho Android TV & Mobile')}
-          onSignInClick={() => alert('Đăng nhập Bơ Film')}
-        />
+      {/* Main Body Content */}
+      <main className="flex-1 pt-14 pb-20 sm:pb-0">
+        <ErrorBoundary fallbackTitle="Không thể tải nội dung trang">
+        {route.view === 'home' && (
+          <div className="space-y-10 sm:space-y-12">
+            {/* Hero Spotlight Banner */}
+            {homeData?.hero_banners && homeData.hero_banners.length > 0 && (
+              <HeroBanner
+                movies={homeData.hero_banners}
+                onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+                onWatchMovie={(slug) => navigateTo(`/xem-phim/${slug}/tap-1`)}
+              />
+            )}
 
-        {/* View Switcher based on current URL route */}
-        {route.view === 'movie' && route.slug ? (
-          <MovieDetailPage slug={route.slug} onNavigate={navigateTo} />
-        ) : route.view === 'watch' && route.slug ? (
-          <WatchPage
-            slug={route.slug}
-            initialEpisode={route.episode}
-            onNavigate={navigateTo}
-          />
-        ) : route.view === 'mylist' ? (
-          <MyListPage onNavigate={navigateTo} />
-        ) : (
-          <>
-            <main className="wrap">
-              <div className="home">
-              {/* Continue Watching Rail (Resumes unfinished movies) */}
-              <ContinueWatchingRail
-                onPlay={(item) => {
-                  const targetPath =
-                    item.episode && item.episode > 1
-                      ? `/watch/${item.slug}/${item.episode}`
-                      : `/watch/${item.slug}`;
-                  navigateTo(targetPath);
+            {/* Continue Watching Shelf (Loaded instantly from local storage) */}
+            <div className="max-w-7xl mx-auto px-4 sm:px-6">
+              <ContinueWatchingRow
+                onWatch={(slug, epSlug, time) => {
+                  const timeQuery =
+                    typeof time === 'number' && time > 5
+                      ? `?t=${Math.floor(time)}`
+                      : '';
+                  navigateTo(`/xem-phim/${slug}/${epSlug || 'tap-1'}${timeQuery}`);
                 }}
+                onNavigateHistory={() => navigateTo('/lich-su')}
               />
+            </div>
 
-              {/* Filter Bar */}
-              <FilterBar
-                sort={sort}
-                onSortChange={setSort}
-                type={activeTab}
-                onTypeChange={(t) => setActiveTab(t)}
-                selectedGenre={selectedGenre}
-                onGenreChange={setSelectedGenre}
-                selectedCountry={selectedCountry}
-                onCountryChange={setSelectedCountry}
-                selectedYear={selectedYear}
-                onYearChange={setSelectedYear}
-                selectedResolution={selectedResolution}
-                onResolutionChange={setSelectedResolution}
-                selectedTrack={selectedTrack}
-                onTrackChange={setSelectedTrack}
-                onResetFilters={handleResetFilters}
-              />
+            {homeLoading && !homeData ? (
+              <div className="py-24 flex flex-col items-center justify-center text-center">
+                <Loader2 className="w-12 h-12 text-lime-400 animate-spin mb-3" />
+                <p className="text-sm font-semibold text-[#8aa885]">
+                  Đang tải rạp chiếu Bơ Film Avocado Cinema...
+                </p>
+              </div>
+            ) : (
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-12">
+                {/* Section 1: Phim Mới Cập Nhật (with View Toggle and Xem tất cả) */}
+                <section className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-lime-500/20 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <Flame className="w-5 h-5 text-lime-400 animate-pulse" />
+                      <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide">
+                        Phim Mới Cập Nhật
+                      </h2>
+                    </div>
 
-              {/* Filtered Grid or Full Catalog Rails */}
-              {isFilteredView ? (
-                <section className="row-sec" style={{ marginTop: '24px' }}>
-                  <div className="head">
-                    <h2>
-                      {searchQuery
-                        ? `Kết quả tìm kiếm cho "${searchQuery}"`
-                        : selectedGenre
-                        ? `Thể loại: ${selectedGenre}`
-                        : activeTab === 'tv'
-                        ? 'Tất cả Phim Bộ'
-                        : activeTab === 'movie'
-                        ? 'Tất cả Phim Lẻ'
-                        : 'Danh sách phim'}
-                      <span
-                        style={{
-                          fontSize: '14px',
-                          color: 'var(--muted, #8b95ad)',
-                          marginLeft: '12px',
-                          fontWeight: 500,
-                        }}
+                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
+                      {/* View Mode Switcher: Grid View vs Table View */}
+                      <div className="flex items-center gap-1.5 bg-[#071307] p-1 rounded-xl border border-lime-500/20">
+                        <button
+                          type="button"
+                          onClick={() => setLatestViewMode('grid')}
+                          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            latestViewMode === 'grid'
+                              ? 'bg-lime-500 text-black shadow-sm'
+                              : 'text-[#8aa885] hover:text-[#d8ebd5]'
+                          }`}
+                        >
+                          <LayoutGrid className="w-3.5 h-3.5" />
+                          <span>Grid View ⊞</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLatestViewMode('table')}
+                          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            latestViewMode === 'table'
+                              ? 'bg-lime-500 text-black shadow-sm'
+                              : 'text-[#8aa885] hover:text-[#d8ebd5]'
+                          }`}
+                        >
+                          <List className="w-3.5 h-3.5" />
+                          <span>Table View ☰</span>
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => navigateTo('/danh-sach/phim-moi')}
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
                       >
-                        (Đang hiển thị {filteredMovies.length.toLocaleString()}{total > 0 ? ` / ${total.toLocaleString()}` : ''} phim)
-                      </span>
-                    </h2>
+                        <span>Xem tất cả</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
-                  {loading ? (
-                    <div style={{ color: 'var(--muted)', padding: '40px 0', textAlign: 'center' }}>
-                      <Loader2
-                        size={24}
-                        style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginBottom: '8px' }}
-                      />
-                      <div>Đang nạp dữ liệu phim...</div>
-                    </div>
-                  ) : filteredMovies.length === 0 ? (
-                    <div style={{ color: 'var(--muted)', padding: '40px 0', textAlign: 'center' }}>
-                      Không tìm thấy phim phù hợp với bộ lọc hiện tại.
+                  {latestViewMode === 'grid' ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                      {homeData?.latest?.map((movie) => (
+                        <MovieCard
+                          key={movie.slug}
+                          movie={movie}
+                          onClick={() => navigateTo(`/phim/${movie.slug}`)}
+                        />
+                      ))}
                     </div>
                   ) : (
-                    <>
-                      <div className="catalog-grid">
-                        {filteredMovies.map((movie) => {
-                          const displayTitle = movie.title_vi || movie.title_en || 'Phim';
-                          const year = movie.year || 2026;
-                          const genre =
-                            movie.genres && movie.genres.length > 0 ? movie.genres[0] : 'Phim 4K';
-                          const score = movie.score ? movie.score.toFixed(1) : '8.0';
-                          const res = movie.quality || '1080p';
-
-                          return (
-                            <div className="hov" key={movie.slug}>
-                              <a
-                                className="card"
-                                href={`/movie/${movie.slug}`}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleCardClick(movie);
-                                }}
-                              >
-                                <div className="thumb">
-                                  <img
-                                    alt={displayTitle}
-                                    loading="lazy"
-                                    decoding="async"
-                                    src={
-                                      movie.poster ||
-                                      'https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg'
-                                    }
-                                  />
-                                  <span
-                                    className="play"
-                                    aria-hidden="true"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      e.preventDefault();
-                                      handlePlayClick(movie);
-                                    }}
-                                  >
-                                    ▶
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="card-bookmark-btn"
-                                    title={isInMyList(movie.slug) ? 'Xóa khỏi Danh sách của tôi' : 'Thêm vào Danh sách của tôi'}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      e.preventDefault();
-                                      toggleMyList(movie);
-                                    }}
-                                    style={{
-                                      position: 'absolute',
-                                      top: '8px',
-                                      left: '8px',
-                                      width: '26px',
-                                      height: '26px',
-                                      borderRadius: '50%',
-                                      background: 'rgba(7, 14, 8, 0.8)',
-                                      border: '1px solid rgba(255, 255, 255, 0.2)',
-                                      color: isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      cursor: 'pointer',
-                                      zIndex: 4,
-                                      transition: 'all 0.15s ease',
-                                    }}
-                                  >
-                                    <Bookmark size={13} fill={isInMyList(movie.slug) ? '#fbbf24' : 'none'} color={isInMyList(movie.slug) ? '#fbbf24' : '#cbd8cb'} />
-                                  </button>
-                                  <span className="card-res">{res}</span>
-                                  <span className="card-vi">TM|PD</span>
-                                  <span className="card-score">
-                                    <b aria-hidden="true">★</b>
-                                    {score}
-                                  </span>
-                                  {movie.total_episodes && movie.total_episodes > 1 && (
-                                    <span className="card-eps">
-                                      {movie.total_episodes >= 10
-                                        ? `Full ${movie.total_episodes}/${movie.total_episodes}`
-                                        : `${movie.total_episodes} Tập`}
-                                    </span>
-                                  )}
-                                </div>
-                                <h3>{displayTitle}</h3>
-                                <p>
-                                  {year} · {genre}
-                                </p>
-                              </a>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Load More / All Loaded Footer */}
-                      <div
-                        style={{
-                          marginTop: '32px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '12px',
-                          paddingBottom: '24px',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: '13px',
-                            color: 'var(--muted, #8b95ad)',
-                          }}
-                        >
-                          Đang hiển thị{' '}
-                          <span style={{ color: '#fff', fontWeight: 600 }}>
-                            {movies.length.toLocaleString()}
-                          </span>{' '}
-                          /{' '}
-                          <span style={{ color: '#f5c518', fontWeight: 600 }}>
-                            {total.toLocaleString()}
-                          </span>{' '}
-                          phim
-                        </div>
-
-                        {hasMore && (
-                          <button
-                            type="button"
-                            onClick={fetchMore}
-                            disabled={loadingMore}
-                            style={{
-                              background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.15) 0%, rgba(132, 204, 22, 0.25) 100%)',
-                              border: '1px solid rgba(174, 234, 0, 0.5)',
-                              color: '#fcfdf7',
-                              padding: '12px 32px',
-                              borderRadius: '10px',
-                              fontSize: '14px',
-                              fontWeight: 700,
-                              cursor: loadingMore ? 'not-allowed' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              boxShadow: '0 4px 18px rgba(174, 234, 0, 0.25)',
-                              transition: 'all 0.2s',
-                              opacity: loadingMore ? 0.7 : 1,
-                            }}
-                          >
-                            {loadingMore ? (
-                              <>
-                                <Loader2
-                                  size={16}
-                                  style={{ animation: 'spin 1s linear infinite' }}
-                                />
-                                <span>Đang tải thêm...</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>🎬</span>
-                                <span>Tải thêm phim</span>
-                                <span
-                                  style={{
-                                    fontSize: '12px',
-                                    color: 'rgba(255,255,255,0.6)',
-                                    fontWeight: 400,
-                                  }}
-                                >
-                                  ({(total - movies.length).toLocaleString()} phim còn lại)
-                                </span>
-                              </>
-                            )}
-                          </button>
-                        )}
-
-                        {allLoaded && (
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              fontSize: '13px',
-                              color: '#10b981',
-                              background: 'rgba(16, 185, 129, 0.08)',
-                              border: '1px solid rgba(16, 185, 129, 0.2)',
-                              borderRadius: '10px',
-                              padding: '10px 20px',
-                            }}
-                          >
-                            <span>✅</span>
-                            <span>
-                              Đã tải hết toàn bộ{' '}
-                              <strong>{total.toLocaleString()}</strong> phim trong kho 4K Cinema
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </>
+                    <MovieTableView
+                      movies={homeData?.latest || []}
+                      onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+                    />
                   )}
                 </section>
-              ) : (
-                <>
-                  {/* Hero Carousel Banner */}
-                  {heroMovies.length > 0 && (
-                    <HeroBanner
-                      movies={heroMovies}
-                      onPlay={handlePlayClick}
-                      onInfo={handleCardClick}
-                    />
-                  )}
 
-                  {/* Top 10 Rail */}
-                  {top10Movies.length > 0 && (
-                    <TopRail
-                      movies={top10Movies}
-                      onSelect={handleCardClick}
-                      onViewAll={() => {
-                        setSort('score');
-                        setActiveTab('all');
-                      }}
-                    />
-                  )}
+                {/* Section 2: Phim Bộ Mới */}
+                {homeData?.series && homeData.series.length > 0 && (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-lime-500/20 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <Tv className="w-5 h-5 text-lime-400" />
+                        <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide">
+                          Phim Bộ Đang Hot
+                        </h2>
+                      </div>
+                      <button
+                        onClick={() => navigateTo('/danh-sach/phim-bo')}
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                      >
+                        <span>Xem tất cả</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
 
-                  {/* TV Series Rail */}
-                  {seriesMovies.length > 0 && (
-                    <MovieRail
-                      id="new"
-                      title="Phim bộ mới cập nhật"
-                      movies={seriesMovies}
-                      onSelect={handleCardClick}
-                      onPlay={handlePlayClick}
-                      onViewAll={() => setActiveTab('tv')}
-                    />
-                  )}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                      {homeData.series.slice(0, 12).map((movie) => (
+                        <MovieCard
+                          key={movie.slug}
+                          movie={movie}
+                          onClick={() => navigateTo(`/phim/${movie.slug}`)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-                  {/* Feature Movies Rail */}
-                  {singleMovies.length > 0 && (
-                    <MovieRail
-                      title="Phim lẻ mới cập nhật"
-                      movies={singleMovies}
-                      onSelect={handleCardClick}
-                      onPlay={handlePlayClick}
-                      onViewAll={() => setActiveTab('movie')}
-                    />
-                  )}
-                </>
-              )}
-            </div>
-          </main>
+                {/* Section 3: Phim Lẻ Mới */}
+                {homeData?.single && homeData.single.length > 0 && (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-lime-500/20 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <Clapperboard className="w-5 h-5 text-lime-400" />
+                        <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide">
+                          Phim Lẻ Chiếu Rạp
+                        </h2>
+                      </div>
+                      <button
+                        onClick={() => navigateTo('/danh-sach/phim-le')}
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                      >
+                        <span>Xem tất cả</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
 
-          {/* Footer */}
-          <footer
-            style={{
-              borderTop: '1px solid #1e3f28',
-              background: '#070e08',
-              padding: '36px 24px 48px',
-              marginTop: '48px',
-              textAlign: 'center',
-            }}
-          >
-            <div style={{ maxWidth: '1240px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <img
-                  src="/logo.png"
-                  alt="Bơ Film"
-                  style={{ height: '32px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 8px rgba(174, 234, 0, 0.4))' }}
-                />
-                <span style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '-0.02em', display: 'inline-flex', gap: '4px' }}>
-                  <span style={{ color: '#aeea00' }}>Bơ</span>
-                  <span style={{ color: '#fcfdf7' }}>Film</span>
-                </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                      {homeData.single.slice(0, 12).map((movie) => (
+                        <MovieCard
+                          key={movie.slug}
+                          movie={movie}
+                          onClick={() => navigateTo(`/phim/${movie.slug}`)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Section 4: TV Shows */}
+                {homeData?.tv_shows && homeData.tv_shows.length > 0 && (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-lime-500/20 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <Sparkles className="w-5 h-5 text-lime-400" />
+                        <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide">
+                          TV Shows & Gameshow
+                        </h2>
+                      </div>
+                      <button
+                        onClick={() => navigateTo('/danh-sach/tv-shows')}
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                      >
+                        <span>Xem tất cả</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                      {homeData.tv_shows.slice(0, 12).map((movie) => (
+                        <MovieCard
+                          key={movie.slug}
+                          movie={movie}
+                          onClick={() => navigateTo(`/phim/${movie.slug}`)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Section 5: Hoạt Hình & Anime */}
+                {homeData?.anime && homeData.anime.length > 0 && (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-lime-500/20 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <Film className="w-5 h-5 text-lime-400" />
+                        <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide">
+                          Hoạt Hình & Anime Đặc Sắc
+                        </h2>
+                      </div>
+                      <button
+                        onClick={() => navigateTo('/the-loai/hoat-hinh')}
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                      >
+                        <span>Xem tất cả</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                      {homeData.anime.slice(0, 12).map((movie) => (
+                        <MovieCard
+                          key={movie.slug}
+                          movie={movie}
+                          onClick={() => navigateTo(`/phim/${movie.slug}`)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
               </div>
-              <p style={{ margin: 0, fontSize: '14px', color: '#cbd8cb', fontWeight: 600 }}>
-                Bơ Film - Rạp chiếu phim 4K Cinema chất lượng cao
-              </p>
-              <p style={{ margin: 0, fontSize: '12px', color: '#94a896', maxWidth: '600px', lineHeight: 1.6 }}>
-                Trải nghiệm xem phim 4K UHD siêu nét, âm thanh vòm Dolby Atmos đa kênh và phụ đề song ngữ Vietsub mượt mà hàng đầu.
-              </p>
-              <div style={{ fontSize: '11px', color: 'rgba(148, 168, 150, 0.6)', marginTop: '8px' }}>
-                © 2026 Bơ Film Cinema. All rights reserved.
-              </div>
-            </div>
-          </footer>
-        </>
-      )}
-      </div>
+            )}
+          </div>
+        )}
 
-      {/* 3. Mobile Bottom Navigation */}
-      <MobileNav
-        activeTab={activeTab}
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'mylist' || tab === 'favourites') {
-            navigateTo('/mylist');
-            return;
-          }
-          if (route.view !== 'home') {
-            navigateTo('/');
-          }
-          if (tab === 'all') {
-            setSelectedGenre('');
-            setSearchQuery('');
-          }
-        }}
-      />
+        {/* Movie Detail View */}
+        {route.view === 'detail' && route.slug && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+            <MovieDetailPage
+              slug={route.slug}
+              onBack={() => navigateTo('/')}
+              onWatch={(slug, ep) =>
+                navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}`)
+              }
+              onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+            />
+          </div>
+        )}
+
+        {/* Watch Movie View */}
+        {route.view === 'watch' && route.slug && (
+          <div className="max-w-7xl mx-auto px-2 sm:px-6 py-4 sm:py-6">
+            <React.Suspense
+              fallback={
+                <PageLoadingFallback label="Đang nạp trình phát và dữ liệu tập phim..." />
+              }
+            >
+              <WatchPage
+                slug={route.slug}
+                episodeSlug={route.episodeSlug}
+                onBack={() => navigateTo(`/phim/${route.slug}`)}
+                onNavigateEpisode={(slug, ep) =>
+                  navigateTo(`/xem-phim/${slug}/${ep}`)
+                }
+                onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+              />
+            </React.Suspense>
+          </div>
+        )}
+
+        {/* Catalog Views (Category, Genre, Country, Year, Search) */}
+        {(route.view === 'category' ||
+          route.view === 'genre' ||
+          route.view === 'country' ||
+          route.view === 'year' ||
+          route.view === 'search') && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+            <CatalogView
+              title={getCatalogMeta().title}
+              subtitle={getCatalogMeta().subtitle}
+              movies={catalogMovies}
+              paginate={catalogPaginate}
+              filters={catalogFilters}
+              isLoading={catalogLoading}
+              onFilterChange={(newFilters) => setCatalogFilters(newFilters)}
+              onFilterReset={() => setCatalogFilters({ page: 1 })}
+              onPageChange={(page) =>
+                setCatalogFilters((prev) => ({ ...prev, page }))
+              }
+              onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+            />
+          </div>
+        )}
+
+        {/* Favorites View */}
+        {route.view === 'favorites' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+            <MyListPage
+              onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
+              onBack={() => navigateTo('/')}
+            />
+          </div>
+        )}
+
+        {/* History View */}
+        {route.view === 'history' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+            <HistoryPage
+              onWatch={(slug, ep) =>
+                navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}`)
+              }
+              onBack={() => navigateTo('/')}
+            />
+          </div>
+        )}
+        </ErrorBoundary>
+      </main>
+
+      {/* Footer */}
+      <Footer onNavigate={navigateTo} />
+
+      {/* Mobile Bottom Navigation Bar (sm:hidden) */}
+      <MobileBottomNav currentPath={currentPath} onNavigate={navigateTo} />
     </div>
   );
-};
-
-export default App;
+}

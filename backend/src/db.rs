@@ -368,9 +368,15 @@ impl Database {
         }
 
         if let Some(ref mt) = query.movie_type {
-            if !mt.trim().is_empty() && mt != "all" {
+            let mt_trimmed = mt.trim();
+            if !mt_trimmed.is_empty() && mt_trimmed != "all" {
+                let mapped = match mt_trimmed {
+                    "phim-bo" | "series" | "tv" => "tv",
+                    "phim-le" | "single" | "movie" => "movie",
+                    other => other,
+                };
                 where_clauses.push("movie_type = ?");
-                query_params.push(Box::new(mt.to_string()));
+                query_params.push(Box::new(mapped.to_string()));
             }
         }
 

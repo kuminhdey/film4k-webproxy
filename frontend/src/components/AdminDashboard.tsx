@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Film,
   Zap,
@@ -27,14 +27,17 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  HardDrive,
+  Download,
 } from 'lucide-react';
 import { AdminStats, AdminLogEntry, MovieSummary, MoviesResponse } from '../types';
+import { crawlerStatusLabel } from '../crawlerStatus';
 
 interface AdminDashboardProps {
   onNavigate: (path: string) => void;
 }
 
-const STORAGE_AUTH_KEY = 'film4k_admin_token';
+const STORAGE_AUTH_KEY = 'bofilm_admin_token';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) => {
   // Authentication state (bounded to active browser session/tab, avoiding persistent localStorage)
@@ -44,13 +47,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Handle session expiration / unauthorized response: reset state and redirect immediately to login gate
+  const handleAuthExpired = useCallback((reason?: string) => {
+    sessionStorage.removeItem(STORAGE_AUTH_KEY);
+    setToken(null);
+    setPasswordInput('');
+    setAuthError(reason || 'Phiên làm việc đã hết hạn hoặc máy chủ đã được khởi động lại. Vui lòng đăng nhập lại.');
+    setLogs([]);
+    setLogsConnected(false);
+    setMoviesList([]);
+  }, []);
+
+  // Universal admin fetch wrapper that automatically appends Authorization header
+  // and catches 401/403 status to instantly redirect to the login gate.
+  const adminFetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const headers = new Headers(init?.headers || {});
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      try {
+        const res = await fetch(input, { ...init, headers });
+        if (res.status === 401 || res.status === 403) {
+          handleAuthExpired('Phiên làm việc đã hết hạn hoặc mã xác thực không hợp lệ. Vui lòng đăng nhập lại.');
+        }
+        return res;
+      } catch (err) {
+        throw err;
+      }
+    },
+    [token, handleAuthExpired]
+  );
+
   // Stats & Progress state (initialized empty, populated from live /api/admin/stats)
   const [stats, setStats] = useState<AdminStats>({
     total_movies: 0,
     total_series: 0,
     total_single: 0,
+    total_source_movies: 0,
+    remaining_movies: 0,
     cached_m3u8_count: 0,
     crawler_is_running: false,
+    crawler_auto_enabled: false,
     crawler_progress_percent: 0,
     crawler_processed: 0,
     crawler_total: 0,
@@ -65,28 +103,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // Logs state
-  const [logs, setLogs] = useState<AdminLogEntry[]>([
-    {
-      id: 'log-1',
-      timestamp: new Date().toLocaleTimeString('vi-VN'),
-      level: 'info',
-      message: 'Hệ thống Quản Trị Bơ Film Cinema đã khởi động.',
-    },
-    {
-      id: 'log-2',
-      timestamp: new Date().toLocaleTimeString('vi-VN'),
-      level: 'success',
-      message: 'Kết nối cơ sở dữ liệu SQLite & Playlist Cache Service: OK.',
-    },
-  ]);
+  const [logs, setLogs] = useState<AdminLogEntry[]>([]);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logsConnected, setLogsConnected] = useState(false);
+  const [hasOlderLogs, setHasOlderLogs] = useState(false);
+  const [olderLogsLoading, setOlderLogsLoading] = useState(false);
+  const newestLogId = useRef(0);
+  const oldestLogId = useRef<number | null>(null);
   const [autoScrollLogs, setAutoScrollLogs] = useState(true);
   const [copiedLogs, setCopiedLogs] = useState(false);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
   const terminalLogsEndRef = useRef<HTMLDivElement>(null);
 
   // Movie table state
   const [moviesList, setMoviesList] = useState<MovieSummary[]>([]);
   const [moviesTotal, setMoviesTotal] = useState(0);
   const [moviesLoading, setMoviesLoading] = useState(false);
+  const [moviesError, setMoviesError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'cached' | 'uncached'>('all');
   const [clearingCacheSlug, setClearingCacheSlug] = useState<string | null>(null);
@@ -106,6 +139,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     return () => clearInterval(timer);
   }, []);
 
+  const MAX_LOG_ENTRIES = 200;
+
   // Helper to add log
   const addLog = (level: AdminLogEntry['level'], message: string) => {
     const newEntry: AdminLogEntry = {
@@ -114,13 +149,158 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       level,
       message,
     };
-    setLogs((prev) => [...prev.slice(-199), newEntry]);
+    setLogs((prev) => {
+      const next = [...prev, newEntry];
+      return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
+    });
   };
 
-  // Auto scroll logs
+  const mergeServerLogs = (incoming: AdminLogEntry[]) => {
+    const visible = incoming.filter((entry) => typeof entry.id === 'number');
+    if (visible.length === 0) return;
+    setLogs((previous) => {
+      const byId = new Map<string | number, AdminLogEntry>();
+      for (const log of previous) byId.set(log.id, log);
+      for (const log of visible) byId.set(log.id, log);
+      const sorted = [...byId.values()].sort((a, b) => {
+        if (typeof a.id === 'number' && typeof b.id === 'number') return a.id - b.id;
+        return typeof a.id === 'number' ? -1 : 1;
+      });
+      return sorted.length > MAX_LOG_ENTRIES ? sorted.slice(sorted.length - MAX_LOG_ENTRIES) : sorted;
+    });
+  };
+
   useEffect(() => {
-    if (autoScrollLogs && terminalLogsEndRef.current) {
-      terminalLogsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (!token) {
+      setLogs([]);
+      setLogsConnected(false);
+      return;
+    }
+    let active = true;
+    let polling = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    newestLogId.current = 0;
+    oldestLogId.current = null;
+    setLogs([]);
+    setLogsConnected(false);
+    setLogsError(null);
+    setHasOlderLogs(false);
+
+    const loadNew = async (initial: boolean) => {
+      if (!active || polling || document.hidden || document.visibilityState !== 'visible') return;
+      polling = true;
+      try {
+        let more = true;
+        let first = initial;
+        while (more && active) {
+          const url = first ? '/api/admin/logs?limit=100' : `/api/admin/logs?after_id=${newestLogId.current}&limit=500`;
+          const response = await adminFetch(url, { cache: 'no-store' });
+          if (response.status === 401 || response.status === 403) return;
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data: { logs: AdminLogEntry[]; has_more: boolean } = await response.json();
+          if (!active) return;
+          mergeServerLogs(data.logs);
+          for (const entry of data.logs) {
+            if (typeof entry.id !== 'number') continue;
+            newestLogId.current = Math.max(newestLogId.current, entry.id);
+            oldestLogId.current = Math.min(oldestLogId.current ?? entry.id, entry.id);
+          }
+          if (first) setHasOlderLogs(data.has_more);
+          more = !first && data.has_more && data.logs.length > 0;
+          first = false;
+        }
+        setLogsConnected(true);
+        setLogsError(null);
+      } catch (error) {
+        if (active) {
+          setLogsConnected(false);
+          setLogsError(error instanceof Error ? error.message : 'Không thể tải logs');
+        }
+      } finally {
+        polling = false;
+      }
+    };
+
+    const startPolling = (isInitial: boolean) => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      void loadNew(isInitial);
+      pollTimer = setInterval(() => {
+        if (document.hidden || document.visibilityState !== 'visible') return;
+        void loadNew(false);
+      }, 1500);
+    };
+
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden || document.visibilityState !== 'visible') {
+        stopPolling();
+      } else {
+        startPolling(false);
+      }
+    };
+
+    if (!document.hidden && document.visibilityState === 'visible') {
+      startPolling(true);
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [token, adminFetch]);
+
+  const loadOlderLogs = async () => {
+    if (!token || oldestLogId.current === null || olderLogsLoading) return;
+    setAutoScrollLogs(false);
+    setOlderLogsLoading(true);
+    try {
+      const response = await adminFetch(`/api/admin/logs?before_id=${oldestLogId.current}&limit=100`, { cache: 'no-store' });
+      if (response.status === 401 || response.status === 403) return;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data: { logs: AdminLogEntry[]; has_more: boolean } = await response.json();
+      mergeServerLogs(data.logs);
+      for (const entry of data.logs) if (typeof entry.id === 'number') oldestLogId.current = Math.min(oldestLogId.current ?? entry.id, entry.id);
+      setHasOlderLogs(data.has_more);
+      setLogsError(null);
+    } catch (error) {
+      setLogsError(error instanceof Error ? error.message : 'Không thể tải logs cũ');
+    } finally {
+      setOlderLogsLoading(false);
+    }
+  };
+
+  const exportLogs = async () => {
+    if (!token) return;
+    try {
+      const response = await adminFetch('/api/admin/logs/export', { cache: 'no-store' });
+      if (response.status === 401 || response.status === 403) return;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'admin-task-logs.jsonl';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setLogsError(error instanceof Error ? error.message : 'Không thể xuất logs');
+    }
+  };
+
+  // Auto scroll logs inside container without scrolling window/viewport
+  useEffect(() => {
+    if (autoScrollLogs && logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
   }, [logs, autoScrollLogs]);
 
@@ -194,12 +374,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const fetchStats = async () => {
     setStatsLoading(true);
     try {
-      const res = await fetch('/api/admin/stats', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await adminFetch('/api/admin/stats');
+      if (res.status === 401 || res.status === 403) return;
       if (res.ok) {
         const data: AdminStats = await res.json();
-        setStats(data);
+        setStats((prev) => ({
+          ...prev,
+          ...data,
+          catalog_rows: data.catalog_rows ?? data.total_movies ?? 0,
+          detail_rows: data.detail_rows ?? 0,
+          crawler_auto_enabled:
+            data.crawler_auto_enabled !== undefined
+              ? data.crawler_auto_enabled
+              : prev.crawler_auto_enabled ?? false,
+          total_source_movies: data.total_source_movies ?? prev.total_source_movies ?? 0,
+          remaining_movies:
+            data.remaining_movies !== undefined
+              ? data.remaining_movies
+              : Math.max(0, (data.total_source_movies ?? prev.total_source_movies ?? 0) - (data.catalog_rows ?? data.total_movies ?? 0)),
+        }));
       }
     } catch {
       // Keep existing stats silently on error
@@ -208,7 +401,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
   };
 
-  // Fetch Movies list
+  // Format bytes helper for storage card
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Fetch Movies list via internal admin endpoint
   const fetchMovies = async (
     page = currentPage,
     limit = pageSize,
@@ -216,6 +418,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     type = filterType
   ) => {
     setMoviesLoading(true);
+    setMoviesError(null);
     try {
       const params = new URLSearchParams();
       params.set('page', String(page));
@@ -227,14 +430,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         params.set('type', type);
       }
 
-      const res = await fetch(`/api/movies?${params.toString()}`);
-      if (res.ok) {
-        const data: MoviesResponse = await res.json();
-        setMoviesList(data.movies || []);
-        setMoviesTotal(data.total || 0);
+      const res = await adminFetch(`/api/admin/movies?${params.toString()}`);
+      if (res.status === 401 || res.status === 403) {
+        // Token expired/invalid, adminFetch has already triggered handleAuthExpired()
+        return;
       }
-    } catch (err) {
+      if (res.ok) {
+        const data = await res.json();
+        const rawMovies: any[] = data.movies || data.items || [];
+        const normalizedMovies: MovieSummary[] = rawMovies.map((m) => ({
+          ...m,
+          name: m.name || m.title_vi || '',
+          title_vi: m.title_vi || m.name || '',
+          original_name: m.original_name || m.title_en || '',
+          title_en: m.title_en || m.original_name || '',
+          poster: m.poster || m.poster_url || m.thumb_url || '',
+          movie_type: m.movie_type || (m.total_episodes && Number(m.total_episodes) > 1 ? 'tv' : 'movie'),
+          has_cached_m3u8: Boolean(m.has_cached_m3u8),
+        }));
+        setMoviesList(normalizedMovies);
+        setMoviesTotal(data.total || data.paginate?.total_items || normalizedMovies.length);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errorMsg =
+          errData.message ||
+          errData.error ||
+          `Máy chủ trả về mã lỗi ${res.status} (${res.statusText || 'Lỗi kết nối'})`;
+        setMoviesError(errorMsg);
+        addLog('error', `Lỗi tải danh sách phim từ /api/admin/movies: ${errorMsg}`);
+      }
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Không thể kết nối máy chủ để tải danh sách phim';
+      setMoviesError(errorMsg);
       console.error('Failed to load movies list:', err);
+      addLog('error', `Lỗi kết nối máy chủ: ${errorMsg}`);
     } finally {
       setMoviesLoading(false);
     }
@@ -270,16 +499,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   useEffect(() => {
     if (!token) return;
 
-    fetchStats();
+    const pollInterval = stats.crawler_is_running ? 2000 : stats.crawler_auto_enabled ? 4000 : 8000;
+    let timer: ReturnType<typeof setInterval> | null = null;
 
-    // Poll stats frequently if crawler is active, or periodically when idle
-    const pollInterval = stats.crawler_is_running ? 2000 : 8000;
-    const interval = setInterval(() => {
+    const startPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
       fetchStats();
-    }, pollInterval);
+      timer = setInterval(() => {
+        if (document.hidden || document.visibilityState !== 'visible') return;
+        fetchStats();
+      }, pollInterval);
+    };
 
-    return () => clearInterval(interval);
-  }, [token, stats.crawler_is_running]);
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden || document.visibilityState !== 'visible') {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+    };
+
+    if (!document.hidden && document.visibilityState === 'visible') {
+      startPolling();
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [token, stats.crawler_is_running, stats.crawler_auto_enabled]);
 
   // Re-fetch movies when search, filter, page or pageSize changes
   useEffect(() => {
@@ -294,24 +554,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const handleStartFullCrawl = async () => {
     setConfirmModalOpen(false);
     setActionLoading('start_full');
-    addLog('info', 'Lệnh: Bắt đầu Crawl Toàn Bộ 3,211 phim được gửi...');
+    const remainingCount =
+      stats.remaining_movies !== undefined
+        ? stats.remaining_movies
+        : Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies));
+    const countText = remainingCount > 0 ? `${remainingCount.toLocaleString()} phim còn lại ` : '';
+    addLog('info', `Lệnh: Bắt đầu Crawl Mở Rộng ${countText}(tổng kho phim ${(stats.total_source_movies ?? 0).toLocaleString()} phim)...`);
 
     try {
-      const res = await fetch('/api/admin/crawler/start', {
+      const res = await adminFetch('/api/admin/crawler/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
       });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        addLog('success', data.message || 'Đã kích hoạt quét toàn bộ kho phim thành công.');
-        showToast('🚀 Đã bắt đầu quét toàn bộ 3,211 phim!');
+      if (res.ok && data.success !== false) {
+        addLog('success', data.message || 'Đã kích hoạt quét tự động mở rộng toàn bộ kho phim thành công.');
+        showToast(`🚀 Đã kích hoạt cào dữ liệu mở rộng ${countText}!`);
+        setStats((s) => ({ ...s, crawler_is_running: data.is_running === true, crawler_auto_enabled: data.auto_enabled === true }));
       } else {
-        addLog('warn', data.message || 'Không thể bắt đầu crawl.');
+        const errorMsg = data.message || data.error || 'Không thể bắt đầu crawl.';
+        addLog('warn', errorMsg);
+        showToast(`⚠️ ${errorMsg}`);
       }
-      setStats((s) => ({ ...s, crawler_is_running: true, crawler_progress_percent: 5 }));
       fetchStats();
     } catch (e: any) {
       addLog('error', `Lỗi khi kích hoạt crawler: ${e.message || 'Network error'}`);
@@ -326,14 +593,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     addLog('info', 'Lệnh: Quét Cập Nhật Phim Mới & Tập Mới...');
 
     try {
-      const res = await fetch('/api/admin/crawler/update', {
+      const res = await adminFetch('/api/admin/crawler/update', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
       });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success !== true) throw new Error(data.message || data.error || 'Không thể bắt đầu cập nhật');
       addLog('success', data.message || 'Đang quét cập nhật các phim mới.');
       showToast('🔄 Đang quét cập nhật phim mới!');
       fetchStats();
@@ -345,23 +613,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   };
 
   const handleWarmupCache = async () => {
-    setActionLoading('warmup');
-    addLog('info', 'Lệnh: Làm Nóng Cache Phim Hot (Top 20 phim thịnh hành)...');
+    handleTriggerMode('stage3_m3u8', 'Làm nóng cache M3U8 (Stage 3 Scanner)');
+  };
+
+  const handleTriggerMode = async (mode: string, label: string) => {
+    setActionLoading(mode);
+    addLog('info', `Lệnh: ${label}...`);
 
     try {
-      const res = await fetch('/api/admin/crawler/warmup', {
+      const res = await adminFetch('/api/admin/crawler/trigger', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({ mode }),
       });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json().catch(() => ({}));
-      addLog('success', data.message || 'Đã gửi yêu cầu làm nóng cache.');
-      showToast('🔥 Đang nạp trước cache M3U8 cho phim hot!');
+      if (!res.ok || data.success !== true) throw new Error(data.message || data.error || `Không thể bắt đầu ${label}`);
+      addLog('success', data.message || `Đã kích hoạt ${label}.`);
+      showToast(`🚀 ${label} đang chạy!`);
       fetchStats();
     } catch (e: any) {
-      addLog('error', `Lỗi làm nóng cache: ${e.message}`);
+      addLog('error', `Lỗi ${label}: ${e.message}`);
     } finally {
       setActionLoading(null);
     }
@@ -372,17 +646,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     addLog('warn', 'Lệnh: Yêu cầu Dừng Tiến Trình Crawler...');
 
     try {
-      const res = await fetch('/api/admin/crawler/stop', {
+      const res = await adminFetch('/api/admin/crawler/stop', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
       });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success !== true) throw new Error(data.message || data.error || 'Không thể dừng crawler');
       addLog('info', data.message || 'Đã gửi tín hiệu dừng crawler.');
       showToast('🛑 Đã yêu cầu dừng crawler');
-      setStats((s) => ({ ...s, crawler_is_running: false }));
+      setStats((s) => ({ ...s, crawler_is_running: data.is_running === true, crawler_auto_enabled: false }));
       fetchStats();
     } catch (e: any) {
       addLog('error', `Lỗi dừng crawler: ${e.message}`);
@@ -396,13 +671,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     addLog('info', `Đang xóa cache M3U8 của phim: ${slug}...`);
 
     try {
-      const res = await fetch(`/api/admin/cache/clear/${slug}`, {
+      const res = await adminFetch(`/api/admin/cache/clear/${slug}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
       });
+      if (res.status === 401 || res.status === 403) return;
       const data = await res.json().catch(() => ({}));
       addLog('success', data.message || `Đã xóa sạch cache M3U8 của ${slug}`);
       showToast(`🗑️ Đã xóa cache M3U8: ${slug}`);
@@ -414,11 +689,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
   };
 
-  const handleCopyLogs = () => {
+  const handleCopyLogs = async () => {
     const text = logs.map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopiedLogs(true);
-    setTimeout(() => setCopiedLogs(false), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedLogs(true);
+      setTimeout(() => setCopiedLogs(false), 2000);
+    } catch {
+      setLogsError('Không thể sao chép logs đã tải');
+    }
   };
 
   // Filtered movies
@@ -469,7 +748,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 height: '68px',
                 margin: '0 auto 16px',
                 borderRadius: '18px',
-                background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.2), rgba(245, 197, 24, 0.2))',
+                background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.25), rgba(132, 204, 22, 0.2))',
                 border: '1px solid rgba(174, 234, 0, 0.4)',
                 display: 'flex',
                 alignItems: 'center',
@@ -559,7 +838,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     outline: 'none',
                     transition: 'border-color 0.2s',
                   }}
-                  onFocus={(e) => (e.target.style.borderColor = '#f5c518')}
+                  onFocus={(e) => (e.target.style.borderColor = '#84cc16')}
                   onBlur={(e) => (e.target.style.borderColor = 'rgba(255, 255, 255, 0.15)')}
                 />
                 <button
@@ -652,12 +931,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     <div
       style={{
         minHeight: '100vh',
+        width: '100%',
+        maxWidth: '100vw',
         background: '#090b10',
         color: '#e2e8f0',
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
         paddingBottom: '60px',
       }}
     >
+      <style>{`
+        @media (max-width: 640px) {
+          .admin-dashboard-header { height: auto !important; min-height: 64px; flex-wrap: wrap; gap: 10px; padding: 10px 16px !important; }
+          .admin-dashboard-header-left, .admin-dashboard-header-right { min-width: 0; flex-wrap: wrap; }
+          .admin-dashboard-header-right { width: 100%; justify-content: space-between; gap: 8px !important; }
+          .admin-dashboard-header-live, .admin-dashboard-header-clock { display: none !important; }
+          .admin-dashboard-main { padding: 0 16px !important; }
+          .admin-dashboard-title, .admin-dashboard-progress-head { flex-wrap: wrap; gap: 12px; }
+          .admin-dashboard-terminal-bar { height: auto !important; min-height: 40px; flex-wrap: wrap; gap: 6px; padding: 8px 12px !important; }
+          .admin-dashboard-terminal-bar > div:first-child { min-width: 0; max-width: 100%; }
+          .admin-dashboard-terminal-label { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        }
+      `}</style>
       {/* Toast Notification Banner */}
       {toastMessage && (
         <div
@@ -667,7 +961,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             right: '24px',
             zIndex: 9999,
             background: 'rgba(20, 24, 38, 0.95)',
-            border: '1px solid rgba(245, 197, 24, 0.5)',
+            border: '1px solid rgba(132, 204, 22, 0.3)',
             borderRadius: '10px',
             padding: '12px 20px',
             boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6)',
@@ -688,6 +982,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
       {/* Top Navbar */}
       <header
+        className="admin-dashboard-header"
         style={{
           height: '64px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
@@ -702,7 +997,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           padding: '0 28px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="admin-dashboard-header-left" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div
             style={{
               display: 'flex',
@@ -742,6 +1037,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
           {/* Live indicator */}
           <div
+            className="admin-dashboard-header-live"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -769,8 +1065,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         </div>
 
         {/* Right Nav actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="admin-dashboard-header-right" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div
+            className="admin-dashboard-header-clock"
             style={{
               fontSize: '13px',
               color: '#8b95ad',
@@ -841,9 +1138,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       </header>
 
       {/* Main Container */}
-      <main style={{ maxWidth: '1320px', margin: '28px auto 0', padding: '0 24px' }}>
+      <main className="admin-dashboard-main" style={{ maxWidth: '1320px', minWidth: 0, margin: '28px auto 0', padding: '0 24px' }}>
         {/* Title & Refresh */}
         <div
+          className="admin-dashboard-title"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -891,7 +1189,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
             gap: '16px',
             marginBottom: '24px',
           }}
@@ -912,27 +1210,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <span style={{ fontSize: '13px', fontWeight: 600, color: '#8b95ad', textTransform: 'uppercase' }}>
                 Tổng Số Phim
               </span>
-              <div
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '10px',
-                  background: 'rgba(56, 189, 248, 0.12)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Film size={20} color="#38bdf8" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '3px 8px',
+                    borderRadius: '20px',
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    color: '#38bdf8',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {stats.total_source_movies ? Math.min(100, (((stats.catalog_rows ?? stats.total_movies) / stats.total_source_movies) * 100)).toFixed(1) : '0.0'}% tổng kho phim
+                </span>
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '10px',
+                    background: 'rgba(56, 189, 248, 0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Film size={20} color="#38bdf8" />
+                </div>
               </div>
             </div>
-            <div style={{ fontSize: '30px', fontWeight: 800, color: '#fff', lineHeight: 1 }}>
-              {stats.total_movies.toLocaleString()}
+            <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff', lineHeight: 1.2 }}>
+              Catalog: {(stats.catalog_rows ?? stats.total_movies).toLocaleString()} / {(stats.total_source_movies ?? 0).toLocaleString()} phim
             </div>
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8', display: 'flex', gap: '8px' }}>
-              <span>Phim lẻ: <strong>{stats.total_single.toLocaleString()}</strong></span>
-              <span>•</span>
-              <span>Phim bộ: <strong>{stats.total_series.toLocaleString()}</strong></span>
+            <div style={{ marginTop: '6px', fontSize: '13px', fontWeight: 700, color: '#38bdf8' }}>
+              Đủ chi tiết / tập: {(stats.detail_rows ?? 0).toLocaleString()} phim ({stats.total_source_movies ? Math.min(100, ((stats.detail_rows ?? 0) / stats.total_source_movies) * 100).toFixed(1) : '0.0'}% bao phủ)
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '12px', color: '#94a3b8' }}>
+              Phim lẻ: {stats.total_single.toLocaleString()} • Phim bộ: {stats.total_series.toLocaleString()}
+            </div>
+            <div style={{ marginTop: '6px', fontSize: '13px', fontWeight: 700, color: '#a3e635' }}>
+              {(stats.remaining_movies ?? Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies))) === 0
+                ? 'Còn lại chưa có catalog: 0 phim (Đã bao phủ 100% tổng kho phim)'
+                : `Còn lại chưa có catalog: ${(stats.remaining_movies ?? Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies))).toLocaleString()} phim`}
             </div>
           </div>
 
@@ -948,32 +1268,74 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
               <span style={{ fontSize: '13px', fontWeight: 600, color: '#8b95ad', textTransform: 'uppercase' }}>
-                Đã Cache M3U8 Siêu Tốc
+                Playlist cache trong SQLite
               </span>
               <div
                 style={{
                   width: '36px',
                   height: '36px',
                   borderRadius: '10px',
-                  background: 'rgba(245, 197, 24, 0.12)',
+                  background: 'rgba(132, 204, 22, 0.15)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Zap size={20} color="#f5c518" />
+                <Zap size={20} color="#a3e635" />
               </div>
             </div>
-            <div style={{ fontSize: '30px', fontWeight: 800, color: '#f5c518', lineHeight: 1 }}>
+            <div style={{ fontSize: '30px', fontWeight: 800, color: '#a3e635', lineHeight: 1 }}>
               {stats.cached_m3u8_count.toLocaleString()}
             </div>
             <div style={{ marginTop: '10px', fontSize: '12px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <CheckCircle2 size={13} />
-              <span>Sẵn sàng phát 4K tức thì (&lt; 10ms)</span>
+              <span>Số mục bắt đầu bằng #EXTM3U; chưa xác minh phát lại hoặc chất lượng 4K.</span>
             </div>
           </div>
 
-          {/* Card 3: Crawler Status */}
+          {/* Card 3: Storage / Disk Usage */}
+          <div
+            style={{
+              background: 'rgba(20, 24, 38, 0.7)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '14px',
+              padding: '20px 22px',
+              backdropFilter: 'blur(10px)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#8b95ad', textTransform: 'uppercase' }}>
+                Dung Lượng Đĩa
+              </span>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: 'rgba(132, 204, 22, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <HardDrive size={20} color="#a3e635" />
+              </div>
+            </div>
+            <div style={{ fontSize: '30px', fontWeight: 800, color: '#fff', lineHeight: 1 }}>
+              {stats.disk_usage?.human_readable || '0 B'}
+            </div>
+            <div style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8' }}>
+              {stats.disk_usage?.playlists_bytes !== undefined && stats.disk_usage?.database_bytes !== undefined ? (
+                <span>
+                  Cache: <strong style={{ color: '#a3e635' }}>{formatBytes(stats.disk_usage.playlists_bytes)}</strong> • DB:{' '}
+                  <strong style={{ color: '#cbd5e1' }}>{formatBytes(stats.disk_usage.database_bytes)}</strong>
+                </span>
+              ) : (
+                'Playlist Cache & SQLite Database'
+              )}
+            </div>
+          </div>
+
+          {/* Card 4: Crawler Status */}
           <div
             style={{
               background: 'rgba(20, 24, 38, 0.7)',
@@ -1011,16 +1373,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   boxShadow: stats.crawler_is_running ? '0 0 12px #10b981' : 'none',
                 }}
               />
-              <div style={{ fontSize: '26px', fontWeight: 800, color: stats.crawler_is_running ? '#10b981' : '#fff' }}>
-                {stats.crawler_is_running ? 'Đang Hoạt Động' : 'Chế Độ Nghỉ'}
+              <div style={{ fontSize: '17px', fontWeight: 800, color: stats.crawler_is_running ? '#10b981' : '#fff', lineHeight: 1.2 }}>
+                {crawlerStatusLabel(stats.crawler_is_running, Boolean(stats.crawler_auto_enabled))}
               </div>
             </div>
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {stats.crawler_last_status || 'Hệ thống tự động sẵn sàng'}
+            <div style={{ marginTop: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setConfirmModalOpen(true)}
+                disabled={actionLoading !== null || stats.crawler_is_running || stats.crawler_auto_enabled}
+                title={stats.crawler_is_running ? 'Crawler đang chạy, vui lòng đợi...' : stats.crawler_auto_enabled ? 'Chế độ tự động đã bật' : 'Kích hoạt crawler'}
+                style={{
+                  width: '100%',
+                  background: stats.crawler_is_running ? 'rgba(255, 255, 255, 0.05)' : 'rgba(16, 185, 129, 0.12)',
+                  border: `1px solid ${stats.crawler_is_running ? 'rgba(255, 255, 255, 0.1)' : 'rgba(16, 185, 129, 0.3)'}`,
+                  color: stats.crawler_is_running ? '#94a3b8' : '#10b981',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: (stats.crawler_is_running || stats.crawler_auto_enabled) ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {stats.crawler_is_running ? (
+                  <>
+                    <Lock size={12} />
+                    <span>Crawler đang chạy, vui lòng đợi...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={11} fill="currentColor" />
+                    <span>{stats.crawler_auto_enabled ? 'Đã bật tự động' : 'Kích hoạt cào dữ liệu'}</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
 
-          {/* Card 4: Last Run */}
+          {/* Card 5: Last Run */}
           <div
             style={{
               background: 'rgba(20, 24, 38, 0.7)',
@@ -1048,104 +1446,133 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <Clock size={20} color="#a855f7" />
               </div>
             </div>
-            <div style={{ fontSize: '20px', fontWeight: 700, color: '#fff', lineHeight: 1.3, marginBottom: '6px' }}>
-              {stats.crawler_last_run ? stats.crawler_last_run.substring(0, 19).replace('T', ' ') : 'Vừa xong'}
+            <div style={{ fontSize: '19px', fontWeight: 700, color: '#fff', lineHeight: 1.3, marginBottom: '6px' }}>
+              {stats.crawler_last_run && stats.crawler_last_run.trim()
+                ? stats.crawler_last_run.substring(0, 19).replace('T', ' ')
+                : 'Chưa chạy'}
             </div>
             <div style={{ fontSize: '12px', color: '#94a3b8' }}>
               {stats.crawler_processed > 0
-                ? `Đã xử lý ${stats.crawler_processed.toLocaleString()} phim`
+                ? `Vị trí/đã duyệt ${stats.crawler_processed.toLocaleString()} phim`
                 : 'Chu kỳ đồng bộ tự động mỗi 6 giờ'}
             </div>
           </div>
         </div>
 
         {/* 2. Dynamic Progress Bar */}
-        <div
-          style={{
-            background: 'rgba(20, 24, 38, 0.7)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: '14px',
-            padding: '20px 24px',
-            marginBottom: '24px',
-            backdropFilter: 'blur(10px)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
-                Tiến Trình Crawler Master Database
-              </span>
-              {stats.crawler_is_running ? (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '2px 8px',
-                    background: 'rgba(174, 234, 0, 0.15)',
-                    color: '#aeea00',
-                    borderRadius: '12px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                  }}
-                >
-                  <Loader2 size={12} className="animate-spin" />
-                  Đang đồng bộ...
-                </span>
-              ) : (
-                <span
-                  style={{
-                    padding: '2px 8px',
-                    background: 'rgba(16, 185, 129, 0.15)',
-                    color: '#10b981',
-                    borderRadius: '12px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                  }}
-                >
-                  Hoàn tất 100%
-                </span>
-              )}
-            </div>
+        {(() => {
+          const crawlerPercent =
+            stats.crawler_percent !== undefined ? stats.crawler_percent : (stats.crawler_progress_percent ?? 0);
+          const totalDiscoveredCount = stats.crawler_total_discovered ?? stats.crawler_total ?? 0;
+          const totalDiscoveredStr = totalDiscoveredCount > 0 ? totalDiscoveredCount.toLocaleString() : '0';
 
-            <div style={{ fontSize: '13px', color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
-              <strong style={{ color: '#fff' }}>
-                {stats.crawler_processed.toLocaleString()} / {stats.crawler_total ? stats.crawler_total.toLocaleString() : '3,211'}
-              </strong>{' '}
-              phim ({Math.round(stats.crawler_progress_percent)}%)
-            </div>
-          </div>
-
-          {/* Progress Bar Track */}
-          <div
-            style={{
-              width: '100%',
-              height: '10px',
-              background: 'rgba(10, 14, 23, 0.8)',
-              borderRadius: '6px',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
+          return (
             <div
               style={{
-                width: `${Math.min(100, Math.max(2, stats.crawler_progress_percent))}%`,
-                height: '100%',
-                background: 'linear-gradient(90deg, #aeea00, #84cc16)',
-                borderRadius: '6px',
-                transition: 'width 0.4s ease-out',
-                boxShadow: stats.crawler_is_running ? '0 0 12px rgba(174, 234, 0, 0.5)' : 'none',
+                background: 'rgba(20, 24, 38, 0.7)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '14px',
+                padding: '20px 24px',
+                marginBottom: '24px',
+                backdropFilter: 'blur(10px)',
               }}
-            />
-          </div>
+            >
+              <div className="admin-dashboard-progress-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
+                    Tiến Trình Job Crawler
+                  </span>
+                  {stats.crawler_is_running ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 8px',
+                        background: 'rgba(132, 204, 22, 0.15)',
+                        color: '#a3e635',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid rgba(132, 204, 22, 0.3)',
+                      }}
+                    >
+                      <Loader2 size={12} className="animate-spin" />
+                      Đang đồng bộ...
+                    </span>
+                  ) : crawlerPercent >= 100 ? (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        color: '#10b981',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid rgba(16, 185, 129, 0.25)',
+                      }}
+                    >
+                      Hoàn tất 100%
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        background: crawlerPercent > 0 ? 'rgba(234, 179, 8, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+                        color: crawlerPercent > 0 ? '#facc15' : '#94a3b8',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: `1px solid ${
+                          crawlerPercent > 0 ? 'rgba(234, 179, 8, 0.3)' : 'rgba(148, 163, 184, 0.25)'
+                        }`,
+                      }}
+                    >
+                      {crawlerPercent > 0 ? `Tạm dừng (${Math.round(crawlerPercent)}%)` : (stats.crawler_last_status || 'Sẵn sàng')}
+                    </span>
+                  )}
+                </div>
 
-          {stats.crawler_is_running && stats.crawler_current_movie && (
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#8b95ad', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Radio size={14} color="#aeea00" className="animate-pulse" />
-              <span>Đang xử lý phim: <code style={{ color: '#aeea00' }}>{stats.crawler_current_movie}</code></span>
+                <div style={{ fontSize: '13px', color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
+                  <strong style={{ color: '#fff' }}>
+                  {stats.crawler_processed.toLocaleString()} / {totalDiscoveredStr}
+                  </strong>{' '}
+                  phim ({Math.round(crawlerPercent)}%)
+                </div>
+              </div>
+
+              {/* Progress Bar Track */}
+              <div
+                style={{
+                  width: '100%',
+                  height: '10px',
+                  background: 'rgba(10, 14, 23, 0.8)',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.min(100, Math.max(crawlerPercent > 0 ? 2 : 0, crawlerPercent))}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #aeea00, #84cc16)',
+                    borderRadius: '6px',
+                    transition: 'width 0.4s ease-out',
+                    boxShadow: stats.crawler_is_running ? '0 0 12px rgba(174, 234, 0, 0.5)' : 'none',
+                  }}
+                />
+              </div>
+
+              {stats.crawler_is_running && stats.crawler_current_movie && (
+                <div style={{ marginTop: '10px', fontSize: '12px', color: '#8b95ad', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Radio size={14} color="#aeea00" className="animate-pulse" />
+                  <span>Đang xử lý phim: <code style={{ color: '#aeea00' }}>{stats.crawler_current_movie}</code></span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* 3. Action Control Cluster */}
         <div
@@ -1167,72 +1594,174 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             <button
               type="button"
               onClick={() => setConfirmModalOpen(true)}
-              disabled={actionLoading !== null || stats.crawler_is_running}
+              disabled={actionLoading !== null || stats.crawler_is_running || stats.crawler_auto_enabled}
+              title={stats.crawler_is_running ? 'Crawler đang chạy, vui lòng đợi...' : stats.crawler_auto_enabled ? 'Chế độ tự động đã bật' : undefined}
               style={{
-                background: stats.crawler_is_running
+                background: (stats.crawler_is_running || stats.crawler_auto_enabled)
                   ? 'rgba(255, 255, 255, 0.05)'
                   : 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
                 border: 'none',
-                color: stats.crawler_is_running ? '#64748b' : '#070e08',
+                color: (stats.crawler_is_running || stats.crawler_auto_enabled) ? '#64748b' : '#070e08',
                 padding: '11px 20px',
                 borderRadius: '10px',
                 fontSize: '13px',
                 fontWeight: 700,
-                cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
+                cursor: (stats.crawler_is_running || stats.crawler_auto_enabled) ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: stats.crawler_is_running ? 'none' : '0 4px 16px rgba(174, 234, 0, 0.35)',
+                boxShadow: (stats.crawler_is_running || stats.crawler_auto_enabled) ? 'none' : '0 4px 16px rgba(174, 234, 0, 0.35)',
                 transition: 'all 0.2s',
               }}
             >
               {actionLoading === 'start_full' ? (
                 <Loader2 size={16} className="animate-spin" />
+              ) : stats.crawler_is_running ? (
+                <Lock size={16} />
               ) : (
                 <Play size={16} fill="currentColor" />
               )}
-              <span>Bắt đầu Crawl Toàn Bộ (3,211 phim)</span>
+              <span>
+                {stats.crawler_is_running
+                  ? 'Crawler đang chạy, vui lòng đợi...'
+                  : stats.crawler_auto_enabled
+                  ? 'Đã bật tự động, chờ đợt tiếp theo'
+                  : `Cào tự động phim còn lại (${(stats.remaining_movies ?? 0).toLocaleString()} phim)`}
+              </span>
+            </button>
+
+            {/* Stage 1: Catalog Sync */}
+            <button
+              type="button"
+              onClick={() => handleTriggerMode('stage1_catalog', 'Stage 1: Đồng bộ Catalog')}
+              disabled={actionLoading !== null || stats.crawler_is_running}
+              style={{
+                background: stats.crawler_is_running ? 'rgba(255, 255, 255, 0.04)' : 'rgba(168, 85, 247, 0.15)',
+                border: `1px solid ${stats.crawler_is_running ? 'rgba(255, 255, 255, 0.08)' : 'rgba(168, 85, 247, 0.4)'}`,
+                color: stats.crawler_is_running ? '#64748b' : '#c084fc',
+                padding: '11px 18px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+              }}
+            >
+              {actionLoading === 'stage1_catalog' ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <HardDrive size={16} />
+              )}
+              <span>Stage 1: Đồng bộ Catalog</span>
+            </button>
+
+            {/* Stage 2: Detail Sync */}
+            <button
+              type="button"
+              onClick={() => handleTriggerMode('stage2_detail', 'Stage 2: Cào Chi Tiết')}
+              disabled={actionLoading !== null || stats.crawler_is_running}
+              style={{
+                background: stats.crawler_is_running ? 'rgba(255, 255, 255, 0.04)' : 'rgba(56, 189, 248, 0.15)',
+                border: `1px solid ${stats.crawler_is_running ? 'rgba(255, 255, 255, 0.08)' : 'rgba(56, 189, 248, 0.4)'}`,
+                color: stats.crawler_is_running ? '#64748b' : '#38bdf8',
+                padding: '11px 18px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+              }}
+            >
+              {actionLoading === 'stage2_detail' ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Zap size={16} />
+              )}
+              <span>Stage 2: Cào Chi Tiết Đồng Thời</span>
+            </button>
+
+            {/* Stage 3: M3U8 Scanner */}
+            <button
+              type="button"
+              onClick={() => handleTriggerMode('stage3_m3u8', 'Stage 3: Quét Cache M3U8')}
+              disabled={actionLoading !== null || stats.crawler_is_running}
+              style={{
+                background: 'rgba(132, 204, 22, 0.15)',
+                border: '1px solid rgba(132, 204, 22, 0.4)',
+                color: '#a3e635',
+                padding: '11px 18px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+              }}
+            >
+              {actionLoading === 'stage3_m3u8' || actionLoading === 'warmup' ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Flame size={16} />
+              )}
+              <span>Stage 3: Quét Cache M3U8</span>
             </button>
 
             {/* Action 2: Update Crawl */}
             <button
               type="button"
               onClick={handleUpdateCrawl}
-              disabled={actionLoading !== null}
+              disabled={actionLoading !== null || stats.crawler_is_running}
+              title={stats.crawler_is_running ? 'Crawler đang chạy, vui lòng đợi...' : undefined}
               style={{
-                background: 'rgba(56, 189, 248, 0.1)',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                color: '#38bdf8',
+                background: stats.crawler_is_running ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${stats.crawler_is_running ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.2)'}`,
+                color: stats.crawler_is_running ? '#64748b' : '#e2e8f0',
                 padding: '11px 18px',
                 borderRadius: '10px',
                 fontSize: '13px',
                 fontWeight: 600,
-                cursor: 'pointer',
+                cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
                 transition: 'all 0.2s',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(56, 189, 248, 0.2)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(56, 189, 248, 0.1)')}
+              onMouseEnter={(e) => {
+                if (!stats.crawler_is_running) e.currentTarget.style.background = 'rgba(56, 189, 248, 0.2)';
+              }}
+              onMouseLeave={(e) => {
+                if (!stats.crawler_is_running) e.currentTarget.style.background = 'rgba(56, 189, 248, 0.1)';
+              }}
             >
               {actionLoading === 'update' ? (
                 <Loader2 size={16} className="animate-spin" />
+              ) : stats.crawler_is_running ? (
+                <Lock size={16} />
               ) : (
                 <RefreshCw size={16} />
               )}
-              <span>Quét Cập Nhật Phim Mới</span>
+              <span>
+                {stats.crawler_is_running ? 'Crawler đang chạy, vui lòng đợi...' : 'Quét Cập Nhật Phim Mới'}
+              </span>
             </button>
 
             {/* Action 3: Warmup Hot Cache */}
             <button
               type="button"
               onClick={handleWarmupCache}
-              disabled={actionLoading !== null}
+              disabled={actionLoading !== null || stats.crawler_is_running}
               style={{
-                background: 'rgba(245, 197, 24, 0.1)',
-                border: '1px solid rgba(245, 197, 24, 0.3)',
-                color: '#f5c518',
+                background: 'rgba(132, 204, 22, 0.12)',
+                border: '1px solid rgba(132, 204, 22, 0.3)',
+                color: '#a3e635',
                 padding: '11px 18px',
                 borderRadius: '10px',
                 fontSize: '13px',
@@ -1243,31 +1772,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 gap: '8px',
                 transition: 'all 0.2s',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245, 197, 24, 0.2)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(245, 197, 24, 0.1)')}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(132, 204, 22, 0.22)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(132, 204, 22, 0.12)')}
             >
               {actionLoading === 'warmup' ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
                 <Flame size={16} />
               )}
-              <span>Làm Nóng Cache Phim Hot</span>
+              <span>Nạp Trước Dữ Liệu Phim Hot</span>
             </button>
 
             {/* Action 4: Stop Crawler */}
             <button
               type="button"
               onClick={handleStopCrawler}
-              disabled={actionLoading !== null || !stats.crawler_is_running}
+              disabled={actionLoading !== null || (!stats.crawler_is_running && !stats.crawler_auto_enabled)}
               style={{
-                background: stats.crawler_is_running ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${stats.crawler_is_running ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
-                color: stats.crawler_is_running ? '#f87171' : '#64748b',
+                background: (stats.crawler_is_running || stats.crawler_auto_enabled) ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                border: `1px solid ${(stats.crawler_is_running || stats.crawler_auto_enabled) ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                color: (stats.crawler_is_running || stats.crawler_auto_enabled) ? '#f87171' : '#64748b',
                 padding: '11px 18px',
                 borderRadius: '10px',
                 fontSize: '13px',
                 fontWeight: 600,
-                cursor: stats.crawler_is_running ? 'pointer' : 'not-allowed',
+                cursor: (stats.crawler_is_running || stats.crawler_auto_enabled) ? 'pointer' : 'not-allowed',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
@@ -1279,7 +1808,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               ) : (
                 <Square size={16} />
               )}
-              <span>Dừng Crawler</span>
+              <span>{stats.crawler_auto_enabled ? 'Tắt tự động & Dừng' : 'Dừng Crawler'}</span>
             </button>
           </div>
         </div>
@@ -1297,6 +1826,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         >
           {/* Terminal Bar */}
           <div
+            className="admin-dashboard-terminal-bar"
             style={{
               height: '40px',
               background: '#0d111a',
@@ -1312,6 +1842,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <div style={{ width: '11px', height: '11px', borderRadius: '50%', background: '#ffbd2e' }} />
               <div style={{ width: '11px', height: '11px', borderRadius: '50%', background: '#27c93f' }} />
               <span
+                className="admin-dashboard-terminal-label"
                 style={{
                   marginLeft: '10px',
                   fontSize: '12px',
@@ -1319,7 +1850,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   color: '#8b95ad',
                 }}
               >
-                bofilm-crawler-daemon.log — bash — 80x24
+                Bơ Film admin task logs — server history
               </span>
             </div>
 
@@ -1344,7 +1875,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <button
                 type="button"
                 onClick={handleCopyLogs}
-                title="Sao chép toàn bộ logs"
+                title="Sao chép logs đã tải trên màn hình"
                 style={{
                   background: 'none',
                   border: 'none',
@@ -1358,13 +1889,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 }}
               >
                 {copiedLogs ? <Check size={14} /> : <Copy size={14} />}
-                <span>{copiedLogs ? 'Đã sao chép' : 'Copy'}</span>
+                <span>{copiedLogs ? 'Đã sao chép' : `Copy ${logs.length} đã tải`}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setLogs([])}
-                title="Xóa màn hình log"
+                onClick={() => { void exportLogs(); }}
+                title="Xuất toàn bộ lịch sử logs từ máy chủ"
                 style={{
                   background: 'none',
                   border: 'none',
@@ -1375,13 +1906,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   alignItems: 'center',
                 }}
               >
-                <Trash2 size={14} />
+                <Download size={14} />
+                <span style={{ fontSize: '11px' }}>Xuất tất cả</span>
               </button>
             </div>
           </div>
 
           {/* Terminal Body */}
           <div
+            ref={logsContainerRef}
             style={{
               padding: '16px 20px',
               fontFamily: 'JetBrains Mono, Menlo, Courier New, monospace',
@@ -1392,18 +1925,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               color: '#cbd5e1',
             }}
           >
+            <div style={{ color: logsError ? '#f87171' : logsConnected ? '#10b981' : '#94a3b8', marginBottom: '8px' }}>
+              {logsError ? `Mất kết nối logs: ${logsError}` : logsConnected ? '● Logs đã kết nối' : 'Đang kết nối logs...'}
+            </div>
+            {hasOlderLogs && (
+              <button type="button" onClick={() => { void loadOlderLogs(); }} disabled={olderLogsLoading}
+                style={{ color: '#38bdf8', background: 'none', border: 'none', cursor: 'pointer', marginBottom: '8px' }}>
+                {olderLogsLoading ? 'Đang tải...' : 'Tải logs cũ hơn'}
+              </button>
+            )}
             {logs.length === 0 ? (
               <div style={{ color: '#475569', fontStyle: 'italic' }}>Không có log ghi nhận...</div>
             ) : (
               logs.map((item) => {
                 let badgeColor = '#38bdf8';
                 if (item.level === 'success') badgeColor = '#10b981';
-                if (item.level === 'warn') badgeColor = '#f5c518';
+                if (item.level === 'warn') badgeColor = '#a3e635';
                 if (item.level === 'error') badgeColor = '#ef4444';
 
                 return (
                   <div key={item.id} style={{ marginBottom: '4px', wordBreak: 'break-all' }}>
-                    <span style={{ color: '#64748b', marginRight: '10px' }}>[{item.timestamp}]</span>
+                    <span style={{ color: '#64748b', marginRight: '10px' }}>[{typeof item.id === 'number' ? new Date(item.timestamp).toLocaleString('vi-VN') : item.timestamp}]</span>
                     <span
                       style={{
                         color: badgeColor,
@@ -1449,7 +1991,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 Quản Lý Danh Sách Phim & Cache M3U8
               </div>
               <div style={{ fontSize: '13px', color: '#8b95ad' }}>
-                Tổng cộng {moviesTotal.toLocaleString()} phim trong cơ sở dữ liệu
+                Tổng cộng {moviesTotal.toLocaleString()} dòng phim trong cơ sở dữ liệu (gồm phim chỉ có thông tin tóm tắt)
               </div>
             </div>
 
@@ -1470,9 +2012,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     setCurrentPage(1);
                   }}
                   style={{
-                    background: filterType === tab.id ? 'rgba(245, 197, 24, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                    border: `1px solid ${filterType === tab.id ? '#f5c518' : 'rgba(255, 255, 255, 0.1)'}`,
-                    color: filterType === tab.id ? '#f5c518' : '#cbd5e1',
+                    background: filterType === tab.id ? 'rgba(132, 204, 22, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${filterType === tab.id ? 'rgba(132, 204, 22, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+                    color: filterType === tab.id ? '#a3e635' : '#cbd5e1',
                     padding: '6px 14px',
                     borderRadius: '8px',
                     fontSize: '12px',
@@ -1523,8 +2065,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           {/* Movie List Table */}
           {moviesLoading ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: '#8b95ad' }}>
-              <Loader2 size={28} className="animate-spin" style={{ margin: '0 auto 12px' }} />
+              <Loader2 size={28} className="animate-spin" style={{ margin: '0 auto 12px', color: '#a3e635' }} />
               <div>Đang tải danh sách phim...</div>
+            </div>
+          ) : moviesError ? (
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '36px 20px',
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: '12px',
+                margin: '10px 0 20px',
+              }}
+            >
+              <AlertTriangle size={36} color="#ef4444" style={{ margin: '0 auto 12px' }} />
+              <div style={{ fontSize: '15px', fontWeight: 600, color: '#fca5a5', marginBottom: '6px' }}>
+                Không thể tải danh sách phim từ máy chủ
+              </div>
+              <p style={{ fontSize: '13px', color: '#f87171', margin: '0 0 16px', maxWidth: '480px', marginLeft: 'auto', marginRight: 'auto' }}>
+                {moviesError}
+              </p>
+              <button
+                type="button"
+                onClick={() => fetchMovies(currentPage, pageSize, searchQuery, filterType)}
+                style={{
+                  background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
+                  border: 'none',
+                  color: '#070e08',
+                  padding: '9px 20px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(174, 234, 0, 0.3)',
+                }}
+              >
+                <RefreshCw size={14} />
+                <span>Thử lại</span>
+              </button>
             </div>
           ) : filteredMovies.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b' }}>
@@ -1605,8 +2187,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                               borderRadius: '6px',
                               fontSize: '11px',
                               fontWeight: 600,
-                              background: m.movie_type === 'tv' ? 'rgba(56, 189, 248, 0.12)' : 'rgba(245, 197, 24, 0.12)',
-                              color: m.movie_type === 'tv' ? '#38bdf8' : '#f5c518',
+                              background: m.movie_type === 'tv' ? 'rgba(56, 189, 248, 0.12)' : 'rgba(132, 204, 22, 0.15)',
+                              color: m.movie_type === 'tv' ? '#38bdf8' : '#a3e635',
                               marginRight: '6px',
                             }}
                           >
@@ -1624,23 +2206,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
                         {/* Cache status */}
                         <td style={{ padding: '12px 14px' }}>
-                          <div
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              padding: '4px 10px',
-                              borderRadius: '20px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              background: 'rgba(16, 185, 129, 0.12)',
-                              color: '#10b981',
-                              border: '1px solid rgba(16, 185, 129, 0.25)',
-                            }}
-                          >
-                            <Zap size={12} />
-                            <span>4K Cache Sẵn Sàng</span>
-                          </div>
+                          {m.has_cached_m3u8 ? (
+                            <div
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '4px 10px',
+                                borderRadius: '20px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                background: 'rgba(132, 204, 22, 0.15)',
+                                color: '#a3e635',
+                                border: '1px solid rgba(132, 204, 22, 0.3)',
+                              }}
+                            >
+                              <Zap size={12} />
+                              <span>Có mục playlist cache</span>
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '4px 10px',
+                                borderRadius: '20px',
+                                fontSize: '11px',
+                                fontWeight: 500,
+                                background: 'rgba(148, 163, 184, 0.08)',
+                                color: '#94a3b8',
+                                border: '1px solid rgba(148, 163, 184, 0.18)',
+                              }}
+                            >
+                              <Square size={10} style={{ opacity: 0.6 }} />
+                              <span>Chưa có cache</span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Actions */}
@@ -1723,7 +2325,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <div style={{ color: '#cbd5e1' }}>
                   Hiển thị trang <span style={{ color: '#fff', fontWeight: 600 }}>{currentPage}</span> /{' '}
                   <span style={{ color: '#fff', fontWeight: 600 }}>{totalPages}</span> (Tổng cộng{' '}
-                  <span style={{ color: '#f5c518', fontWeight: 600 }}>{moviesTotal.toLocaleString()}</span> phim)
+                  <span style={{ color: '#a3e635', fontWeight: 600 }}>{moviesTotal.toLocaleString()}</span> phim)
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1819,9 +2421,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                         type="button"
                         onClick={() => setCurrentPage(Number(p))}
                         style={{
-                          background: isCurrent ? 'rgba(245, 197, 24, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                          border: `1px solid ${isCurrent ? '#f5c518' : 'rgba(255, 255, 255, 0.1)'}`,
-                          color: isCurrent ? '#f5c518' : '#cbd5e1',
+                          background: isCurrent ? 'rgba(132, 204, 22, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${isCurrent ? 'rgba(132, 204, 22, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+                          color: isCurrent ? '#a3e635' : '#cbd5e1',
                           borderRadius: '6px',
                           minWidth: '32px',
                           height: '32px',
@@ -1976,28 +2578,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   width: '44px',
                   height: '44px',
                   borderRadius: '12px',
-                  background: 'rgba(245, 197, 24, 0.15)',
+                  background: 'rgba(132, 204, 22, 0.15)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
                 }}
               >
-                <AlertTriangle size={24} color="#f5c518" />
+                <AlertTriangle size={24} color="#a3e635" />
               </div>
               <div>
                 <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 4px', color: '#fff' }}>
-                  Xác Nhận Quét Toàn Bộ Kho Phim
+                  Xác Nhận Cào Tự Động Phim Còn Lại
                 </h3>
                 <p style={{ fontSize: '13px', color: '#8b95ad', margin: 0 }}>
-                  Thao tác đồng bộ dữ liệu quy mô lớn (3,211 phim)
+                  Tổng kho hệ thống: {(stats.total_source_movies ?? 0).toLocaleString()} phim • Còn lại: {(stats.remaining_movies ?? 0).toLocaleString()} phim
                 </p>
               </div>
             </div>
 
             <p style={{ fontSize: '13px', lineHeight: 1.6, color: '#cbd5e1', marginBottom: '24px' }}>
-              Hệ thống sẽ đồng bộ và cập nhật lại toàn bộ 3,211 phim từ cơ sở dữ liệu master vào SQLite.
-              Tiến trình crawler sẽ chạy ngầm và tự động cập nhật thanh tiến trình. Bạn có chắc chắn muốn bắt đầu ngay?
+              Hệ thống sẽ tiếp tục cào theo từng đợt, lưu vị trí trang để tiếp tục sau khi khởi động lại và bỏ qua phim đã có tập.
+              Tiến trình chạy ngầm cho đến khi bạn bấm dừng. Bạn có chắc chắn muốn bắt đầu ngay?
             </p>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px' }}>
@@ -2021,23 +2623,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <button
                 type="button"
                 onClick={handleStartFullCrawl}
+                disabled={actionLoading !== null || stats.crawler_is_running || stats.crawler_auto_enabled}
                 style={{
-                  background: 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
+                  background: stats.crawler_is_running
+                    ? 'rgba(255, 255, 255, 0.05)'
+                    : 'linear-gradient(135deg, #aeea00 0%, #84cc16 100%)',
                   border: 'none',
-                  color: '#070e08',
+                  color: stats.crawler_is_running ? '#64748b' : '#070e08',
                   padding: '9px 20px',
                   borderRadius: '8px',
                   fontSize: '13px',
                   fontWeight: 700,
-                  cursor: 'pointer',
+                  cursor: stats.crawler_is_running ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  boxShadow: '0 4px 14px rgba(174, 234, 0, 0.4)',
+                  boxShadow: stats.crawler_is_running ? 'none' : '0 4px 14px rgba(174, 234, 0, 0.4)',
                 }}
               >
-                <Play size={14} fill="currentColor" />
-                <span>Bắt đầu ngay</span>
+                {stats.crawler_is_running ? <Lock size={14} /> : <Play size={14} fill="currentColor" />}
+                <span>
+                  {stats.crawler_is_running ? 'Crawler đang chạy, vui lòng đợi...' : 'Bắt đầu ngay'}
+                </span>
               </button>
             </div>
           </div>

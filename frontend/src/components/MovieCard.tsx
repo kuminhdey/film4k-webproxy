@@ -1,154 +1,128 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Star, Bookmark } from 'lucide-react';
-import { MovieSummary } from '../types';
-import { isInMyList, toggleMyList } from '../utils/myList';
+import React, { useState } from 'react';
+import { Play, Bookmark, Film } from 'lucide-react';
+import { MovieItem } from '../types';
+import { getImageUrl, isFavorite, toggleFavorite } from '../utils';
 
 interface MovieCardProps {
-  movie: MovieSummary;
-  onClick: (movie: MovieSummary) => void;
+  movie: MovieItem;
+  onClick: () => void;
+  onFavoriteToggle?: () => void;
 }
 
-export const MovieCard: React.FC<MovieCardProps> = ({ movie, onClick }) => {
-  const [bookmarked, setBookmarked] = useState(() => isInMyList(movie.slug));
+export const MovieCard: React.FC<MovieCardProps> = ({
+  movie,
+  onClick,
+  onFavoriteToggle,
+}) => {
+  const [imgError, setImgError] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [fav, setFav] = useState(() => isFavorite(movie.slug));
 
-  useEffect(() => {
-    setBookmarked(isInMyList(movie.slug));
-    const handleUpdate = () => setBookmarked(isInMyList(movie.slug));
-    window.addEventListener('bofilm_mylist_updated', handleUpdate);
-    return () => window.removeEventListener('bofilm_mylist_updated', handleUpdate);
-  }, [movie.slug]);
+  const handleFav = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = toggleFavorite(movie.slug);
+    setFav(updated);
+    if (onFavoriteToggle) onFavoriteToggle();
+  };
 
-  const posterUrl = movie.poster || movie.backdrop;
+  const rawImage = movie.thumb_url || movie.poster_url;
+  const imageSrc = !imgError && rawImage ? getImageUrl(rawImage) : '/logo.png';
+
+  const yearDisplay =
+    typeof movie.year === 'object' ? JSON.stringify(movie.year) : movie.year;
 
   return (
-    <div className="movie-card" onClick={() => onClick(movie)} style={{ aspectRatio: '2/3', position: 'relative' }}>
-      {posterUrl ? (
-        <img src={posterUrl} alt={movie.title_vi || movie.title_en || 'Poster'} loading="lazy" />
-      ) : (
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            background: 'var(--card, #0f2214)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--muted, #94a896)',
-          }}
-        >
-          No Image
-        </div>
-      )}
+    <div
+      onClick={onClick}
+      className="group relative flex flex-col h-full cursor-pointer transition-transform duration-300 hover:-translate-y-1.5"
+    >
+      {/* VIS-01: Responsive Border Radius (rounded-xl sm:rounded-2xl) & Aspect 2/3 */}
+      <div className="relative aspect-[2/3] w-full rounded-xl sm:rounded-2xl overflow-hidden bg-[#071307] border border-lime-500/20 group-hover:border-lime-400/60 shadow-[0_4px_20px_rgba(0,0,0,0.6)] group-hover:shadow-[0_0_25px_rgba(132,204,22,0.35)] transition-all duration-300">
+        
+        {/* VIS-02: Shimmer Skeleton Placeholder when Poster is Loading */}
+        {!isLoaded && !imgError && (
+          <div className="absolute inset-0 bg-[#0a180b] flex flex-col items-center justify-center animate-pulse z-0">
+            <Film className="w-8 h-8 text-lime-500/20 mb-2 stroke-[1.5]" />
+            <div className="w-12 h-1.5 rounded-full bg-lime-500/15" />
+            <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-lime-500/5 to-transparent pointer-events-none" />
+          </div>
+        )}
 
-      {/* Top Badges */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '8px',
-          left: '8px',
-          right: '8px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          zIndex: 3,
-        }}
-      >
-        <span className="badge-4k">4K</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          {movie.score && (
-            <span className="badge-score">
-              <Star size={11} fill="#fbbf24" strokeWidth={0} />
-              {movie.score.toFixed(1)}
-            </span>
-          )}
-          <button
-            type="button"
-            className="card-bookmark-btn"
-            title={bookmarked ? 'Xóa khỏi Danh sách của tôi' : 'Thêm vào Danh sách của tôi'}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleMyList(movie);
-            }}
-            style={{
-              width: '26px',
-              height: '26px',
-              borderRadius: '50%',
-              background: 'rgba(7, 14, 8, 0.8)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              color: bookmarked ? '#fbbf24' : '#cbd8cb',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <Bookmark size={13} fill={bookmarked ? '#fbbf24' : 'none'} color={bookmarked ? '#fbbf24' : '#cbd8cb'} />
-          </button>
+        <img
+          src={imageSrc}
+          alt={movie.name}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => {
+            setImgError(true);
+            setIsLoaded(true);
+          }}
+          loading="lazy"
+          className={`w-full h-full object-cover transform group-hover:scale-105 transition-all duration-500 ${
+            isLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+
+        {/* Gradient Overlays */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/30 pointer-events-none" />
+
+        {/* Top-Left Episode Badge */}
+        {movie.current_episode && (
+          <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-md bg-lime-500/90 text-black text-[10px] font-extrabold shadow-[0_0_8px_rgba(132,204,22,0.6)] tracking-tight">
+            {movie.current_episode}
+          </div>
+        )}
+
+        {/* Top-Right Quality Badge */}
+        {movie.quality && (
+          <div className="absolute top-2 right-2 z-10 px-1.5 py-0.5 rounded-md bg-black/70 border border-yellow-400/40 text-[#fef08a] text-[10px] font-bold">
+            {movie.quality}
+          </div>
+        )}
+
+        {/* Favorite Bookmark Button (A11Y-03 touch target & A11Y-04 aria-label) */}
+        <button
+          type="button"
+          onClick={handleFav}
+          aria-label={fav ? `Bỏ lưu phim ${movie.name}` : `Lưu phim ${movie.name} vào yêu thích`}
+          className={`absolute bottom-2 left-2 z-20 min-w-[36px] min-h-[36px] p-2 rounded-full backdrop-blur-md flex items-center justify-center transition-all focus-visible:ring-2 focus-visible:ring-lime-400 ${
+            fav
+              ? 'bg-lime-500 text-black shadow-[0_0_10px_#84cc16]'
+              : 'bg-black/70 text-[#d4ebd2] hover:text-lime-300 hover:bg-black/90'
+          }`}
+          title={fav ? 'Bỏ lưu phim' : 'Lưu vào yêu thích'}
+        >
+          <Bookmark className="w-3.5 h-3.5 fill-current" />
+        </button>
+
+        {/* Bottom-Right Language Badge */}
+        {movie.language && (
+          <div className="absolute bottom-2 right-2 z-10 px-2 py-0.5 rounded-md bg-black/70 border border-lime-500/30 text-lime-300 text-[10px] font-semibold">
+            {movie.language}
+          </div>
+        )}
+
+        {/* Center Hover Play Overlay */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 pointer-events-none">
+          <div className="w-12 h-12 rounded-full bg-lime-500 text-black flex items-center justify-center shadow-[0_0_20px_#84cc16] transform scale-75 group-hover:scale-100 transition-transform duration-300">
+            <Play className="w-6 h-6 fill-black ml-0.5" />
+          </div>
         </div>
       </div>
 
-      {/* Hover overlay */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(to top, rgba(10,10,12,0.95) 0%, rgba(10,10,12,0.4) 50%, transparent 100%)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-end',
-          padding: '12px',
-          zIndex: 2,
-        }}
-      >
-        <h3
-          style={{
-            fontSize: '0.9rem',
-            fontWeight: 700,
-            color: '#fff',
-            lineHeight: 1.2,
-            marginBottom: '4px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {movie.title_vi || movie.title_en}
+      {/* Info Below Poster (A11Y-01 upgraded contrast >= 5.5:1) */}
+      <div className="mt-2.5 space-y-1 flex-1 flex flex-col justify-between">
+        <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug min-h-[2.5rem]">
+          {movie.name}
         </h3>
-
-        {movie.title_en && movie.title_vi && (
-          <p
-            style={{
-              fontSize: '0.75rem',
-              color: '#9494a8',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              marginBottom: '6px',
-            }}
-          >
-            {movie.title_en}
-          </p>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.7rem', color: '#7e7e96' }}>
-            {movie.year || ''} {movie.total_episodes ? `• ${movie.total_episodes} Tập` : ''}
+        <div className="flex items-center justify-between text-[11px] text-[#a8cca2] min-h-[1.1rem]">
+          <span className="line-clamp-1 flex-1 pr-2 truncate">
+            {movie.original_name || 'Đang cập nhật'}
           </span>
-          <div
-            style={{
-              background: 'var(--accent, #aeea00)',
-              borderRadius: '50%',
-              width: '28px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 8px rgba(174, 234, 0, 0.4)',
-            }}
-          >
-            <Play size={14} fill="#070e08" color="#070e08" style={{ marginLeft: '2px' }} />
-          </div>
+          {yearDisplay && (
+            <span className="font-semibold text-lime-400 flex-shrink-0">
+              {yearDisplay}
+            </span>
+          )}
         </div>
       </div>
     </div>

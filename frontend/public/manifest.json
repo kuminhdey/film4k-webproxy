@@ -1,0 +1,65 @@
+{
+  "id": "/",
+  "name": "Bơ Film — Avocado Cinema",
+  "short_name": "Bơ Film",
+  "description": "Bơ Film (Avocado Cinema) - Web xem phim trực tuyến miễn phí tốc độ cao, chất lượng Full HD vietsub, thuyết minh.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#060b05",
+  "theme_color": "#060b05",
+  "lang": "vi",
+  "dir": "ltr",
+  "categories": ["entertainment", "movies", "video"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Phim Bộ",
+      "short_name": "Phim Bộ",
+      "description": "Các bộ phim truyền hình nhiều tập hấp dẫn",
+      "url": "/danh-sach/phim-bo",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Phim Lẻ",
+      "short_name": "Phim Lẻ",
+      "description": "Tuyển tập phim chiếu rạp và điện ảnh đặc sắc",
+      "url": "/danh-sach/phim-le",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Yêu Thích",
+      "short_name": "Yêu Thích",
+      "description": "Danh sách phim bạn đã lưu yêu thích",
+      "url": "/yeu-thich",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Lịch Sử Xem",
+      "short_name": "Lịch Sử",
+      "description": "Lịch sử và tiến độ các phim đang xem dở",
+      "url": "/lich-su",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
