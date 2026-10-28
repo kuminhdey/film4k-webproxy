@@ -217,17 +217,17 @@ export function movieDetailAdapter(raw: any): MovieDetail {
         const epSlug = `tap-${epNum}`;
         const primaryServer = ep.servers?.[0] || ep.sources?.[0];
         const m3u8Url =
-          primaryServer?.proxyStreamUrl ||
-          primaryServer?.proxy_stream_url ||
-          primaryServer?.hlsUrl ||
-          primaryServer?.hls_url ||
-          primaryServer?.url ||
-          `/stream/${slug}/ep/${epNum}/master.m3u8`;
+          epNum > 1
+            ? `/api/stream/${encodeURIComponent(slug)}/ep/${epNum}/master.m3u8`
+            : `/api/stream/${encodeURIComponent(slug)}/master.m3u8`;
+        const embedUrl =
+          primaryServer?.embed ||
+          (ep.embed && !ep.embed.includes('.m3u8') ? ep.embed : '');
 
         defaultServerItems.push({
           name: epTitle,
           slug: epSlug,
-          embed: m3u8Url,
+          embed: embedUrl,
           m3u8: m3u8Url,
           subtitles: ep.subtitles || raw.subtitles || [],
           audio_tracks:
@@ -246,30 +246,30 @@ export function movieDetailAdapter(raw: any): MovieDetail {
     }
   } else {
     // Single movie without episode list
-    const primaryServer = raw.servers?.[0];
-    const streamUrl =
-      primaryServer?.proxyStreamUrl ||
-      primaryServer?.proxy_stream_url ||
-      primaryServer?.hlsUrl ||
-      primaryServer?.hls_url ||
-      primaryServer?.url ||
-      (typeof raw.stream === 'string'
-        ? raw.stream
-        : raw.stream?.hlsUrl || raw.stream?.proxyStreamUrl) ||
-      `/stream/${slug}/master.m3u8`;
+    const serversList =
+      Array.isArray(raw.servers) && raw.servers.length > 0 ? raw.servers : [null];
 
-    episodeServers.push({
-      server_name: 'Server VIP #1',
-      items: [
-        {
-          name: 'Full',
-          slug: 'full',
-          embed: streamUrl,
-          m3u8: streamUrl,
-          subtitles: raw.subtitles || [],
-          audio_tracks: raw.audio_tracks || raw.audioTracks || [],
-        },
-      ],
+    episodeServers = serversList.map((srv: any, idx: number) => {
+      const srvName = srv?.label || srv?.name || `Server VIP #${idx + 1}`;
+      const streamUrl = `/api/stream/${encodeURIComponent(slug)}/master.m3u8${
+        idx > 0 ? `?server=${idx}` : ''
+      }`;
+      const embedUrl =
+        srv?.embed && !srv.embed.includes('.m3u8') ? srv.embed : '';
+
+      return {
+        server_name: srvName,
+        items: [
+          {
+            name: 'Full',
+            slug: 'full',
+            embed: embedUrl,
+            m3u8: streamUrl,
+            subtitles: raw.subtitles || [],
+            audio_tracks: raw.audio_tracks || raw.audioTracks || [],
+          },
+        ],
+      };
     });
   }
 

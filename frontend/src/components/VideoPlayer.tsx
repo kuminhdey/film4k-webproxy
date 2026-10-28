@@ -1573,27 +1573,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [showShortcutsModal]);
 
+function parseEpisodeNum(slug?: string, name?: string): number {
+  if (slug) {
+    const match = slug.match(/\d+/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  if (name) {
+    const match = name.match(/\d+/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 1;
+}
+
   // On-demand resolver for uncached episode
   useEffect(() => {
     if (playerMode !== 'embed' || !movieSlug) return;
     if (hlsFallbackErrorRef.current) return;
 
     let isDisposed = false;
-    const cleanEpisode =
-      (episodeName || '').replace(/^Tập\s*/i, '').trim() ||
-      (episodeSlug || '').replace(/^tap-/i, '').trim() ||
-      '1';
+    const epNum = parseEpisodeNum(episodeSlug, episodeName);
 
     let checkStreamTimer: ReturnType<typeof setTimeout> | null = null;
     if (!isManualModeRef.current && playerModeProp !== 'embed') {
       checkStreamTimer = setTimeout(async () => {
         if (isDisposed || isManualModeRef.current || hlsFallbackErrorRef.current) return;
         try {
-          const streamCheckUrl =
-            m3u8Url ||
-            `/api/stream/${encodeURIComponent(movieSlug)}/ep/${encodeURIComponent(cleanEpisode)}/master.m3u8${
-              serverIndex !== undefined ? `?server=${serverIndex}` : ''
-            }`;
+          const fallbackPath = epNum > 1
+            ? `/api/stream/${encodeURIComponent(movieSlug)}/ep/${epNum}/master.m3u8`
+            : `/api/stream/${encodeURIComponent(movieSlug)}/master.m3u8`;
+          const serverParam = serverIndex !== undefined && serverIndex > 0 ? `?server=${serverIndex}` : '';
+          const streamCheckUrl = m3u8Url || `${fallbackPath}${serverParam}`;
           const testRes = await fetch(streamCheckUrl, { method: 'HEAD' });
           if (testRes.ok && !isDisposed && !isManualModeRef.current && !hlsFallbackErrorRef.current) {
             setAutoIngested(true);
@@ -1626,16 +1641,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     let isDisposed = false;
     const video = videoRef.current;
-    const cleanEpisode =
-      (episodeName || '').replace(/^Tập\s*/i, '').trim() ||
-      (episodeSlug || '').replace(/^tap-/i, '').trim() ||
-      '1';
-    const currentEpKey = `${movieSlug || ''}:${cleanEpisode}`;
+    const epNum = parseEpisodeNum(episodeSlug, episodeName);
+    const currentEpKey = `${movieSlug || ''}:${epNum}`;
 
     let streamUrl: string;
     if (m3u8Url) {
       streamUrl = m3u8Url;
-      if (serverIndex !== undefined) {
+      if (serverIndex !== undefined && serverIndex > 0) {
         try {
           const isAbsolute = /^https?:\/\//i.test(streamUrl);
           const urlObj = new URL(streamUrl, window.location.origin);
@@ -1648,14 +1660,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         }
       }
-    } else if (movieSlug && cleanEpisode) {
-      const serverParam = serverIndex !== undefined ? `?server=${serverIndex}` : '';
-      streamUrl = `/api/stream/${encodeURIComponent(movieSlug)}/ep/${encodeURIComponent(cleanEpisode)}/master.m3u8${serverParam}`;
+    } else if (movieSlug) {
+      const serverParam = serverIndex !== undefined && serverIndex > 0 ? `?server=${serverIndex}` : '';
+      const basePath = epNum > 1
+        ? `/api/stream/${encodeURIComponent(movieSlug)}/ep/${epNum}/master.m3u8`
+        : `/api/stream/${encodeURIComponent(movieSlug)}/master.m3u8`;
+      streamUrl = `${basePath}${serverParam}`;
     } else {
       return;
     }
 
-    if (streamUrl.startsWith('http')) {
+    if (
+      streamUrl.startsWith('http') &&
+      !streamUrl.startsWith(window.location.origin) &&
+      !streamUrl.includes('/api/stream/') &&
+      !streamUrl.includes('/stream/')
+    ) {
       streamUrl = `/api/proxy/stream?url=${encodeURIComponent(streamUrl)}`;
     }
 
@@ -1779,8 +1799,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     hlsRef.current.destroy();
                     hlsRef.current = null;
                   }
-                  hlsFallbackErrorRef.current = true;
-                  setPlayerMode('embed');
+                  const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
+                  if (hasEmbed) {
+                    hlsFallbackErrorRef.current = true;
+                    setPlayerMode('embed');
+                  }
                 }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
@@ -1807,8 +1830,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     hlsRef.current.destroy();
                     hlsRef.current = null;
                   }
-                  hlsFallbackErrorRef.current = true;
-                  setPlayerMode('embed');
+                  const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
+                  if (hasEmbed) {
+                    hlsFallbackErrorRef.current = true;
+                    setPlayerMode('embed');
+                  }
                 }
                 break;
             }
@@ -1846,8 +1872,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }, 2000);
           } else {
             setIsInitializingHls(false);
-            hlsFallbackErrorRef.current = true;
-            setPlayerMode('embed');
+            const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
+            if (hasEmbed) {
+              hlsFallbackErrorRef.current = true;
+              setPlayerMode('embed');
+            }
           }
         };
 

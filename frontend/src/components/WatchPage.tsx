@@ -9,6 +9,48 @@ import { RelatedMoviesRow } from './RelatedMoviesRow';
 import { ErrorBoundary } from './ErrorBoundary';
 import { getImageUrl } from '../utils';
 
+/**
+ * Helper to parse numeric episode number from slug (tap-1, tap-02) or title (Tập 1, Tập 2, Full)
+ */
+export function parseEpisodeNumber(epSlug?: string, epName?: string): number {
+  if (epSlug) {
+    const match = epSlug.match(/\d+/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  if (epName) {
+    const match = epName.match(/\d+/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 1;
+}
+
+/**
+ * Standard authentic HLS URL generator matching historical webproxy logic:
+ * - Single movie or episode 1 -> /api/stream/:slug/master.m3u8
+ * - TV series episode N (N > 1) -> /api/stream/:slug/ep/:N/master.m3u8
+ */
+export function getEpisodeHlsUrl(
+  slug: string,
+  epNum: number = 1,
+  isSeries: boolean = false,
+  serverIndex?: number
+): string {
+  const isMultiEp = isSeries && epNum > 1;
+  const basePath = isMultiEp
+    ? `/api/stream/${encodeURIComponent(slug)}/ep/${epNum}/master.m3u8`
+    : `/api/stream/${encodeURIComponent(slug)}/master.m3u8`;
+  if (serverIndex !== undefined && serverIndex > 0) {
+    return `${basePath}?server=${serverIndex}`;
+  }
+  return basePath;
+}
+
 interface WatchPageProps {
   slug: string;
   episodeSlug?: string;
@@ -177,9 +219,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     }
   };
 
-  const cleanEp = currentEpisode?.name
-    ? currentEpisode.name.replace(/^Tập\s*/i, '').trim()
-    : (currentEpisode?.slug ? currentEpisode.slug.replace(/^tap-/i, '').trim() : '');
+  // Determine whether this movie has multiple episodes (TV Series)
+  const isSeries = (movie.total_episodes !== undefined && Number(movie.total_episodes) > 1) || items.length > 1;
+  const epNum = parseEpisodeNumber(currentEpisode?.slug, currentEpisode?.name);
 
   // Extract categories/genres for related movies
   const genresList: string[] = [];
@@ -193,14 +235,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     });
   }
 
-  const hlsStreamUrl = cleanEp
-    ? `/api/stream/${encodeURIComponent(movie.slug)}/ep/${encodeURIComponent(cleanEp)}/master.m3u8?server=${activeServerIndex}`
-    : `/api/stream/${encodeURIComponent(movie.slug)}/master.m3u8?server=${activeServerIndex}`;
+  // Authentic HLS URL generation: /api/stream/:slug/master.m3u8 (or ep/N for series N > 1)
+  const hlsStreamUrl = getEpisodeHlsUrl(movie.slug, epNum, isSeries, activeServerIndex);
+
+  // Only pass embedUrl if it is a real webpage embed, not an m3u8 playlist file
+  const rawEmbed = currentEpisode?.embed || '';
+  const safeEmbedUrl = rawEmbed && !rawEmbed.includes('.m3u8') ? rawEmbed : '';
 
   const playerElement = (
     <ErrorBoundary fallbackTitle="Không thể khởi chạy trình phát video">
       <VideoPlayer
-        embedUrl={currentEpisode?.embed || ''}
+        embedUrl={safeEmbedUrl}
         m3u8Url={hlsStreamUrl}
         serverIndex={activeServerIndex}
         movieName={movie.name}
