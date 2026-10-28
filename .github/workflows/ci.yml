@@ -1,0 +1,240 @@
+name: CI & Quality Gate
+
+on:
+  push:
+    branches: [ main, "kuminhdey/**" ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-verification:
+    name: Backend Check & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            backend/target/
+          key: ${{ runner.os }}-cargo-locked-${{ hashFiles('Cargo.lock', 'backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-locked-
+
+      - name: Cargo Check (--locked)
+        run: cargo check --locked
+
+      - name: Cargo Test (--locked)
+        run: cargo test --locked
+
+  frontend-verification:
+    name: Frontend Typecheck & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend SPA
+        working-directory: frontend
+        run: npm run build
+
+  ops-scripts-verification:
+    name: Ops Scripts Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install sqlite3
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y sqlite3
+
+      - name: Execute ops test suite
+        run: bash scripts/test_ops_scripts.sh
+
+  docker-image-smoke:
+    name: Docker Build & Readiness Smoke Test
+    needs: [backend-verification, frontend-verification, ops-scripts-verification]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image with Immutable Provenance
+        run: |
+          BUILD_COMMIT="${{ github.sha }}"
+          echo "Building container image with BUILD_COMMIT=${BUILD_COMMIT}"
+          docker build \
+            --build-arg BUILD_COMMIT="${BUILD_COMMIT}" \
+            -t film4k-webproxy:${BUILD_COMMIT} \
+            -t film4k-webproxy:ci-smoke .
+
+      - name: Start Container
+        run: |
+          BUILD_COMMIT="${{ github.sha }}"
+          docker run -d \
+            --name webproxy-ci-smoke \
+            -p 127.0.0.1:8090:8090 \
+            -e HOST=0.0.0.0 \
+            -e PORT=8090 \
+            -e DATABASE_PATH=/app/movies.db \
+            -e ADMIN_PASSWORD=ci_testing_admin_secret_long_12345 \
+            -e BUILD_COMMIT="${BUILD_COMMIT}" \
+            film4k-webproxy:${BUILD_COMMIT}
+
+      - name: Poll Healthcheck & Readiness
+        run: |
+          echo "Polling health endpoint on http://127.0.0.1:8090..."
+          HEALTHY=0
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:8090/health/ready >/dev/null 2>&1; then
+              echo "Healthcheck passed on attempt $i"
+              HEALTHY=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$HEALTHY" -ne 1 ]; then
+            echo "ERROR: Healthcheck did not become ready within 30 seconds!" >&2
+            echo "Sanitized container logs (tail 50 lines):" >&2
+            docker logs --tail 50 webproxy-ci-smoke 2>&1 | \
+              sed -E 's/(token|password|secret|key|sig|auth)=[^& "'\''"]+/\1=REDACTED/gi' >&2
+            exit 1
+          fi
+
+      - name: Assert /health/ready Commit Provenance (Strict Gate)
+        run: |
+          BUILD_COMMIT="${{ github.sha }}"
+          SHORT_SHA="${BUILD_COMMIT:0:8}"
+          echo "Asserting readiness commit matches: full=$BUILD_COMMIT or short=$SHORT_SHA"
+
+          # Query readiness endpoint (strictly require HTTP 200)
+          READY_BODY=$(curl -sf http://127.0.0.1:8090/health/ready 2>/dev/null || true)
+          if [ -z "$READY_BODY" ]; then
+            echo "ERROR: /health/ready endpoint returned non-200, 503, or failed connection! Gate failed." >&2
+            echo "Sanitized container logs (tail 30 lines):" >&2
+            docker logs --tail 30 webproxy-ci-smoke 2>&1 | \
+              sed -E 's/(token|password|secret|key|sig|auth)=[^& "'\''"]+/\1=REDACTED/gi' >&2
+            exit 1
+          fi
+
+          REPORTED_COMMIT=$(echo "$READY_BODY" | jq -r '.commit // empty' 2>/dev/null || true)
+          if [ -z "$REPORTED_COMMIT" ]; then
+            echo "ERROR: /health/ready endpoint returned payload without 'commit' field! Gate failed." >&2
+            exit 1
+          fi
+
+          if [ "$REPORTED_COMMIT" != "$BUILD_COMMIT" ] && [ "$REPORTED_COMMIT" != "$SHORT_SHA" ]; then
+            echo "ERROR: Commit provenance mismatch! Expected $BUILD_COMMIT or $SHORT_SHA, but readiness reported '$REPORTED_COMMIT'" >&2
+            exit 1
+          fi
+          echo "Readiness commit assertion passed: provenance matches ($REPORTED_COMMIT)."
+
+      - name: Verify In-Container Ops Scripts (Deploy Path Verification)
+        run: |
+          echo "Testing backup script execution inside container..."
+          docker exec -i webproxy-ci-smoke /app/scripts/backup_sqlite.sh --db /app/movies.db --backup-dir /app/backups --quiet
+
+          echo "Testing restore rehearsal execution inside container..."
+          docker exec -i webproxy-ci-smoke /app/scripts/restore_rehearsal.sh --file /app/backups/movies.db.latest.bak --live-db /app/movies.db --quiet
+
+      - name: Verify SPA Static Asset Delivery
+        run: |
+          HTTP_BODY=$(curl -sf http://127.0.0.1:8090/ 2>/dev/null || true)
+          if ! echo "$HTTP_BODY" | grep -qi "html"; then
+            echo "ERROR: SPA root route did not return HTML content!" >&2
+            exit 1
+          fi
+          echo "SPA asset delivery verified."
+
+      - name: Verify Log Sanitization (No Leaked Secrets)
+        run: |
+          echo "Auditing container logs for sensitive credential leaks..."
+          if docker logs webproxy-ci-smoke 2>&1 | grep -q "ci_testing_admin_secret_long_12345"; then
+            echo "CRITICAL SECURITY ERROR: ADMIN_PASSWORD leaked into container stdout/stderr!" >&2
+            exit 1
+          fi
+          echo "Log sanitization audit passed: zero secrets detected in container logs."
+
+      - name: Container Cleanup
+        if: always()
+        run: |
+          docker rm -f webproxy-ci-smoke 2>/dev/null || true
+
+  ci-failure-alerts:
+    name: CI Failure Notification & Step Summary
+    if: failure()
+    needs: [backend-verification, frontend-verification, ops-scripts-verification, docker-image-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Step Summary
+        run: |
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ## 🚨 CI Pipeline Failure Alert
+
+          **Repository:** \`${{ github.repository }}\`
+          **Ref / Branch:** \`${{ github.ref }}\`
+          **Commit SHA:** \`${{ github.sha }}\`
+          **Triggered By:** \`${{ github.actor }}\`
+          **Run Details:** [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ### Job Status Matrix
+          - **Backend Verification:** \`${{ needs.backend-verification.result }}\`
+          - **Frontend Verification:** \`${{ needs.frontend-verification.result }}\`
+          - **Ops Scripts Verification:** \`${{ needs.ops-scripts-verification.result }}\`
+          - **Docker Image Smoke:** \`${{ needs.docker-image-smoke.result }}\`
+
+          *Check the failed job logs for detailed stack traces.*
+          EOF
+
+      - name: Dispatch Webhook Alert (Repo-Configurable)
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            echo "Dispatching failure alert to configured webhook..."
+            PAYLOAD=$(cat <<EOF
+          {
+            "text": "🚨 *Film4K Webproxy CI Failure Alert*\n*Repo:* ${{ github.repository }}\n*Commit:* \`${{ github.sha }}\`\n*Branch:* \`${{ github.ref }}\`\n*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+            )
+            curl -s -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$ALERT_WEBHOOK_URL" || true
+            echo "Alert payload dispatched."
+          else
+            echo "No ALERT_WEBHOOK_URL secret configured in repository settings."
+            echo "Alerting defaults to GitHub native notifications (email / web UI / PR annotations)."
+          fi
