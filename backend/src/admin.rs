@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -21,11 +22,25 @@ static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1000);
 /// Bounded session lifetime: 4 hours
 const SESSION_TTL: Duration = Duration::from_secs(4 * 3600);
 
-/// Maximum failed login attempts before lockout
+/// Maximum failed login attempts before lockout for single IP
 pub const MAX_FAILED_ATTEMPTS: u32 = 5;
 
 /// Lockout duration after exceeding MAX_FAILED_ATTEMPTS: 15 minutes
 pub const LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60);
+
+/// Trust only explicitly configured reverse proxy peers.
+pub fn is_trusted_peer(ip: &IpAddr) -> bool {
+    let trusted_list = std::env::var("TRUSTED_PROXIES").unwrap_or_default();
+    for entry in trusted_list.split(',') {
+        let trimmed = entry.trim();
+        if let Ok(trusted_ip) = trimmed.parse::<IpAddr>() {
+            if &trusted_ip == ip {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// Constant-time string comparison using SHA-256 and subtle::ConstantTimeEq
 /// to prevent timing attacks across varied string lengths.
@@ -35,34 +50,31 @@ pub fn constant_time_eq_str(a: &str, b: &str) -> bool {
     hash_a.as_slice().ct_eq(hash_b.as_slice()).into()
 }
 
-/// Extract client IP address from proxy headers (Cloudflare, reverse proxies)
-pub fn extract_client_ip(headers: &HeaderMap) -> String {
-    if let Some(val) = headers.get("cf-connecting-ip") {
-        if let Ok(s) = val.to_str() {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    if let Some(val) = headers.get("x-real-ip") {
-        if let Ok(s) = val.to_str() {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    if let Some(val) = headers.get("x-forwarded-for") {
-        if let Ok(s) = val.to_str() {
-            if let Some(first) = s.split(',').next() {
-                let trimmed = first.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
+/// Extract client IP address from socket peer or validated proxy headers.
+/// Per production topology: host nginx overwrites X-Real-IP with $remote_addr,
+/// but does NOT overwrite CF-Connecting-IP or X-Forwarded-For.
+/// Therefore, ONLY X-Real-IP is trusted from a trusted peer proxy (e.g. 172.21.0.1).
+/// CF-Connecting-IP and X-Forwarded-For are client-spoofable and strictly ignored.
+pub fn extract_client_ip(headers: &HeaderMap, peer_addr: Option<SocketAddr>) -> String {
+    if let Some(peer) = peer_addr {
+        let peer_ip = peer.ip();
+        if is_trusted_peer(&peer_ip) {
+            // ONLY trust X-Real-IP because reverse proxy strictly overwrites it.
+            // CF-Connecting-IP and X-Forwarded-For are not overwritten and are ignored to prevent spoofing.
+            if let Some(val) = headers.get("x-real-ip") {
+                if let Ok(s) = val.to_str() {
+                    let trimmed = s.trim();
+                    if let Ok(parsed) = trimmed.parse::<IpAddr>() {
+                        return parsed.to_string();
+                    }
                 }
             }
         }
+        // If peer is not trusted or X-Real-IP is absent/invalid, strictly use the socket peer IP
+        return peer_ip.to_string();
     }
+
+    // When peer_addr is None, never trust forwarded headers or default to loopback
     "unknown".to_string()
 }
 
@@ -173,18 +185,16 @@ impl AdminService {
     pub fn is_login_rate_limited(&self, client_id: &str) -> bool {
         let attempts = self.failed_attempts.read().unwrap();
         if let Some(&(count, last_attempt)) = attempts.get(client_id) {
-            if count >= MAX_FAILED_ATTEMPTS {
-                if last_attempt.elapsed() < LOCKOUT_DURATION {
-                    return true;
-                }
+            if count >= MAX_FAILED_ATTEMPTS && last_attempt.elapsed() < LOCKOUT_DURATION {
+                return true;
             }
         }
         false
     }
 
     pub fn record_failed_attempt(&self, client_id: &str) -> u32 {
-        let mut attempts = self.failed_attempts.write().unwrap();
         let now = Instant::now();
+        let mut attempts = self.failed_attempts.write().unwrap();
         attempts.retain(|_, (_, time)| time.elapsed() < LOCKOUT_DURATION);
         let entry = attempts.entry(client_id.to_string()).or_insert((0, now));
         if entry.1.elapsed() >= LOCKOUT_DURATION {
@@ -275,10 +285,11 @@ pub struct LoginResponse {
 
 pub async fn admin_login(
     State(state): State<AppState>,
+    peer_info: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers);
+    let client_ip = extract_client_ip(&headers, peer_info.map(|ci| ci.0));
     if state.admin.is_login_rate_limited(&client_ip) {
         warn!("🚫 Admin login throttled: too many failed attempts for client {}", client_ip);
         return (
@@ -870,5 +881,69 @@ mod tests {
         assert_eq!(format_bytes(1024), "1.00 KB");
         assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
         assert_eq!(format_bytes(1024 * 1024 * 1024 * 2), "2.00 GB");
+    }
+
+    #[test]
+    fn test_extract_client_ip_production_topology() {
+        use std::net::SocketAddr;
+
+        std::env::set_var("TRUSTED_PROXIES", "172.21.0.1");
+
+        let gateway_peer: SocketAddr = "172.21.0.1:45678".parse().unwrap();
+        let untrusted_peer: SocketAddr = "198.51.100.55:12345".parse().unwrap();
+
+        // 1. Attacker sends spoofed cf-connecting-ip & x-forwarded-for via trusted gateway
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-connecting-ip", HeaderValue::from_static("8.8.8.8"));
+        headers.insert("x-forwarded-for", HeaderValue::from_static("1.1.1.1, 9.9.9.9"));
+        headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.10"));
+
+        let ip = extract_client_ip(&headers, Some(gateway_peer));
+        // ONLY x-real-ip is trusted; cf-connecting-ip and x-forwarded-for are ignored
+        assert_eq!(ip, "203.0.113.10");
+
+        // 2. Attacker sends cf-connecting-ip and x-forwarded-for without x-real-ip via trusted gateway
+        let mut spoof_only = HeaderMap::new();
+        spoof_only.insert("cf-connecting-ip", HeaderValue::from_static("8.8.8.8"));
+        spoof_only.insert("x-forwarded-for", HeaderValue::from_static("1.1.1.1"));
+        let ip = extract_client_ip(&spoof_only, Some(gateway_peer));
+        // Falls back to socket peer ip, never spoofed header
+        assert_eq!(ip, "172.21.0.1");
+
+        // 3. Attacker connects directly from untrusted socket peer with spoofed x-real-ip
+        let mut direct_headers = HeaderMap::new();
+        direct_headers.insert("x-real-ip", HeaderValue::from_static("10.0.0.1"));
+        direct_headers.insert("cf-connecting-ip", HeaderValue::from_static("10.0.0.2"));
+        let ip = extract_client_ip(&direct_headers, Some(untrusted_peer));
+        // Headers are ignored because peer is not in trusted proxies list
+        assert_eq!(ip, "198.51.100.55");
+        let loopback_peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        assert_eq!(extract_client_ip(&direct_headers, Some(loopback_peer)), "127.0.0.1");
+
+        // 4. Missing peer returns "unknown" and never trusts headers
+        let ip_none = extract_client_ip(&headers, None);
+        assert_eq!(ip_none, "unknown");
+
+        // 5. Valid independent clients behind trusted reverse proxy are isolated
+        let mut client1_headers = HeaderMap::new();
+        client1_headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.1"));
+        let client1_ip = extract_client_ip(&client1_headers, Some(gateway_peer));
+
+        let mut client2_headers = HeaderMap::new();
+        client2_headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.2"));
+        let client2_ip = extract_client_ip(&client2_headers, Some(gateway_peer));
+
+        assert_eq!(client1_ip, "198.51.100.1");
+        assert_eq!(client2_ip, "198.51.100.2");
+        assert_ne!(client1_ip, client2_ip);
+
+        // Client 1 rate limit does not affect Client 2
+        let admin = AdminService::with_password("my-secret-pw");
+        for _ in 0..5 {
+            admin.record_failed_attempt(&client1_ip);
+        }
+        assert!(admin.is_login_rate_limited(&client1_ip));
+        assert!(!admin.is_login_rate_limited(&client2_ip));
+        std::env::remove_var("TRUSTED_PROXIES");
     }
 }

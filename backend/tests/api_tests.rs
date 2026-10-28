@@ -605,20 +605,12 @@ async fn test_api_proxy_stream_expired_token_auto_refresh() {
         .await
         .unwrap();
 
-    // The expired token should be automatically refreshed by proxy from upstream title API!
-    if resp.status() == StatusCode::OK {
-        let body = resp.text().await.unwrap();
-        assert!(body.contains("#EXTM3U"), "Body should be a valid M3U8 playlist");
-        let updated_movie = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().unwrap();
-        assert_ne!(
-            updated_movie.servers[0].hls_url, expired_url,
-            "HLS URL in DB must be updated to fresh token"
-        );
-        assert!(
-            updated_movie.servers[0].hls_url.contains("/api/hls/"),
-            "New HLS URL should contain valid stream path"
-        );
-    }
+    // Issue #2: Public GET /api/proxy/stream is strictly read-only and must NEVER mutate the DB
+    let updated_movie = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().unwrap();
+    assert_eq!(
+        updated_movie.servers[0].hls_url, expired_url,
+        "Public GET /api/proxy/stream must never update or poison stream URL in DB (#2)"
+    );
 }
 
 #[tokio::test]
