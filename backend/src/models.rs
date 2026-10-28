@@ -148,11 +148,13 @@ fn default_movie_type() -> String {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct MoviesQuery {
-    #[serde(default, alias = "keyword")]
+    #[serde(default)]
     pub search: Option<String>,
+    pub keyword: Option<String>,
     pub genre: Option<String>,
-    #[serde(rename = "type", alias = "movie_type", alias = "category")]
+    #[serde(rename = "type", alias = "movie_type")]
     pub movie_type: Option<String>,
+    pub category: Option<String>,
     pub country: Option<String>,
     pub year: Option<String>,
     pub quality: Option<String>,

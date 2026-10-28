@@ -373,16 +373,21 @@ export async function getMovies(params: {
   if (params.page) query.set('page', params.page.toString());
   if (params.limit) query.set('limit', params.limit.toString());
   if (params.category) {
-    query.set('category', params.category);
-    if (params.category === 'phim-bo') query.set('movie_type', 'tv');
-    if (params.category === 'phim-le') query.set('movie_type', 'movie');
+    if (params.category === 'phim-bo') {
+      query.set('type', 'tv');
+    } else if (params.category === 'phim-le') {
+      query.set('type', 'movie');
+    } else if (params.category === 'hoat-hinh') {
+      query.set('genre', 'Hoạt Hình');
+    } else {
+      query.set('category', params.category);
+    }
   }
   if (params.genre) query.set('genre', params.genre);
   if (params.country) query.set('country', params.country);
   if (params.year) query.set('year', params.year);
   if (params.sort) query.set('sort', params.sort);
   if (params.keyword) {
-    query.set('keyword', params.keyword);
     query.set('search', params.keyword);
   }
 

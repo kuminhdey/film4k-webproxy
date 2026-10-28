@@ -31,9 +31,18 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   const yearDisplay =
     typeof movie.year === 'object' ? JSON.stringify(movie.year) : movie.year;
 
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) {
+      return;
+    }
+    e.preventDefault();
+    onClick();
+  };
+
   return (
-    <div
-      onClick={onClick}
+    <a
+      href={`/phim/${movie.slug}`}
+      onClick={handleClick}
       className="group relative flex flex-col h-full cursor-pointer transition-transform duration-300 hover:-translate-y-1.5"
     >
       {/* VIS-01: Responsive Border Radius (rounded-xl sm:rounded-2xl) & Aspect 2/3 */}
@@ -125,6 +134,6 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </a>
   );
 };

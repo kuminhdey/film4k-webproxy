@@ -348,7 +348,8 @@ impl Database {
         let mut where_clauses = Vec::new();
         let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(ref s) = query.search {
+        let effective_search = query.search.as_ref().or(query.keyword.as_ref());
+        if let Some(s) = effective_search {
             if !s.trim().is_empty() {
                 let pattern = format!("%{}%", s.trim().to_lowercase());
                 where_clauses.push("(search_text LIKE ? OR title_vi LIKE ? OR title_en LIKE ? OR slug LIKE ?)");
@@ -367,7 +368,8 @@ impl Database {
             }
         }
 
-        if let Some(ref mt) = query.movie_type {
+        let effective_type = query.movie_type.as_ref().or(query.category.as_ref());
+        if let Some(mt) = effective_type {
             let mt_trimmed = mt.trim();
             if !mt_trimmed.is_empty() && mt_trimmed != "all" {
                 let mapped = match mt_trimmed {
@@ -375,8 +377,13 @@ impl Database {
                     "phim-le" | "single" | "movie" => "movie",
                     other => other,
                 };
-                where_clauses.push("movie_type = ?");
-                query_params.push(Box::new(mapped.to_string()));
+                if mapped == "tv" || mapped == "movie" {
+                    where_clauses.push("movie_type = ?");
+                    query_params.push(Box::new(mapped.to_string()));
+                } else if mapped == "hoat-hinh" || mapped == "anime" {
+                    where_clauses.push("genres_json LIKE ?");
+                    query_params.push(Box::new("%Hoạt Hình%".to_string()));
+                }
             }
         }
 
