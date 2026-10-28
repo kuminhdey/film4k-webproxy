@@ -1,12 +1,14 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { MovieSummary } from '../types';
 
 interface TopRailProps {
   movies: MovieSummary[];
   onSelect: (movie: MovieSummary) => void;
+  onViewAll?: () => void;
 }
 
-export const TopRail: React.FC<TopRailProps> = ({ movies, onSelect }) => {
+export const TopRail: React.FC<TopRailProps> = ({ movies, onSelect, onViewAll }) => {
   if (!movies || movies.length === 0) return null;
 
   // Take top 10
@@ -14,8 +16,42 @@ export const TopRail: React.FC<TopRailProps> = ({ movies, onSelect }) => {
 
   return (
     <section className="row-sec">
-      <div className="head">
-        <h2>Top 10 hôm nay</h2>
+      <div
+        className="head"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '14px',
+        }}
+      >
+        <h2
+          style={onViewAll ? { cursor: 'pointer' } : undefined}
+          onClick={onViewAll}
+        >
+          Top 10 hôm nay
+        </h2>
+        {onViewAll && (
+          <button
+            type="button"
+            onClick={onViewAll}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#aeea00',
+              fontSize: '13px',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              cursor: 'pointer',
+              padding: '4px 8px',
+            }}
+          >
+            <span>Xem thêm</span>
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
       <div className="rail-box">
         <ol className="rail top-rail">

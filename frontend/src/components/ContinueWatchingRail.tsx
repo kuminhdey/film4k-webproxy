@@ -153,6 +153,7 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
           ref={railRef}
           style={{
             display: 'flex',
+            alignItems: 'stretch',
             gap: '16px',
             overflowX: 'auto',
             paddingBottom: '12px',
@@ -174,6 +175,9 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
                   flex: '0 0 280px',
                   scrollSnapAlign: 'start',
                   position: 'relative',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
                 }}
               >
                 <div
@@ -187,6 +191,10 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
                     cursor: 'pointer',
                     position: 'relative',
                     transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flex: 1,
                   }}
                 >
                   {/* Thumbnail Container */}
@@ -345,7 +353,7 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
                   </div>
 
                   {/* Card Title & Info */}
-                  <div style={{ padding: '10px 12px' }}>
+                  <div style={{ padding: '10px 12px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                     <div
                       style={{
                         fontSize: '14px',
@@ -354,11 +362,12 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
+                        lineHeight: '18px',
                       }}
                     >
                       {item.title}
                     </div>
-                    {item.title_en && item.title_en !== item.title && (
+                    {item.title_en && item.title_en !== item.title ? (
                       <div
                         style={{
                           fontSize: '12px',
@@ -367,9 +376,24 @@ export const ContinueWatchingRail: React.FC<ContinueWatchingRailProps> = ({ onPl
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           marginTop: '2px',
+                          lineHeight: '18px',
+                          height: '18px',
                         }}
                       >
                         {item.title_en}
+                      </div>
+                    ) : (
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          fontSize: '12px',
+                          marginTop: '2px',
+                          lineHeight: '18px',
+                          height: '18px',
+                          visibility: 'hidden',
+                        }}
+                      >
+                        &nbsp;
                       </div>
                     )}
                   </div>

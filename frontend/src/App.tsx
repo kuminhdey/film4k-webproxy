@@ -732,6 +732,10 @@ export const App: React.FC = () => {
                     <TopRail
                       movies={top10Movies}
                       onSelect={handleCardClick}
+                      onViewAll={() => {
+                        setSort('score');
+                        setActiveTab('all');
+                      }}
                     />
                   )}
 
@@ -756,92 +760,6 @@ export const App: React.FC = () => {
                       onPlay={handlePlayClick}
                       onViewAll={() => setActiveTab('movie')}
                     />
-                  )}
-
-                  {/* Home Load-More footer */}
-                  {(hasMore || allLoaded) && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: '12px',
-                        padding: '24px 0 32px',
-                      }}
-                    >
-                      <div style={{ fontSize: '13px', color: 'var(--muted, #8b95ad)' }}>
-                        Đang hiển thị{' '}
-                        <span style={{ color: '#fff', fontWeight: 600 }}>
-                          {movies.length.toLocaleString()}
-                        </span>{' '}
-                        /{' '}
-                        <span style={{ color: '#f5c518', fontWeight: 600 }}>
-                          {total.toLocaleString()}
-                        </span>{' '}
-                        phim
-                      </div>
-
-                      {hasMore && (
-                        <button
-                          type="button"
-                          onClick={fetchMore}
-                          disabled={loadingMore}
-                          style={{
-                            background: 'linear-gradient(135deg, rgba(174, 234, 0, 0.15) 0%, rgba(132, 204, 22, 0.25) 100%)',
-                            border: '1px solid rgba(174, 234, 0, 0.5)',
-                            color: '#fcfdf7',
-                            padding: '12px 32px',
-                            borderRadius: '10px',
-                            fontSize: '14px',
-                            fontWeight: 700,
-                            cursor: loadingMore ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            boxShadow: '0 4px 18px rgba(174, 234, 0, 0.25)',
-                            transition: 'all 0.2s',
-                            opacity: loadingMore ? 0.7 : 1,
-                          }}
-                        >
-                          {loadingMore ? (
-                            <>
-                              <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                              <span>Đang tải thêm...</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>🎬</span>
-                              <span>Xem thêm phim</span>
-                              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', fontWeight: 400 }}>
-                                ({(total - movies.length).toLocaleString()} phim còn lại)
-                              </span>
-                            </>
-                          )}
-                        </button>
-                      )}
-
-                      {allLoaded && (
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            fontSize: '13px',
-                            color: '#10b981',
-                            background: 'rgba(16, 185, 129, 0.08)',
-                            border: '1px solid rgba(16, 185, 129, 0.2)',
-                            borderRadius: '10px',
-                            padding: '10px 20px',
-                          }}
-                        >
-                          <span>✅</span>
-                          <span>
-                            Đã tải hết toàn bộ{' '}
-                            <strong>{total.toLocaleString()}</strong> phim trong kho 4K Cinema
-                          </span>
-                        </div>
-                      )}
-                    </div>
                   )}
                 </>
               )}

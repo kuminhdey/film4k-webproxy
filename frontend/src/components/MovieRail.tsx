@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bookmark } from 'lucide-react';
+import { Bookmark, ChevronRight } from 'lucide-react';
 import { MovieSummary } from '../types';
 import { isInMyList, toggleMyList } from '../utils/myList';
 
@@ -32,23 +32,41 @@ export const MovieRail: React.FC<MovieRailProps> = ({
 
   return (
     <section className="row-sec" id={id}>
-      <div className="head">
-        {onViewAll ? (
-          <a
-            className="head-link"
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              onViewAll();
+      <div
+        className="head"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '14px',
+        }}
+      >
+        <h2
+          style={onViewAll ? { cursor: 'pointer' } : undefined}
+          onClick={onViewAll}
+        >
+          {title}
+        </h2>
+        {onViewAll && (
+          <button
+            type="button"
+            onClick={onViewAll}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#aeea00',
+              fontSize: '13px',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              cursor: 'pointer',
+              padding: '4px 8px',
             }}
           >
-            <h2>{title}</h2>
-            <span className="head-more" aria-hidden="true">
-              Xem tất cả ›
-            </span>
-          </a>
-        ) : (
-          <h2>{title}</h2>
+            <span>Xem thêm</span>
+            <ChevronRight size={16} />
+          </button>
         )}
       </div>
 
