@@ -2781,7 +2781,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                 </div>
               ))}
               <p className="text-[11px] text-[#8aa885] text-center pt-1">
-                Phím tắt chỉ hoạt động ở nguồn phát HLS Bơ Film, không áp dụng cho Server Dự Phòng.
+                Phím tắt chỉ hoạt động khi phát video HLS Bơ Film.
               </p>
             </div>
           </div>
