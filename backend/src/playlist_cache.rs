@@ -5,20 +5,19 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use regex::Regex;
-use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{
     db::Database,
     proxy::{
         add_security_headers, fetch_upstream_title_hls, is_cdn_segment, is_valid_remote_url,
-        read_body_with_cap, redact_url_secrets, resolve_and_validate_host, resolve_relative_url,
+        fetch_stream_with_referer, read_body_with_cap, resolve_relative_url,
         MAX_PLAYLIST_BYTES,
     },
     AppState,
@@ -540,39 +539,9 @@ impl PlaylistCache {
             )
         })?;
 
-        let host = parsed_url.host_str().unwrap_or("fiml4k.fun");
-        let port = parsed_url.port_or_known_default().unwrap_or(443);
-        let resolved_addr = resolve_and_validate_host(host, port).await.map_err(|e| {
-            (
-                StatusCode::FORBIDDEN,
-                format!("Subtitle host DNS resolution failed or blocked: {}", e),
-            )
-        })?;
-
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .resolve(host, resolved_addr)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_default();
-
-        let resp = client
-            .get(parsed_url.as_str())
-            .header(header::REFERER, "https://fiml4k.fun/")
-            .header(
-                header::USER_AGENT,
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            )
-            .send()
+        let (resp, _) = fetch_stream_with_referer(&parsed_url, None, 3, Some("https://fiml4k.fun/"))
             .await
-            .map_err(|_| {
-                let redacted = redact_url_secrets(&upstream_url);
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Failed to fetch upstream subtitle from {}", redacted),
-                )
-            })?;
+            .map_err(|(code, message)| (code, message.to_string()))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -671,50 +640,9 @@ impl PlaylistCache {
             )
         })?;
 
-        let host = master_url_parsed.host_str().ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "Master HLS URL missing host".to_string(),
-            )
-        })?;
-        let port = master_url_parsed.port_or_known_default().unwrap_or(443);
-        let resolved_addr = resolve_and_validate_host(host, port).await.map_err(|e| {
-            (
-                StatusCode::FORBIDDEN,
-                format!("Master HLS host DNS resolution failed or blocked: {}", e),
-            )
-        })?;
-
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .resolve(host, resolved_addr)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to build pinned HTTP client: {}", e),
-                )
-            })?;
-
-        let master_resp = client
-            .get(master_url_parsed.as_str())
-            .header(header::REFERER, "https://fiml4k.fun/")
-            .header(
-                header::USER_AGENT,
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            )
-            .send()
+        let (master_resp, final_master_url) = fetch_stream_with_referer(&master_url_parsed, None, 3, Some("https://fiml4k.fun/"))
             .await
-            .map_err(|_| {
-                let redacted = redact_url_secrets(&master_hls_url);
-                error!("Failed to fetch upstream master playlist for {}", redacted);
-                (
-                    StatusCode::BAD_GATEWAY,
-                    "Failed to connect to upstream master playlist".to_string(),
-                )
-            })?;
+            .map_err(|(code, message)| (code, message.to_string()))?;
 
         if !master_resp.status().is_success() {
             return Err((
@@ -739,7 +667,7 @@ impl PlaylistCache {
 
         // Parse and rewrite master, extract sub-playlists
         let (rewritten_master, sub_playlists) =
-            parse_master_and_extract_subs_for_server(&master_body, &master_url_parsed, server);
+            parse_master_and_extract_subs_for_server(&master_body, &final_master_url, server);
 
         // Ensure local directory exists for this episode & server
         let slug_dir = self.cache_slug_dir_with_server(slug, ep_num, server);
@@ -756,49 +684,28 @@ impl PlaylistCache {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let mut expires_at = extract_expiration_timestamp(&master_body, &master_hls_url);
+        if let Some(final_expiry) = extract_expiration_timestamp("", final_master_url.as_str()) {
+            expires_at = Some(expires_at.map_or(final_expiry, |expiry| expiry.min(final_expiry)));
+        }
 
         // Download all sub-playlists in parallel with SSRF validation and DNS pinning
         let mut join_set = tokio::task::JoinSet::new();
         for (filename, sub_url) in sub_playlists {
             let file_dest = slug_dir.join(&filename);
             join_set.spawn(async move {
-                if let Ok(parsed_sub) = is_valid_remote_url(&sub_url) {
-                    if let Some(sub_host) = parsed_sub.host_str() {
-                        let sub_port = parsed_sub.port_or_known_default().unwrap_or(443);
-                        if let Ok(sub_addr) = resolve_and_validate_host(sub_host, sub_port).await {
-                            if let Ok(sub_client) = Client::builder()
-                                .timeout(Duration::from_secs(15))
-                                .resolve(sub_host, sub_addr)
-                                .no_proxy()
-                                .redirect(reqwest::redirect::Policy::none())
-                                .build()
-                            {
-                                if let Ok(resp) = sub_client
-                                    .get(parsed_sub.as_str())
-                                    .header(header::REFERER, "https://fiml4k.fun/")
-                                    .header(
-                                        header::USER_AGENT,
-                                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-                                    )
-                                    .send()
-                                    .await
-                                {
-                                    if resp.status().is_success() {
-                                        if let Ok(sub_body) = read_body_with_cap(resp, MAX_PLAYLIST_BYTES).await {
-                                            let Ok(sub_body) = String::from_utf8(sub_body) else { return None; };
-                                            let sub_exp = extract_expiration_timestamp(&sub_body, &sub_url);
-                                            let processed = process_sub_playlist_for_server(&sub_body, &parsed_sub, server);
-                                            if tokio::fs::write(&file_dest, processed).await.is_ok() {
-                                                return Some(sub_exp);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                None
+                let parsed_sub = is_valid_remote_url(&sub_url).ok()?;
+                let (resp, final_sub_url) = fetch_stream_with_referer(&parsed_sub, None, 3, Some("https://fiml4k.fun/")).await.ok()?;
+                if !resp.status().is_success() { return None; }
+                let sub_body = String::from_utf8(read_body_with_cap(resp, MAX_PLAYLIST_BYTES).await.ok()?).ok()?;
+                if !sub_body.trim().starts_with("#EXTM3U") { return None; }
+                let sub_exp = extract_expiration_timestamp(&sub_body, &sub_url);
+                let sub_exp = match extract_expiration_timestamp("", final_sub_url.as_str()) {
+                    Some(final_expiry) => Some(sub_exp.map_or(final_expiry, |expiry| expiry.min(final_expiry))),
+                    None => sub_exp,
+                };
+                let processed = process_sub_playlist_for_server(&sub_body, &final_sub_url, server);
+                tokio::fs::write(&file_dest, processed).await.ok()?;
+                Some(sub_exp)
             });
         }
 

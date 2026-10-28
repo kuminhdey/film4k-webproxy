@@ -628,6 +628,15 @@ pub async fn fetch_stream_with_client(
     range: Option<&HeaderValue>,
     max_hops: usize,
 ) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
+    fetch_stream_with_referer(target_url, range, max_hops, None).await
+}
+
+pub async fn fetch_stream_with_referer(
+    target_url: &Url,
+    range: Option<&HeaderValue>,
+    max_hops: usize,
+    referer_override: Option<&str>,
+) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
     let mut current_url = target_url.clone();
     let mut hops = 0;
 
@@ -655,7 +664,7 @@ pub async fn fetch_stream_with_client(
         if let Some(r) = range {
             req = req.header(header::RANGE, r);
         }
-        let referer = format!("https://{}/", host);
+        let referer = referer_override.map(str::to_owned).unwrap_or_else(|| format!("https://{}/", host));
         req = req
             .header(header::REFERER, referer)
             .header(
