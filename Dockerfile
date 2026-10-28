@@ -7,14 +7,12 @@
 #        build argument, immutable provenance labels and environment variables.
 #
 # Base Image Pinning Policy:
-# Base images are pinned to specific stable distribution snapshots and toolchain
-# releases (Node 22.14.0 Alpine 3.21, Rust 1.88.0 Bookworm, Debian Bookworm 20250224 slim).
-# In multi-platform CI/CD registries, architecture-specific manifest digests (@sha256:...)
-# can be appended where single-architecture pinning is required.
+# Base images are pinned to exact manifest digests for the selected Node,
+# Rust, and Debian releases.
 # ==============================================================================
 
 # Stage 1: Build Frontend (React 19 + TypeScript + Vite)
-FROM node:22.14.0-alpine3.21 AS frontend-builder
+FROM node:22.14.0-alpine3.21@sha256:9bef0ef1e268f60627da9ba7d7605e8831d5b56ad07487d24d1aa386336d1944 AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci --no-audit --no-fund
@@ -22,7 +20,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Backend (Rust Axum Tokio)
-FROM rust:1.88.0-bookworm AS backend-builder
+FROM rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS backend-builder
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -44,7 +42,7 @@ ENV BUILD_COMMIT=${BUILD_COMMIT}
 RUN touch backend/src/main.rs backend/src/lib.rs && cargo build --locked --release -p webproxy_backend
 
 # Stage 3: Lightweight Production Runtime
-FROM debian:bookworm-20250224-slim
+FROM debian:bookworm-20250224-slim@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
