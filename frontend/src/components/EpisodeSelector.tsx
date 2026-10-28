@@ -178,24 +178,19 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
 
   const isSingle = Boolean(isSingleMovie || allEpisodes.length <= 1);
 
-  if (!servers || servers.length === 0) {
-    return null;
-  }
-
-  // Phim lẻ với 1 server duy nhất và không có bộ chuyển nguồn: ẩn hoàn toàn EpisodeSelector
-  if (isSingle && servers.length <= 1 && !onSelectPlayerMode) {
+  if (!servers || servers.length === 0 || isSingle) {
     return null;
   }
 
   return (
     <div className="space-y-4 bg-[#071307] border border-lime-500/20 rounded-3xl p-4 sm:p-5 shadow-2xl">
-      {/* Khu vực 1: Chọn Phiên Bản / Server (chỉ hiện khi có từ 2 server trở lên) */}
+      {/* Chọn Server / Phiên bản (chỉ hiện khi có từ 2 server trở lên) */}
       {servers.length > 1 && (
         <div className="space-y-2.5 border-b border-lime-500/15 pb-3.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-black text-lime-400 uppercase tracking-wider flex items-center gap-1.5">
               <Server className="w-3.5 h-3.5" />
-              <span>Khu Vực 1: Chọn Phiên Bản / Server</span>
+              <span>Chọn Server / Phiên bản</span>
             </span>
             <span className="text-[11px] font-semibold text-[#a8cca2]">
               {servers.length} phiên bản có sẵn
@@ -226,68 +221,7 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         </div>
       )}
 
-      {/* Khu vực 2: Chọn Nguồn Phát */}
-      {onSelectPlayerMode && (
-        <div className={`space-y-2.5 ${!isSingle ? 'border-b border-lime-500/15 pb-3.5' : ''}`}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-lime-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Tv className="w-3.5 h-3.5" />
-              <span>Khu Vực 2: Chọn Nguồn Phát</span>
-            </span>
-            <span className="text-[11px] font-semibold text-[#a8cca2]">
-              {playerMode === 'hls' ? 'Đang phát: HLS VPS Bơ Film' : 'Đang phát: Embed Dự Phòng'}
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Nguồn Bơ Film (HLS) */}
-            <button
-              type="button"
-              onClick={() => onSelectPlayerMode?.('hls')}
-              className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
-                playerMode === 'hls'
-                  ? 'bg-lime-500 text-black shadow-[0_0_14px_rgba(132,204,22,0.45)] ring-1 ring-lime-400 font-extrabold'
-                  : 'bg-[#0a180b] hover:bg-lime-950/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 hover:border-lime-400/40'
-              }`}
-              title="Nguồn Bơ Film (HLS Stream tối ưu máy chủ VPS)"
-              aria-label="Chọn nguồn phát HLS tối ưu VPS Bơ Film"
-            >
-              <span>🥑 Nguồn Bơ Film (HLS)</span>
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
-                  playerMode === 'hls' ? 'bg-black/20 text-black' : 'bg-lime-500/15 text-lime-400'
-                }`}
-              >
-                Khuyên Dùng
-              </span>
-            </button>
-
-            {/* Server Dự Phòng (Server 2) */}
-            <button
-              type="button"
-              onClick={() => onSelectPlayerMode?.('embed')}
-              className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
-                playerMode === 'embed'
-                  ? 'bg-lime-500 text-black shadow-[0_0_14px_rgba(132,204,22,0.45)] ring-1 ring-lime-400 font-extrabold'
-                  : 'bg-[#0a180b] hover:bg-lime-950/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 hover:border-lime-400/40'
-              }`}
-              title="Server Dự Phòng (Server 2)"
-              aria-label="Chọn nguồn phát nhúng Embed dự phòng"
-            >
-              <span>📺 Server Dự Phòng (Server 2)</span>
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
-                  playerMode === 'embed' ? 'bg-black/20 text-black' : 'bg-yellow-500/15 text-yellow-300'
-                }`}
-              >
-                Dự Phòng
-              </span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Khu vực 3: Danh Sách Tập (Phim lẻ ẩn vùng chọn tập) */}
+      {/* Danh Sách Tập Phim */}
       {!isSingle && (
         <div className="space-y-3 pt-1">
         {/* Episodes Header + Prev/Next Quick Navigation */}

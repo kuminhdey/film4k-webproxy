@@ -338,18 +338,18 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         {playerElement}
       </div>
 
-      {/* Episode Selector (Phim lẻ ẩn vùng chọn tập) */}
-      <EpisodeSelector
-        servers={servers}
-        activeServerIndex={activeServerIndex}
-        activeEpisodeSlug={currentEpisode?.slug || ''}
-        movieSlug={movie.slug}
-        playerMode={playerMode}
-        onSelectServer={setActiveServerIndex}
-        onSelectEpisode={handleSelectEpisode}
-        onSelectPlayerMode={setPlayerMode}
-        isSingleMovie={isSingleMovie}
-      />
+      {/* Episode Selector (Phim lẻ ẩn hoàn toàn vùng chọn tập) */}
+      {!isSingleMovie && (
+        <EpisodeSelector
+          servers={servers}
+          activeServerIndex={activeServerIndex}
+          activeEpisodeSlug={currentEpisode?.slug || ''}
+          movieSlug={movie.slug}
+          onSelectServer={setActiveServerIndex}
+          onSelectEpisode={handleSelectEpisode}
+          isSingleMovie={isSingleMovie}
+        />
+      )}
 
       {/* Movie Information Summary */}
       <div className="bg-[#071307] border border-lime-500/20 rounded-2xl p-5 space-y-4 shadow-xl">
