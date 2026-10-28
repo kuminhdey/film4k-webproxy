@@ -56,9 +56,9 @@ export const Header: React.FC<HeaderProps> = ({ currentPath, onNavigate }) => {
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand Logo & Name */}
-        <div
+        <button type="button"
           onClick={() => handleNavClick('/')}
-          className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group flex-shrink-0"
+          className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group flex-shrink-0 text-left focus-visible:ring-2 focus-visible:ring-lime-400 rounded-xl"
         >
           <div className="relative w-9 h-9 sm:w-11 sm:h-11 rounded-xl overflow-hidden p-0.5 bg-gradient-to-br from-lime-400 to-[#1e3a1b] shadow-[0_0_15px_rgba(132,204,22,0.4)] group-hover:shadow-[0_0_22px_rgba(132,204,22,0.6)] transition-all">
             <img
@@ -76,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPath, onNavigate }) => {
               Avocado Cinema
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex items-center gap-1 xl:gap-2 text-xs xl:text-sm font-semibold text-[#d4ebd2] flex-shrink-0">
@@ -121,8 +121,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPath, onNavigate }) => {
             className="relative flex-shrink-0"
             onMouseEnter={() => setActiveDropdown('genres')}
             onMouseLeave={() => setActiveDropdown(null)}
+            onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setActiveDropdown(null); }}
+            onKeyDown={(event) => { if (event.key === 'Escape') { setActiveDropdown(null); (event.currentTarget.querySelector('button') as HTMLButtonElement | null)?.focus(); } }}
           >
-            <button className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
+            <button type="button" aria-expanded={activeDropdown === 'genres'} onClick={() => setActiveDropdown(activeDropdown === 'genres' ? null : 'genres')} className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
               <span>Thể Loại</span>
               <ChevronDown className="w-3.5 h-3.5 text-lime-400" />
             </button>
@@ -146,8 +148,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPath, onNavigate }) => {
             className="relative flex-shrink-0"
             onMouseEnter={() => setActiveDropdown('countries')}
             onMouseLeave={() => setActiveDropdown(null)}
+            onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setActiveDropdown(null); }}
+            onKeyDown={(event) => { if (event.key === 'Escape') { setActiveDropdown(null); (event.currentTarget.querySelector('button') as HTMLButtonElement | null)?.focus(); } }}
           >
-            <button className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
+            <button type="button" aria-expanded={activeDropdown === 'countries'} onClick={() => setActiveDropdown(activeDropdown === 'countries' ? null : 'countries')} className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
               <span>Quốc Gia</span>
               <ChevronDown className="w-3.5 h-3.5 text-lime-400" />
             </button>
@@ -171,8 +175,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPath, onNavigate }) => {
             className="relative flex-shrink-0"
             onMouseEnter={() => setActiveDropdown('years')}
             onMouseLeave={() => setActiveDropdown(null)}
+            onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setActiveDropdown(null); }}
+            onKeyDown={(event) => { if (event.key === 'Escape') { setActiveDropdown(null); (event.currentTarget.querySelector('button') as HTMLButtonElement | null)?.focus(); } }}
           >
-            <button className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
+            <button type="button" aria-expanded={activeDropdown === 'years'} onClick={() => setActiveDropdown(activeDropdown === 'years' ? null : 'years')} className="flex items-center gap-1 px-2 xl:px-3 py-1.5 rounded-lg hover:text-lime-300 hover:bg-lime-950/30 transition-colors flex-shrink-0 whitespace-nowrap">
               <span>Năm</span>
               <ChevronDown className="w-3.5 h-3.5 text-lime-400" />
             </button>

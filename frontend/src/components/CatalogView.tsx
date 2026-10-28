@@ -12,6 +12,8 @@ interface CatalogViewProps {
   paginate?: Paginate;
   filters: FilterOptions;
   isLoading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   onFilterChange: (filters: FilterOptions) => void;
   onFilterReset: () => void;
   onPageChange: (page: number) => void;
@@ -36,6 +38,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   paginate,
   filters,
   isLoading,
+  error,
+  onRetry,
   onFilterChange,
   onFilterReset,
   onPageChange,
@@ -203,6 +207,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           <p className="text-sm font-semibold text-[#a8cca2]">
             Đang tải danh sách phim Bơ Film...
           </p>
+        </div>
+      ) : error ? (
+        <div role="alert" className="py-16 text-center space-y-4">
+          <p className="text-red-300">Không tải được danh sách phim. Vui lòng thử lại.</p>
+          <button type="button" onClick={onRetry} className="rounded-xl bg-lime-500 px-5 py-2 font-bold text-black">Thử lại</button>
         </div>
       ) : movies.length === 0 ? (
         /* UX-D01: Redesigned Empty State with Cinema Taste & Suggestions */

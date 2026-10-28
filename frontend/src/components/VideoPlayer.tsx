@@ -58,7 +58,7 @@ import {
   clearPlaybackPosition,
   formatTime,
 } from '../utils';
-import { Film4kFragmentLoader, resetCumulativeBytes } from '../utils/hlsLoader';
+import { createFilm4kFragmentLoader } from '../utils/hlsLoader';
 import { getQualityDisplayInfo, sortQualitiesDescending } from '../utils/quality';
 
 type EqPreset = 'flat' | 'bass-boost' | 'vocal-clarity' | 'virtual-surround';
@@ -295,6 +295,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const shortcutsDialogRef = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    if (!showShortcutsModal) return;
+    const dialog = shortcutsDialogRef.current;
+    dialog?.showModal();
+    return () => { if (dialog?.open) dialog.close(); };
+  }, [showShortcutsModal]);
   const [isDimmed, setIsDimmed] = useState(false);
   const [key, setKey] = useState(0);
   const [internalPlayerMode, setInternalPlayerMode] = useState<'hls' | 'embed'>(
@@ -320,7 +327,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [playerModeProp]);
 
   const [autoIngested, setAutoIngested] = useState(false);
+  const [FragmentLoader] = useState(createFilm4kFragmentLoader);
   const [isInitializingHls, setIsInitializingHls] = useState(false);
+  const [playbackError, setPlaybackError] = useState(false);
 
   // ===== Timestamp URL Deep Linking (?t=seconds) =====
   const getDeepLinkTime = (): number => {
@@ -577,6 +586,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const isManualModeRef = useRef<boolean>(playerModeProp === 'embed');
   const hlsFallbackErrorRef = useRef<boolean>(false);
   const retryCountRef = useRef<number>(0);
+  const mediaRecoveryCountRef = useRef<number>(0);
+  const nativeErrorCountRef = useRef<number>(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -663,7 +674,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-      resetCumulativeBytes();
+      FragmentLoader.reset();
     };
   }, []);
 
@@ -711,7 +722,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Default to HLS whenever new episode stream or movie is provided
   useEffect(() => {
     hlsFallbackErrorRef.current = false;
-    resetCumulativeBytes();
+    FragmentLoader.reset();
     if (playerModeProp === 'embed') {
       isManualModeRef.current = true;
       return;
@@ -1544,6 +1555,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (showShortcutsModal) return;
       const activeEl = document.activeElement;
       if (
         activeEl &&
@@ -1684,7 +1696,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [playerMode, triggerFeedback, playbackSpeed, handleSpeedSelect, toggleTheater, isTheater, togglePip]);
+  }, [playerMode, triggerFeedback, playbackSpeed, handleSpeedSelect, toggleTheater, isTheater, togglePip, showShortcutsModal]);
 
   // Escape / outside click closes shortcuts modal
   useEffect(() => {
@@ -1810,6 +1822,9 @@ function parseEpisodeNum(slug?: string, name?: string): number {
     if (isNewStream) {
       lastStreamUrlRef.current = streamUrl;
       retryCountRef.current = 0;
+      mediaRecoveryCountRef.current = 0;
+      nativeErrorCountRef.current = 0;
+      setPlaybackError(false);
       setIsInitializingHls(false);
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
@@ -1825,8 +1840,11 @@ function parseEpisodeNum(slug?: string, name?: string): number {
       wasPlayingRef.current = true;
       lastEpKeyRef.current = currentEpKey;
       retryCountRef.current = 0;
+      mediaRecoveryCountRef.current = 0;
+      nativeErrorCountRef.current = 0;
+      setPlaybackError(false);
       hlsFallbackErrorRef.current = false;
-      resetCumulativeBytes();
+      FragmentLoader.reset();
       setIsInitializingHls(false);
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
@@ -1842,6 +1860,27 @@ function parseEpisodeNum(slug?: string, name?: string): number {
     const shouldAutoPlay = wasPlayingRef.current || deepLinkTime > 0;
 
     let nativeCleanup: (() => void) | null = null;
+    let playbackFailed = false;
+
+    const failPlayback = () => {
+      if (playbackFailed || isDisposed) return;
+      playbackFailed = true;
+      setIsInitializingHls(false);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8'));
+      if (hasEmbed) {
+        hlsFallbackErrorRef.current = true;
+        setPlayerMode('embed');
+      } else {
+        setPlaybackError(true);
+      }
+    };
 
     const startHls = () => {
       if (isDisposed || !videoRef.current) return;
@@ -1853,7 +1892,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         }
 
         const hls = new Hls({
-          fLoader: Film4kFragmentLoader as any,
+          fLoader: FragmentLoader as any,
           enableWorker: true,
           lowLatencyMode: false,
           backBufferLength: 90,
@@ -2017,7 +2056,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         });
 
         hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
-          if (data.fatal) {
+          if (data.fatal && !playbackFailed) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 if (retryCountRef.current < 2) {
@@ -2035,20 +2074,16 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                     startHls();
                   }, 2000);
                 } else {
-                  setIsInitializingHls(false);
-                  if (hlsRef.current) {
-                    hlsRef.current.destroy();
-                    hlsRef.current = null;
-                  }
-                  const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
-                  if (hasEmbed) {
-                    hlsFallbackErrorRef.current = true;
-                    setPlayerMode('embed');
-                  }
+                  failPlayback();
                 }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                hls.recoverMediaError();
+                if (mediaRecoveryCountRef.current < 2) {
+                  mediaRecoveryCountRef.current += 1;
+                  hls.recoverMediaError();
+                } else {
+                  failPlayback();
+                }
                 break;
               default:
                 if (retryCountRef.current < 2) {
@@ -2066,27 +2101,15 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                     startHls();
                   }, 2000);
                 } else {
-                  setIsInitializingHls(false);
-                  if (hlsRef.current) {
-                    hlsRef.current.destroy();
-                    hlsRef.current = null;
-                  }
-                  const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
-                  if (hasEmbed) {
-                    hlsFallbackErrorRef.current = true;
-                    setPlayerMode('embed');
-                  }
+                  failPlayback();
                 }
                 break;
             }
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        let nativeLoaded = false;
         const handleLoadedMetadata = () => {
-          nativeLoaded = true;
           setIsInitializingHls(false);
-          retryCountRef.current = 0;
           if (savedPosition > 0 && Math.abs(video.currentTime - savedPosition) > 1) {
             video.currentTime = savedPosition;
           }
@@ -2096,9 +2119,9 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         };
 
         const handleNativeError = () => {
-          if (nativeLoaded) return;
-          if (retryCountRef.current < 2) {
-            retryCountRef.current += 1;
+          if (playbackFailed) return;
+          if (nativeErrorCountRef.current < 2) {
+            nativeErrorCountRef.current += 1;
             setIsInitializingHls(true);
             if (retryTimerRef.current) {
               clearTimeout(retryTimerRef.current);
@@ -2112,12 +2135,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
               }
             }, 2000);
           } else {
-            setIsInitializingHls(false);
-            const hasEmbed = Boolean(embedUrl && !embedUrl.includes('.m3u8') && !embedUrl.endsWith('.m3u8'));
-            if (hasEmbed) {
-              hlsFallbackErrorRef.current = true;
-              setPlayerMode('embed');
-            }
+            failPlayback();
           }
         };
 
@@ -2158,8 +2176,11 @@ function parseEpisodeNum(slug?: string, name?: string): number {
 
   const handleReload = () => {
     retryCountRef.current = 0;
+    mediaRecoveryCountRef.current = 0;
+    nativeErrorCountRef.current = 0;
+    setPlaybackError(false);
     hlsFallbackErrorRef.current = false;
-    resetCumulativeBytes();
+    FragmentLoader.reset();
     setIsInitializingHls(false);
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
@@ -2661,9 +2682,12 @@ function parseEpisodeNum(slug?: string, name?: string): number {
 
       {/* Keyboard Shortcuts Guide Modal */}
       {showShortcutsModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={() => setShowShortcutsModal(false)}
+        <dialog
+          ref={shortcutsDialogRef}
+          aria-label="Phím tắt trình phát"
+          onCancel={() => setShowShortcutsModal(false)}
+          className="fixed inset-0 z-[60] w-screen h-screen max-w-none max-h-none m-0 border-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={(event) => { if (event.target === event.currentTarget) setShowShortcutsModal(false); }}
         >
           <div
             className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto bg-[#071307] border border-lime-500/30 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] animate-in fade-in zoom-in-95 duration-200"
@@ -2761,7 +2785,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
               </p>
             </div>
           </div>
-        </div>
+        </dialog>
       )}
 
       <div
@@ -3439,6 +3463,13 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                   <p className="text-xs text-[#8aa885] mt-1.5 max-w-xs sm:max-w-sm">
                     Hệ thống đang giải mã và tối ưu hóa luồng phát cho bạn, vui lòng đợi trong giây lát.
                   </p>
+                </div>
+              )}
+
+              {playbackError && playerMode === 'hls' && (
+                <div role="alert" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center">
+                  <p className="text-sm text-white">Không thể phát video từ nguồn này.</p>
+                  <button type="button" onClick={handleReload} className="rounded-lg bg-lime-500 px-4 py-2 font-bold text-black">Thử lại</button>
                 </div>
               )}
 

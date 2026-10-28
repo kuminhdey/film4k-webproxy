@@ -8,13 +8,15 @@ import { getImageUrl, isFavorite, toggleFavorite } from '../utils';
 
 interface MovieDetailPageProps {
   slug: string;
+  initialServerIndex?: number;
   onBack: () => void;
-  onWatch: (slug: string, epSlug?: string) => void;
+  onWatch: (slug: string, epSlug?: string, serverIndex?: number) => void;
   onSelectMovie: (slug: string) => void;
 }
 
 export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
   slug,
+  initialServerIndex,
   onBack,
   onWatch,
   onSelectMovie,
@@ -24,19 +26,25 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [fav, setFav] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeServerIndex, setActiveServerIndex] = useState(0);
+  const [activeServerIndex, setActiveServerIndex] = useState(initialServerIndex ?? 0);
 
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
     setError(null);
-    setActiveServerIndex(0);
 
     getMovieDetail(slug).then((data) => {
       if (!isMounted) return;
       if (data) {
         setMovie(data);
-        setActiveServerIndex(0);
+        const validServer =
+          initialServerIndex !== undefined &&
+          data.episodes &&
+          initialServerIndex >= 0 &&
+          initialServerIndex < data.episodes.length
+            ? initialServerIndex
+            : 0;
+        setActiveServerIndex(validServer);
         setFav(isFavorite(slug));
       } else {
         setError('Không thể tải thông tin phim. Vui lòng thử lại sau.');
@@ -47,7 +55,21 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [slug]);
+  }, [slug, initialServerIndex]);
+
+  useEffect(() => {
+    if (
+      initialServerIndex !== undefined &&
+      movie?.episodes &&
+      movie.episodes.length > 0
+    ) {
+      const valid =
+        initialServerIndex >= 0 && initialServerIndex < movie.episodes.length
+          ? initialServerIndex
+          : 0;
+      setActiveServerIndex(valid);
+    }
+  }, [initialServerIndex, movie]);
 
   const handleToggleFav = () => {
     const res = toggleFavorite(slug);
@@ -226,7 +248,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
             {/* Actions */}
             <div className="flex flex-wrap items-center gap-3 pt-3">
               <button
-                onClick={() => onWatch(slug, firstEp?.slug)}
+                onClick={() => onWatch(slug, firstEp?.slug, activeServerIndex)}
                 className="flex items-center gap-2 px-6 py-3 rounded-xl bg-lime-500 hover:bg-lime-400 text-black font-black text-sm transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(132,204,22,0.5)] cursor-pointer"
               >
                 <Play className="w-5 h-5 fill-black" />
@@ -309,7 +331,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
             {currentServer.items.map((ep) => (
               <button
                 key={ep.slug}
-                onClick={() => onWatch(slug, ep.slug)}
+                onClick={() => onWatch(slug, ep.slug, activeServerIndex)}
                 className="flex items-center justify-center p-2 rounded-xl text-xs font-bold bg-[#0a180b] hover:bg-lime-500 hover:text-black text-[#d8ebd5] border border-lime-500/20 hover:border-lime-400 transition-all min-h-[44px] cursor-pointer"
               >
                 <span>Tập {ep.name}</span>

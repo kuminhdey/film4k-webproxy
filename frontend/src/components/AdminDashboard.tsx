@@ -100,6 +100,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
   // Confirmation modal state
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const confirmDialogRef = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    if (!confirmModalOpen) return;
+    const dialog = confirmDialogRef.current;
+    dialog?.showModal();
+    return () => { if (dialog?.open) dialog.close(); };
+  }, [confirmModalOpen]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // Logs state
@@ -2548,10 +2555,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
       {/* Confirmation Modal Dialog */}
       {confirmModalOpen && (
-        <div
+        <dialog
+          ref={confirmDialogRef}
+          aria-label="Xác nhận cào tự động phim còn lại"
+          onCancel={() => setConfirmModalOpen(false)}
+          onClick={(event) => { if (event.target === event.currentTarget) setConfirmModalOpen(false); }}
           style={{
             position: 'fixed',
             inset: 0,
+            width: '100vw',
+            height: '100vh',
+            maxWidth: 'none',
+            maxHeight: 'none',
+            margin: 0,
+            border: 0,
             zIndex: 9999,
             background: 'rgba(0, 0, 0, 0.8)',
             backdropFilter: 'blur(8px)',
@@ -2648,7 +2665,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               </button>
             </div>
           </div>
-        </div>
+        </dialog>
       )}
     </div>
   );

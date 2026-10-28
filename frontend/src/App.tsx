@@ -50,11 +50,17 @@ interface RouteState {
   slug?: string;
   episodeSlug?: string;
   keyword?: string;
+  server?: number;
 }
 
 function parseRoute(): RouteState {
   const path = window.location.pathname;
   const searchParams = new URLSearchParams(window.location.search);
+  const serverParam = searchParams.get('server');
+  const parsedServer =
+    serverParam !== null && /^\d+$/.test(serverParam)
+      ? parseInt(serverParam, 10)
+      : undefined;
 
   // Admin route: /admin or /admin/*
   if (path === '/admin' || path.startsWith('/admin/')) {
@@ -80,6 +86,7 @@ function parseRoute(): RouteState {
       view: 'watch',
       slug: watchMatch[1],
       episodeSlug: watchMatch[2],
+      server: parsedServer,
     };
   }
 
@@ -90,6 +97,7 @@ function parseRoute(): RouteState {
     return {
       view: 'detail',
       slug: detailMatch[1],
+      server: parsedServer,
     };
   }
 
@@ -133,6 +141,8 @@ export default function App() {
   const [catalogMovies, setCatalogMovies] = useState<MovieItem[]>([]);
   const [catalogPaginate, setCatalogPaginate] = useState<Paginate | undefined>();
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState(false);
+  const [catalogRetry, setCatalogRetry] = useState(0);
   const [catalogFilters, setCatalogFilters] = useState<FilterOptions>({
     page: 1,
   });
@@ -166,6 +176,7 @@ export default function App() {
 
   // Load Catalog Data when on catalog/search/category/genre/country/year view
   useEffect(() => {
+    let cancelled = false;
     if (
       route.view === 'category' ||
       route.view === 'genre' ||
@@ -174,6 +185,9 @@ export default function App() {
       route.view === 'search'
     ) {
       setCatalogLoading(true);
+      setCatalogError(false);
+      setCatalogMovies([]);
+      setCatalogPaginate(undefined);
 
       const params: FilterOptions = {
         page: catalogFilters.page || 1,
@@ -186,16 +200,20 @@ export default function App() {
       };
 
       getMovies(params).then((res) => {
+        if (cancelled) return;
         if (res) {
           setCatalogMovies(res.items || []);
           setCatalogPaginate(res.paginate);
         } else {
           setCatalogMovies([]);
+          setCatalogPaginate(undefined);
+          setCatalogError(true);
         }
         setCatalogLoading(false);
       });
     }
-  }, [route, catalogFilters]);
+    return () => { cancelled = true; };
+  }, [route, catalogFilters, catalogRetry]);
 
   // Catalog Title Generator
   const getCatalogMeta = () => {
@@ -501,10 +519,12 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
             <MovieDetailPage
               slug={route.slug}
+              initialServerIndex={route.server}
               onBack={() => navigateTo('/')}
-              onWatch={(slug, ep) =>
-                navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}`)
-              }
+              onWatch={(slug, ep, server) => {
+                const sParam = typeof server === 'number' && server > 0 ? `?server=${server}` : '';
+                navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}${sParam}`);
+              }}
               onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
             />
           </div>
@@ -521,10 +541,21 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
               <WatchPage
                 slug={route.slug}
                 episodeSlug={route.episodeSlug}
-                onBack={() => navigateTo(`/phim/${route.slug}`)}
-                onNavigateEpisode={(slug, ep) =>
-                  navigateTo(`/xem-phim/${slug}/${ep}`)
-                }
+                initialServerIndex={route.server}
+                onBack={() => {
+                  const sParam =
+                    typeof route.server === 'number' && route.server > 0
+                      ? `?server=${route.server}`
+                      : '';
+                  navigateTo(`/phim/${route.slug}${sParam}`);
+                }}
+                onNavigateEpisode={(slug, ep, server) => {
+                  const sParam =
+                    typeof server === 'number' && server > 0
+                      ? `?server=${server}`
+                      : '';
+                  navigateTo(`/xem-phim/${slug}/${ep}${sParam}`);
+                }}
                 onSelectMovie={(slug) => navigateTo(`/phim/${slug}`)}
               />
             </React.Suspense>
@@ -545,6 +576,8 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
               paginate={catalogPaginate}
               filters={catalogFilters}
               isLoading={catalogLoading}
+              error={catalogError}
+              onRetry={() => setCatalogRetry((value) => value + 1)}
               onFilterChange={(newFilters) => setCatalogFilters(newFilters)}
               onFilterReset={() => setCatalogFilters({ page: 1 })}
               onPageChange={(page) =>
@@ -569,9 +602,7 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
         {route.view === 'history' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
             <HistoryPage
-              onWatch={(slug, ep) =>
-                navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}`)
-              }
+              onWatch={(slug, ep) => navigateTo(`/xem-phim/${slug}/${ep || 'tap-1'}`)}
               onBack={() => navigateTo('/')}
             />
           </div>

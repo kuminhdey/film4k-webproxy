@@ -103,22 +103,11 @@ export type StatsCallback = (info: {
   type: string;
 }) => void;
 
-let globalStatsListener: StatsCallback | null = null;
-let cumulativeBytesLoaded = 0;
-
-export function setStatsListener(cb: StatsCallback | null) {
-  globalStatsListener = cb;
-}
-
-export function resetCumulativeBytes(): void {
-  cumulativeBytesLoaded = 0;
-}
-
-export function getCumulativeBytesLoaded(): number {
-  return cumulativeBytesLoaded;
-}
-
-export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
+export function createFilm4kFragmentLoader(statsListener: StatsCallback | null = null) {
+  let cumulativeBytesLoaded = 0;
+  return class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
+  static reset(): void { cumulativeBytesLoaded = 0; }
+  static bytesLoaded(): number { return cumulativeBytesLoaded; }
   constructor(config: any) {
     super(config);
     const originalLoad = this.load.bind(this);
@@ -143,16 +132,16 @@ export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
           const chunkBytes = response && response.data ? response.data.byteLength : 0;
           cumulativeBytesLoaded += chunkBytes;
 
-          const mb = Number((chunkBytes / (1024 * 1024)).toFixed(2));
+          const mb = chunkBytes / (1024 * 1024);
           const totalMb = Number((cumulativeBytesLoaded / (1024 * 1024)).toFixed(1));
 
           // Calculate precise speed in Mbps
           const elapsedSec = Math.max(0.05, (performance.now() - startTime) / 1000);
-          const rawSpeed = (mb * 8) / elapsedSec;
-          const speedMbps = rawSpeed > 0.05 ? rawSpeed.toFixed(2) : '17.94';
+          const rawSpeed = (chunkBytes * 8) / (elapsedSec * 1_000_000);
+          const speedMbps = chunkBytes > 0 ? rawSpeed.toFixed(2) : '—';
 
-          if (globalStatsListener) {
-            globalStatsListener({
+          if (statsListener) {
+            statsListener({
               mb,
               totalMb,
               sec: Number(elapsedSec.toFixed(2)),
@@ -180,4 +169,5 @@ export class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
       originalLoad(context, loaderConfig, customCallbacks);
     };
   }
+}
 }
