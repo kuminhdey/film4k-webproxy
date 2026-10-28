@@ -133,12 +133,16 @@ const ScrollableFilterChips: React.FC<{
           gap: '8px',
           overflowX: 'auto',
           width: '100%',
-          padding: '4px 2px',
+          paddingTop: '4px',
+          paddingBottom: '4px',
+          paddingLeft: canScrollLeft ? '36px' : '4px',
+          paddingRight: canScrollRight ? '36px' : '4px',
           scrollBehavior: 'smooth',
           WebkitOverflowScrolling: 'touch',
           scrollbarWidth: 'none',
           touchAction: 'pan-x',
           overscrollBehaviorX: 'contain',
+          transition: 'padding 0.15s ease',
         }}
       >
         {children}

@@ -421,7 +421,7 @@ a:focus-visible {
 }
 
 /* Mobile responsive layout fixes */
-@media (max-width: 768px) {
+@media (max-width: 860px), (pointer: coarse) {
   .wrap {
     padding: 0 16px !important;
   }
@@ -430,15 +430,23 @@ a:focus-visible {
   }
   .filter-arrow,
   .filter-arrow-left,
-  .filter-arrow-right,
-  .filter-scroll-edge {
+  .filter-arrow-right {
     display: none !important;
   }
+  .filter-scroll-edge {
+    display: flex !important;
+    pointer-events: none !important;
+    width: 24px !important;
+  }
   .filter-chips {
-    padding-left: 16px !important;
-    padding-right: 16px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
     -webkit-overflow-scrolling: touch !important;
     scroll-behavior: smooth !important;
+    scrollbar-width: none !important;
+  }
+  .filter-chips::-webkit-scrollbar {
+    display: none !important;
   }
   .hero-dot {
     padding: 10px 4px !important;
@@ -464,8 +472,8 @@ input.cinema-volume-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 80px !important;
-  height: 5px !important;
-  background: rgba(255, 255, 255, 0.25) !important;
+  height: 20px !important;
+  background: transparent !important;
   border: none !important;
   padding: 0 !important;
   margin: 0 !important;
@@ -478,33 +486,43 @@ input.cinema-volume-slider {
 input.cinema-volume-slider::-webkit-slider-runnable-track {
   height: 5px;
   border-radius: 999px;
-  background: transparent;
+  background: var(--volume-bg, rgba(255, 255, 255, 0.25));
+  border: none;
 }
 input.cinema-volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #c6ff00;
   cursor: pointer;
   box-shadow: 0 0 8px rgba(198, 255, 0, 0.8);
   border: none;
-  margin-top: -4px;
+  margin-top: -4.5px;
+  transition: transform 0.1s ease;
+}
+input.cinema-volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
 }
 input.cinema-volume-slider::-moz-range-track {
   height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--volume-bg, rgba(255, 255, 255, 0.25));
+  border: none;
 }
 input.cinema-volume-slider::-moz-range-thumb {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #c6ff00;
   cursor: pointer;
   box-shadow: 0 0 8px rgba(198, 255, 0, 0.8);
   border: none;
+  transition: transform 0.1s ease;
+}
+input.cinema-volume-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
 }
 input.cinema-volume-slider:focus,
 input.cinema-volume-slider:active {

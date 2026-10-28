@@ -104,12 +104,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
   // Mobile viewport detection
   const [isMobile, setIsMobile] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return window.innerWidth <= 768;
+    return window.innerWidth <= 860 || ('ontouchstart' in window && window.innerWidth <= 1024);
   });
 
   useEffect(() => {
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      setIsMobile(window.innerWidth <= 860 || ('ontouchstart' in window && window.innerWidth <= 1024));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -2462,10 +2462,15 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         }
                     : {
                         position: 'absolute',
+                        top: isFullscreen || isPseudoFullscreen ? 'auto' : '12px',
                         bottom: '72px',
                         right: '24px',
                         width: settingsMenu === 'captions' ? '320px' : '280px',
-                        maxHeight: settingsMenu === 'captions' ? 'min(580px, calc(100vh - 96px))' : 'min(480px, calc(100vh - 120px))',
+                        maxHeight: isFullscreen || isPseudoFullscreen
+                          ? settingsMenu === 'captions'
+                            ? 'min(580px, calc(100vh - 96px))'
+                            : 'min(480px, calc(100vh - 120px))'
+                          : 'calc(100% - 84px)',
                         display: 'flex',
                         flexDirection: 'column',
                         overflow: 'hidden',
@@ -2568,7 +2573,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     padding: '8px 6px',
                     overflowY: 'auto',
                     flex: 1,
-                    maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '380px',
+                    maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : isFullscreen || isPseudoFullscreen ? '380px' : 'calc(100% - 48px)',
                     overscrollBehavior: 'contain',
                     WebkitOverflowScrolling: 'touch',
                   }}
@@ -2785,7 +2790,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : isFullscreen || isPseudoFullscreen ? '340px' : 'calc(100% - 48px)',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -2924,7 +2929,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : isFullscreen || isPseudoFullscreen ? '340px' : 'calc(100% - 48px)',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -3018,7 +3023,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '340px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : isFullscreen || isPseudoFullscreen ? '340px' : 'calc(100% - 48px)',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -3106,7 +3111,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     style={{
                       overflowY: 'auto',
                       flex: 1,
-                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : '520px',
+                      maxHeight: isMobile ? 'calc(min(85vh, 600px) - 80px)' : isFullscreen || isPseudoFullscreen ? '520px' : 'calc(100% - 48px)',
                       padding: '6px',
                       overscrollBehavior: 'contain',
                       WebkitOverflowScrolling: 'touch',
@@ -3119,7 +3124,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     <div
                       className="cinema-menu-scroll"
                       style={{
-                        maxHeight: isMobile ? '160px' : '260px',
+                        maxHeight: isMobile ? '160px' : isFullscreen || isPseudoFullscreen ? '260px' : '150px',
                         overflowY: 'auto',
                         display: 'flex',
                         flexDirection: 'column',
@@ -3424,7 +3429,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               bottom: 0,
               left: 0,
               right: 0,
-              padding: '0 20px 14px',
+              padding: isMobile ? '0 10px 10px' : '0 20px 14px',
               background: 'linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.5) 60%, transparent 100%)',
               display: 'flex',
               flexDirection: 'column',
@@ -3512,11 +3517,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 color: '#fff',
-                gap: isMobile ? '8px' : '16px',
+                gap: isMobile ? '4px' : '16px',
               }}
             >
               {/* Left Controls: Play/Pause, Volume, Time */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '16px' }}>
                 <button
                   type="button"
                   className="cinema-ctrl-btn"
@@ -3532,6 +3537,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     justifyContent: 'center',
                     width: isMobile ? '38px' : '34px',
                     height: isMobile ? '38px' : '34px',
+                    minWidth: isMobile ? '38px' : '34px',
+                    flexShrink: 0,
                     padding: 0,
                   }}
                   title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
@@ -3554,10 +3561,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      width: isMobile ? '44px' : '34px',
-                      height: isMobile ? '44px' : '34px',
-                      minWidth: isMobile ? '44px' : 'auto',
-                      minHeight: isMobile ? '44px' : 'auto',
+                      width: isMobile ? '38px' : '34px',
+                      height: isMobile ? '38px' : '34px',
+                      minWidth: isMobile ? '38px' : '34px',
+                      minHeight: isMobile ? '38px' : 'auto',
+                      flexShrink: 0,
                       touchAction: 'manipulation',
                       WebkitTapHighlightColor: 'transparent',
                       padding: 0,
@@ -3567,30 +3575,47 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     {isMuted || volume === 0 ? <VolumeX size={isMobile ? 22 : 20} /> : <Volume2 size={isMobile ? 22 : 20} />}
                   </button>
 
-                  {!isMobile && (
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={isMuted ? 0 : volume}
-                      onChange={handleVolumeChange}
-                      className="cinema-volume-slider"
-                      aria-label="Thanh điều chỉnh âm lượng"
-                    />
-                  )}
+                  {!isMobile && (() => {
+                    const effectiveVol = isMuted ? 0 : volume;
+                    const volPercent = Math.min(100, Math.max(0, Math.round(effectiveVol * 100)));
+                    const volumeBg = `linear-gradient(to right, #c6ff00 0%, #c6ff00 ${volPercent}%, rgba(255, 255, 255, 0.25) ${volPercent}%, rgba(255, 255, 255, 0.25) 100%)`;
+                    return (
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={effectiveVol}
+                        onChange={handleVolumeChange}
+                        className="cinema-volume-slider"
+                        aria-label="Thanh điều chỉnh âm lượng"
+                        style={{ ['--volume-bg' as any]: volumeBg }}
+                      />
+                    );
+                  })()}
                 </div>
 
                 {/* Time Display */}
-                <div style={{ fontSize: isMobile ? '12px' : '13px', color: '#eef2fa', fontVariantNumeric: 'tabular-nums', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                <div
+                  style={{
+                    fontSize: isMobile ? '11px' : '13px',
+                    letterSpacing: isMobile ? '-0.3px' : 'normal',
+                    color: '#eef2fa',
+                    fontVariantNumeric: 'tabular-nums',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    margin: isMobile ? '0 2px' : '0',
+                    flexShrink: 0,
+                  }}
+                >
                   <span>{formatTime(currentTime)}</span>
-                  <span style={{ color: 'var(--muted, #8b95ad)', margin: '0 4px' }}>/</span>
+                  <span style={{ color: 'var(--muted, #8b95ad)', margin: isMobile ? '0 2px' : '0 4px' }}>/</span>
                   <span style={{ color: 'var(--muted-light, #b4bdd0)' }}>{formatTime(duration || 8700)}</span>
                 </div>
               </div>
 
               {/* Right Controls: Captions, Settings, AirPlay, PiP, Fullscreen */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '12px' }}>
                 {/* Captions button */}
                 <button
                   type="button"
@@ -3617,6 +3642,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     justifyContent: 'center',
                     width: isMobile ? '38px' : '34px',
                     height: isMobile ? '38px' : '34px',
+                    minWidth: isMobile ? '38px' : '34px',
+                    flexShrink: 0,
                     padding: 0,
                     transition: 'all 0.15s',
                   }}
@@ -3648,6 +3675,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     justifyContent: 'center',
                     width: isMobile ? '38px' : '34px',
                     height: isMobile ? '38px' : '34px',
+                    minWidth: isMobile ? '38px' : '34px',
+                    flexShrink: 0,
                     padding: 0,
                     transition: 'all 0.15s',
                   }}
@@ -3673,6 +3702,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       justifyContent: 'center',
                       width: '34px',
                       height: '34px',
+                      minWidth: '34px',
+                      flexShrink: 0,
                       padding: 0,
                     }}
                     title="Truyền thiết bị (AirPlay / Cast)"
@@ -3696,10 +3727,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      width: isMobile ? '44px' : '34px',
-                      height: isMobile ? '44px' : '34px',
-                      minWidth: isMobile ? '44px' : 'auto',
-                      minHeight: isMobile ? '44px' : 'auto',
+                      width: isMobile ? '38px' : '34px',
+                      height: isMobile ? '38px' : '34px',
+                      minWidth: isMobile ? '38px' : '34px',
+                      minHeight: isMobile ? '38px' : 'auto',
+                      flexShrink: 0,
                       touchAction: 'manipulation',
                       WebkitTapHighlightColor: 'transparent',
                       padding: 0,
@@ -3725,12 +3757,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    width: isMobile ? '44px' : '36px',
-                    height: isMobile ? '44px' : '36px',
-                    minWidth: isMobile ? '44px' : 'auto',
-                    minHeight: isMobile ? '44px' : 'auto',
+                    width: isMobile ? '38px' : '36px',
+                    height: isMobile ? '38px' : '36px',
+                    minWidth: isMobile ? '38px' : '36px',
+                    minHeight: isMobile ? '38px' : 'auto',
                     flexShrink: 0,
-                    zIndex: 2,
+                    position: 'relative',
+                    zIndex: 5,
                     touchAction: 'manipulation',
                     WebkitTapHighlightColor: 'transparent',
                     borderRadius: '8px',
@@ -3892,8 +3925,11 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              flexWrap: 'wrap',
+              flexWrap: isMobile ? 'nowrap' : 'wrap',
+              overflowX: isMobile ? 'auto' : 'visible',
+              scrollbarWidth: 'none',
               width: '100%',
+              WebkitOverflowScrolling: 'touch',
             }}
           >
             <span
@@ -3907,7 +3943,19 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
             >
               Máy chủ phát:
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flexWrap: isMobile ? 'nowrap' : 'wrap',
+                overflowX: isMobile ? 'auto' : 'visible',
+                scrollbarWidth: 'none',
+                flex: 1,
+                minWidth: 0,
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
               {availableServers.length > 1 ? (
                 availableServers.map((src, i) => {
                   const isSelected = currentSource?.hlsUrl === src.hlsUrl || currentSource?.label === src.label;
@@ -3926,6 +3974,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                         justifyContent: 'center',
                         borderRadius: '999px',
                         whiteSpace: 'nowrap',
+                        flexShrink: 0,
                       }}
                     >
                       {src.label || `Server ${i + 1}`}
@@ -3942,6 +3991,8 @@ export const WatchPage: React.FC<WatchPageProps> = ({ slug, initialEpisode, onNa
                     display: 'inline-flex',
                     alignItems: 'center',
                     borderRadius: '999px',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
                   }}
                 >
                   Server VIP (4K CDN)
