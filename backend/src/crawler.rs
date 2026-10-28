@@ -29,6 +29,7 @@ pub struct CrawlerStatus {
 
 #[derive(Clone)]
 pub struct CrawlerService {
+    pub owner_id: String,
     db: Database,
     playlist_cache: Option<PlaylistCacheService>,
     status: Arc<Mutex<CrawlerStatus>>,
@@ -37,7 +38,32 @@ pub struct CrawlerService {
     home_cache: Arc<RwLock<Option<HomeResponse>>>,
 }
 
+struct CrawlerLeaseGuard {
+    db: Database,
+    owner_id: String,
+    token: i64,
+}
+
+impl Drop for CrawlerLeaseGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.db.release_crawler_lease("crawler_main", &self.owner_id, self.token) {
+            warn!("Failed to release crawler lease: {}", error);
+        }
+    }
+}
+
 impl CrawlerService {
+    fn acquire_lease(&self) -> anyhow::Result<CrawlerLeaseGuard> {
+        let token = self
+            .db
+            .acquire_crawler_lease("crawler_main", &self.owner_id, 120)?
+            .ok_or_else(|| anyhow::anyhow!("Another crawler owns the active lease"))?;
+        Ok(CrawlerLeaseGuard {
+            db: self.db.clone(),
+            owner_id: self.owner_id.clone(),
+            token,
+        })
+    }
     pub fn new(db: Database) -> Self {
         let total = db
             .get_movies(None, None, None, 1, 0)
@@ -45,8 +71,20 @@ impl CrawlerService {
             .unwrap_or(0);
 
         let cached_home = db.get_home_cache().ok().flatten();
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let owner_id = format!(
+            "crawler_{}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+            seq
+        );
 
         Self {
+            owner_id,
             db,
             playlist_cache: None,
             status: Arc::new(Mutex::new(CrawlerStatus {
@@ -107,6 +145,21 @@ impl CrawlerService {
     }
 
     pub fn trigger_mode(&self, mode: &str) -> bool {
+        // Verify no other process holds an unexpired crawler lease
+        if let Ok(Some((owner, _fence, expires_at))) = self.db.get_crawler_lease("crawler_main") {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if owner != self.owner_id && expires_at >= now {
+                self.add_log(format!(
+                    "⚠️ Crawler trigger ignored: another crawler instance ({}) holds active lease until timestamp {}",
+                    owner, expires_at
+                ));
+                return false;
+            }
+        }
+
         let mut status = self.status.lock().unwrap();
         if status.is_running {
             return false;
@@ -176,9 +229,15 @@ impl CrawlerService {
     }
 
     pub fn set_home_cache(&self, home: HomeResponse) {
-        let _ = self.db.save_home_cache(&home);
-        if let Ok(mut guard) = self.home_cache.write() {
-            *guard = Some(home);
+        match self.acquire_lease().and_then(|lease| {
+            self.db.save_home_cache_with_fence(&home, &self.owner_id, lease.token)
+        }) {
+            Ok(()) => {
+                if let Ok(mut guard) = self.home_cache.write() {
+                    *guard = Some(home);
+                }
+            }
+            Err(error) => warn!("Home cache update skipped without an active lease: {}", error),
         }
     }
 
@@ -237,11 +296,17 @@ impl CrawlerService {
         let fallback_url = std::env::var("FIML4K_HOME_URL")
             .unwrap_or_else(|_| "https://fiml4k.fun/api/home".to_string());
 
+        // Validate URLs with SSRF policy
+        let _ = crate::proxy::is_valid_remote_url(&primary_url).map_err(|e| anyhow::anyhow!("Primary home URL rejected: {}", e))?;
+        let _ = crate::proxy::is_valid_remote_url(&fallback_url).map_err(|e| anyhow::anyhow!("Fallback home URL rejected: {}", e))?;
+
         let user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
         let referer = "https://film4k.net/";
 
         let client = Client::builder()
             .timeout(Duration::from_secs(12))
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         self.add_log(format!("🌐 Fetching homepage from primary: {}", primary_url));
@@ -278,12 +343,13 @@ impl CrawlerService {
     }
 
     pub fn fetch_and_update_home_from_value(&self, val: &serde_json::Value) -> anyhow::Result<HomeResponse> {
-        let parse_section = |section_arr: Option<&Vec<serde_json::Value>>| -> Vec<MovieSummary> {
+        let lease = self.acquire_lease()?;
+        let parse_section = |section_arr: Option<&Vec<serde_json::Value>>| -> anyhow::Result<Vec<MovieSummary>> {
             let mut summaries = Vec::new();
             if let Some(items) = section_arr {
                 for item in items {
                     if let Some(movie) = parse_home_movie_item(item) {
-                        let _ = self.db.upsert_movie(&movie);
+                        self.db.upsert_movie_with_fence(&movie, &self.owner_id, lease.token)?;
                         let summary = self
                             .db
                             .get_movie_summary_by_slug(&movie.slug)
@@ -307,14 +373,14 @@ impl CrawlerService {
                     }
                 }
             }
-            summaries
+            Ok(summaries)
         };
 
-        let hero = parse_section(val.get("hero").and_then(|v| v.as_array()));
-        let top = parse_section(val.get("top").and_then(|v| v.as_array()));
-        let new_series = parse_section(val.get("newSeries").and_then(|v| v.as_array()));
-        let new_movies = parse_section(val.get("newMovies").and_then(|v| v.as_array()));
-        let list = parse_section(val.get("list").and_then(|v| v.as_array()));
+        let hero = parse_section(val.get("hero").and_then(|v| v.as_array()))?;
+        let top = parse_section(val.get("top").and_then(|v| v.as_array()))?;
+        let new_series = parse_section(val.get("newSeries").and_then(|v| v.as_array()))?;
+        let new_movies = parse_section(val.get("newMovies").and_then(|v| v.as_array()))?;
+        let list = parse_section(val.get("list").and_then(|v| v.as_array()))?;
 
         let genres: Vec<String> = val
             .get("genres")
@@ -349,7 +415,7 @@ impl CrawlerService {
         };
 
         // 1. Cache snapshot into SQLite Database
-        self.db.save_home_cache(&home_response)?;
+        self.db.save_home_cache_with_fence(&home_response, &self.owner_id, lease.token)?;
 
         // 2. Cache snapshot into memory for immediate GET /api/home returns
         if let Ok(mut guard) = self.home_cache.write() {
@@ -394,8 +460,12 @@ impl CrawlerService {
         let sitemap_url = std::env::var("SITEMAP_URL")
             .unwrap_or_else(|_| "https://fiml4k.fun/sitemap-page.xml?p=1".to_string());
 
+        let _ = crate::proxy::is_valid_remote_url(&sitemap_url).map_err(|e| anyhow::anyhow!("Sitemap URL rejected: {}", e))?;
+
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         let resp = client
@@ -415,6 +485,34 @@ impl CrawlerService {
 
     pub async fn run_crawl_mode(&self, mode: &str) {
         let start_time = Instant::now();
+
+        // Persistent lease acquisition across processes
+        let lease_ttl = 120u64;
+        let fence_token = match self.db.acquire_crawler_lease("crawler_main", &self.owner_id, lease_ttl) {
+            Ok(Some(token)) => token,
+            Ok(None) => {
+                let msg = "⚠️ Crawler lease 'crawler_main' currently held by another active process. Aborting crawl.";
+                self.add_log(msg.to_string());
+                warn!("{}", msg);
+                let mut st = self.status.lock().unwrap();
+                st.is_running = false;
+                st.mode = "idle".to_string();
+                st.last_status = "Skipped: active lease held by another process".to_string();
+                return;
+            }
+            Err(e) => {
+                let msg = format!("⚠️ Error acquiring crawler lease: {}", e);
+                self.add_log(msg.clone());
+                warn!("{}", msg);
+                let mut st = self.status.lock().unwrap();
+                st.is_running = false;
+                st.mode = "idle".to_string();
+                st.last_status = format!("Error: {}", e);
+                return;
+            }
+        };
+
+        self.add_log(format!("🔒 Acquired crawler lease 'crawler_main' with fence token {}", fence_token));
         self.add_log(format!("📑 Fetching sitemap for mode '{}'...", mode));
 
         // 1. Fetch sitemap slugs
@@ -431,7 +529,8 @@ impl CrawlerService {
             Err(e) => {
                 self.add_log(format!("⚠️ Failed to fetch sitemap: {}. Checking local database files...", e));
                 // Fallback to local master database if sitemap is unreachable
-                self.run_fallback_json_import().await;
+                self.run_fallback_json_import(fence_token).await;
+                let _ = self.db.release_crawler_lease("crawler_main", &self.owner_id, fence_token);
                 let mut st = self.status.lock().unwrap();
                 st.is_running = false;
                 st.mode = "idle".to_string();
@@ -462,6 +561,23 @@ impl CrawlerService {
                 break;
             }
 
+            // Renew lease and verify fencing token periodically
+            if idx > 0 && idx % 10 == 0 {
+                match self.db.renew_crawler_lease("crawler_main", &self.owner_id, fence_token, lease_ttl) {
+                    Ok(true) => {
+                        // Successfully renewed lease
+                    }
+                    Ok(false) | Err(_) => {
+                        self.add_log(format!(
+                            "🛑 Lost crawler lease or fenced out (token: {}). Halting crawl loop.",
+                            fence_token
+                        ));
+                        warn!("Crawler {} lost lease/fence token {}", self.owner_id, fence_token);
+                        break;
+                    }
+                }
+            }
+
             {
                 let mut st = self.status.lock().unwrap();
                 st.current_index = idx + 1;
@@ -482,7 +598,7 @@ impl CrawlerService {
 
             join_set.spawn(async move {
                 let _permit = permit;
-                service.process_single_slug(&slug_clone, &mode_clone).await
+                service.process_single_slug(&slug_clone, &mode_clone, fence_token).await
             });
 
             // Keep JoinSet bounded to avoid memory build up
@@ -508,6 +624,10 @@ impl CrawlerService {
         let elapsed = start_time.elapsed().as_secs();
         let now_str = chrono_simple_now();
 
+        // Release crawler lease on completion
+        let _ = self.db.release_crawler_lease("crawler_main", &self.owner_id, fence_token);
+        self.add_log("🔓 Released crawler lease 'crawler_main'".to_string());
+
         let mut st = self.status.lock().unwrap();
         st.is_running = false;
         st.mode = "idle".to_string();
@@ -519,7 +639,7 @@ impl CrawlerService {
         self.add_log(format!("🏁 {}", st.last_status));
     }
 
-    pub async fn process_single_slug(&self, slug: &str, mode: &str) -> (bool, bool) {
+    pub async fn process_single_slug(&self, slug: &str, mode: &str, fence_token: i64) -> (bool, bool) {
         // Skip if movie already exists with full details and not in prewarm or force mode
         if mode != "prewarm" && mode != "force" {
             if let Ok(Some(existing)) = self.db.get_movie_by_slug(slug) {
@@ -535,7 +655,7 @@ impl CrawlerService {
             }
         }
 
-        match self.fetch_and_upsert_movie(slug, mode).await {
+        match self.fetch_and_upsert_movie(slug, mode, fence_token).await {
             Ok(updated) => (updated, false),
             Err(e) => {
                 warn!("Error crawling slug '{}': {}", slug, e);
@@ -544,21 +664,23 @@ impl CrawlerService {
         }
     }
 
-    pub async fn fetch_and_upsert_movie(&self, slug: &str, mode: &str) -> anyhow::Result<bool> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()?;
-
+    pub async fn fetch_and_upsert_movie(&self, slug: &str, mode: &str, fence_token: i64) -> anyhow::Result<bool> {
         let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
         let title_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
 
-        let resp = client
-            .get(&title_url)
-            .header(header::REFERER, "https://film4k.net/")
-            .header(header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-            .header(header::ACCEPT, "application/json, text/plain, */*")
-            .send()
-            .await?;
+        // Pre-fetch SSRF validation on upstream title endpoint
+        let parsed_title = crate::proxy::is_valid_remote_url(&title_url)
+            .map_err(|err| anyhow::anyhow!("Title URL rejected by SSRF policy: {}", err))?;
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(15))
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+
+        let (resp, _) = crate::proxy::fetch_stream_with_client(&client, &parsed_title, None, 3)
+            .await
+            .map_err(|(status, message)| anyhow::anyhow!("Title fetch failed ({}): {}", status, message))?;
 
         if !resp.status().is_success() {
             anyhow::bail!("API returned status {}", resp.status());
@@ -566,7 +688,7 @@ impl CrawlerService {
 
         let val: serde_json::Value = resp.json().await?;
         if let Some(movie) = parse_title_json_to_movie(slug, &val) {
-            self.db.upsert_movie(&movie)?;
+            self.db.upsert_movie_with_fence(&movie, &self.owner_id, fence_token)?;
 
             // If mode is prewarm, also cache m3u8 playlists to disk
             if mode == "prewarm" {
@@ -581,7 +703,7 @@ impl CrawlerService {
         }
     }
 
-    async fn run_fallback_json_import(&self) {
+    async fn run_fallback_json_import(&self, fence_token: i64) {
         let json_paths = [
             "/app/film4k_master_database.json",
             "film4k_master_database.json",
@@ -596,7 +718,7 @@ impl CrawlerService {
                 if let Ok(content) = tokio::fs::read_to_string(path).await {
                     if let Ok(movies) = serde_json::from_str::<Vec<Movie>>(&content) {
                         for m in movies {
-                            if self.db.upsert_movie(&m).is_ok() {
+                            if self.db.upsert_movie_with_fence(&m, &self.owner_id, fence_token).is_ok() {
                                 imported += 1;
                             }
                         }

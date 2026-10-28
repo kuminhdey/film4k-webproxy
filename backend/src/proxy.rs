@@ -20,6 +20,50 @@ static URI_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"URI="([^"]+)"
 /// Maximum allowed playlist body size (5 MB) to prevent resource exhaustion
 pub const MAX_PLAYLIST_BYTES: usize = 5 * 1024 * 1024;
 
+/// Maximum allowed stream chunk body size (50 MB)
+pub const MAX_STREAM_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Maximum allowed image size (10 MB)
+pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+/// Maximum allowed upstream title JSON response size (2 MB)
+pub const MAX_TITLE_JSON_BYTES: usize = 2 * 1024 * 1024;
+
+/// Read response body chunk-by-chunk with a strict maximum byte limit.
+/// Fails closed with 413 Payload Too Large if Content-Length exceeds max_bytes or if chunked stream exceeds max_bytes,
+/// preventing infinite chunked streams from exhausting memory.
+pub async fn read_body_with_cap(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, (StatusCode, &'static str)> {
+    if let Some(cl) = response.content_length() {
+        if cl > max_bytes as u64 {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Response payload exceeds maximum allowed size",
+            ));
+        }
+    }
+
+    let mut buf = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        warn!("Error reading body chunk from upstream: {}", e);
+        (StatusCode::BAD_GATEWAY, "Failed reading response chunk from upstream")
+    })? {
+        if chunk.len() > max_bytes.saturating_sub(buf.len()) {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Response payload exceeds maximum allowed size",
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// Rate limit map to debounce stream token refresh per slug (max 1 refresh per 60s per slug)
+static REFRESH_RATE_LIMIT: LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+    LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 /// Permitted upstream origins for video streaming and metadata
 pub const ALLOWED_DOMAINS: &[&str] = &[
     "film4k.net",
@@ -31,6 +75,48 @@ pub const ALLOWED_DOMAINS: &[&str] = &[
     "ibyteimg.com",
     "tmdb.org",
 ];
+
+/// Check if a Content-Type header contains disallowed active or executable MIME types
+pub fn is_disallowed_stream_mime(content_type: &str) -> bool {
+    let ct = content_type.to_lowercase();
+    ct.contains("text/html")
+        || ct.contains("application/xhtml+xml")
+        || ct.contains("image/svg+xml")
+        || ct.contains("application/xml")
+        || ct.contains("text/xml")
+        || ct.contains("application/javascript")
+        || ct.contains("text/javascript")
+        || ct.contains("application/x-javascript")
+        || ct.contains("text/x-component")
+        || (ct.contains("application/json") && !ct.contains("dash"))
+}
+
+/// Check if a Content-Type is an allowed raster image MIME type
+pub fn is_allowed_image_mime(content_type: &str) -> bool {
+    let ct = content_type.to_lowercase();
+    ct.starts_with("image/jpeg")
+        || ct.starts_with("image/jpg")
+        || ct.starts_with("image/png")
+        || ct.starts_with("image/webp")
+        || ct.starts_with("image/avif")
+        || ct.starts_with("image/gif")
+}
+
+/// Add baseline security headers (nosniff, CSP sandbox, frame-ancestors none, X-Frame-Options DENY)
+pub fn add_security_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'; sandbox"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("DENY"),
+    );
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ProxyQuery {
@@ -445,6 +531,7 @@ pub fn create_m3u8_response(rewritten: String) -> Response {
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-store, must-revalidate"),
     );
+    add_security_headers(headers_mut);
     resp
 }
 
@@ -452,6 +539,8 @@ pub fn create_m3u8_response(rewritten: String) -> Response {
 pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
     fetch_upstream_title_hls_with_client(&client, slug).await
@@ -462,24 +551,37 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
     let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
     let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
 
-    let resp = client
-        .get(&title_api_url)
-        .header(header::REFERER, "https://film4k.net/")
-        .header(
-            header::USER_AGENT,
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        )
-        .header(header::ACCEPT, "application/json, text/plain, */*")
-        .send()
-        .await
-        .ok()?;
+    // Pre-fetch SSRF validation on upstream title endpoint
+    let title_url = match is_valid_remote_url(&title_api_url) {
+        Ok(u) => u,
+        Err(err) => {
+            warn!("SSRF validation rejected upstream title API URL: {} ({})", title_api_url, err);
+            return None;
+        }
+    };
+
+    // Route through validated DNS, pinned socket, no_proxy, and redirect validation
+    let (resp, _) = match fetch_stream_with_client(client, &title_url, None, 3).await {
+        Ok(r) => r,
+        Err((code, msg)) => {
+            warn!("Failed to fetch upstream title API for slug {} (status: {}, {}): {}", slug, code, msg, redact_url_secrets(&title_api_url));
+            return None;
+        }
+    };
 
     if !resp.status().is_success() {
         warn!("Upstream title API returned status {} for slug {}", resp.status(), slug);
         return None;
     }
 
-    let json_val: serde_json::Value = resp.json().await.ok()?;
+    let json_bytes = match read_body_with_cap(resp, MAX_TITLE_JSON_BYTES).await {
+        Ok(b) => b,
+        Err((code, msg)) => {
+            warn!("Failed reading title API response body (status: {}): {}", code, msg);
+            return None;
+        }
+    };
+    let json_val: serde_json::Value = serde_json::from_slice(&json_bytes).ok()?;
     let hls_path = json_val
         .get("movie")
         .and_then(|m| m.get("hlsUrl"))
@@ -510,12 +612,18 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
         hls_path.to_string()
     };
 
+    // Issue #5: Validate extracted upstream HLS URL before returning to caller
+    if is_valid_remote_url(&full_hls).is_err() {
+        warn!("SSRF validation rejected extracted upstream HLS URL for slug {}", slug);
+        return None;
+    }
+
     Some(full_hls)
 }
 
 /// Perform an HTTP GET request with DNS validation and manual fail-closed redirect following using the provided HTTP client
 pub async fn fetch_stream_with_client(
-    client: &Client,
+    _client: &Client,
     target_url: &Url,
     range: Option<&HeaderValue>,
     max_hops: usize,
@@ -530,11 +638,20 @@ pub async fn fetch_stream_with_client(
         let port = current_url.port_or_known_default().unwrap_or(443);
 
         // Fail-closed DNS resolution & blocked IP validation
-        let _resolved_addr = resolve_and_validate_host(host, port)
+        let resolved_addr = resolve_and_validate_host(host, port)
             .await
             .map_err(|err| (StatusCode::FORBIDDEN, err))?;
 
-        let mut req = client.get(current_url.as_str());
+        // DNS Pinning: bind socket connection directly to resolved_addr for host, disable proxy and auto-redirects
+        let hop_client = Client::builder()
+            .timeout(Duration::from_secs(15))
+            .resolve(host, resolved_addr)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create pinned HTTP client"))?;
+
+        let mut req = hop_client.get(current_url.as_str());
         if let Some(r) = range {
             req = req.header(header::RANGE, r);
         }
@@ -547,9 +664,9 @@ pub async fn fetch_stream_with_client(
             )
             .header(header::ACCEPT, "*/*");
 
-        let resp = req.send().await.map_err(|err| {
+        let resp = req.send().await.map_err(|_| {
             let redacted = redact_url_secrets(current_url.as_str());
-            error!("Upstream fetch error for {}: {}", redacted, err);
+            error!("Upstream fetch error for {}", redacted);
             (StatusCode::BAD_GATEWAY, "Failed to connect to upstream service")
         })?;
 
@@ -651,6 +768,14 @@ pub async fn handle_stream_proxy(
         .unwrap_or("")
         .to_string();
 
+    // Reject active MIME types (HTML, SVG, XML, JS) to prevent stored or reflected XSS
+    if is_disallowed_stream_mime(&content_type) {
+        warn!("Upstream stream returned disallowed active MIME type: '{}'", content_type);
+        let mut resp = (StatusCode::BAD_GATEWAY, "Upstream returned disallowed media type").into_response();
+        add_security_headers(resp.headers_mut());
+        return resp;
+    }
+
     let is_m3u8 = final_url.path().ends_with(".m3u8")
         || content_type.contains("mpegurl")
         || content_type.contains("application/x-mpegURL")
@@ -659,22 +784,17 @@ pub async fn handle_stream_proxy(
     if is_m3u8 || status == StatusCode::FORBIDDEN {
         if let Some(cl) = upstream_resp.content_length() {
             if cl > MAX_PLAYLIST_BYTES as u64 {
-                return (
+                let mut resp = (
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "Playlist response exceeds maximum allowed size",
                 )
                     .into_response();
+                add_security_headers(resp.headers_mut());
+                return resp;
             }
         }
-        match upstream_resp.bytes().await {
+        match read_body_with_cap(upstream_resp, MAX_PLAYLIST_BYTES).await {
             Ok(bytes) => {
-                if bytes.len() > MAX_PLAYLIST_BYTES {
-                    return (
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "Playlist response exceeds maximum allowed size",
-                    )
-                        .into_response();
-                }
                 let body_text = String::from_utf8_lossy(&bytes).to_string();
                 let is_expired = status == StatusCode::FORBIDDEN
                     || body_text.contains("Invalid or expired token")
@@ -687,38 +807,65 @@ pub async fn handle_stream_proxy(
                         status, detected_slug, redacted_target
                     );
                     if let Some(ref slug) = detected_slug {
-                        if let Some(fresh_hls) = fetch_upstream_title_hls_with_client(&state.http_client, slug).await {
-                            if fresh_hls != target_str {
-                                info!(
-                                    "Successfully retrieved fresh stream token for {}: {} -> {}",
-                                    slug, redacted_target, redact_url_secrets(&fresh_hls)
-                                );
-                                let _ = state.db.update_movie_stream(slug, &fresh_hls);
+                        // Issue #2: Only refresh if slug genuinely exists in database
+                        let slug_exists = state.db.get_movie_by_slug(slug).ok().flatten().is_some();
+                        if slug_exists {
+                            // Debounce refresh attempts: at most one refresh attempt per slug every 60s
+                            let should_refresh = {
+                                let mut map = REFRESH_RATE_LIMIT.lock().unwrap();
+                                let now = std::time::Instant::now();
+                                if let Some(last) = map.get(slug) {
+                                    if now.duration_since(*last) < Duration::from_secs(60) {
+                                        false
+                                    } else {
+                                        map.insert(slug.to_string(), now);
+                                        true
+                                    }
+                                } else {
+                                    map.insert(slug.to_string(), now);
+                                    true
+                                }
+                            };
 
-                                if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
-                                    if let Ok((retry_resp, final_fresh_url)) = fetch_stream_with_client(&state.http_client, &fresh_url, headers.get(header::RANGE), 5).await {
-                                        if retry_resp.status().is_success() {
-                                            if let Ok(fresh_bytes) = retry_resp.bytes().await {
-                                                if fresh_bytes.len() <= MAX_PLAYLIST_BYTES {
-                                                    let fresh_body = String::from_utf8_lossy(&fresh_bytes).to_string();
-                                                    let rewritten = rewrite_m3u8(
-                                                        &fresh_body,
-                                                        &final_fresh_url,
-                                                        "/api/proxy/stream",
-                                                        keep_cdn,
-                                                    );
-                                                    return create_m3u8_response(rewritten);
+                            if should_refresh {
+                                if let Some(fresh_hls) = fetch_upstream_title_hls_with_client(&state.http_client, slug).await {
+                                    if fresh_hls != target_str {
+                                        // Validate fresh HLS URL against SSRF policy before DB write
+                                        if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
+                                            info!(
+                                                "Successfully retrieved fresh stream token in memory for slug: {}",
+                                                slug
+                                            );
+                                            // Issue #2: Public GET proxy must NEVER write to database!
+                                            // DB stream updates are strictly limited to authenticated administrative or crawler jobs.
+
+                                            if let Ok((retry_resp, final_fresh_url)) = fetch_stream_with_client(&state.http_client, &fresh_url, headers.get(header::RANGE), 5).await {
+                                                if retry_resp.status().is_success() {
+                                                    if let Ok(fresh_bytes) = read_body_with_cap(retry_resp, MAX_PLAYLIST_BYTES).await {
+                                                            let fresh_body = String::from_utf8_lossy(&fresh_bytes).to_string();
+                                                            let rewritten = rewrite_m3u8(
+                                                                &fresh_body,
+                                                                &final_fresh_url,
+                                                                "/api/proxy/stream",
+                                                                keep_cdn,
+                                                            );
+                                                            return create_m3u8_response(rewritten);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            } else {
+                                warn!("Debounced stream refresh for slug {}", slug);
                             }
                         }
                     }
 
                     if status == StatusCode::FORBIDDEN {
-                        return (StatusCode::FORBIDDEN, body_text).into_response();
+                        let mut resp = (StatusCode::FORBIDDEN, body_text).into_response();
+                        add_security_headers(resp.headers_mut());
+                        return resp;
                     }
                 }
 
@@ -726,19 +873,30 @@ pub async fn handle_stream_proxy(
                     let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
                     return create_m3u8_response(rewritten);
                 } else if !status.is_success() {
-                    return (status, body_text).into_response();
+                    let mut resp = (status, body_text).into_response();
+                    add_security_headers(resp.headers_mut());
+                    return resp;
                 }
 
                 let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
                 create_m3u8_response(rewritten)
             }
-            Err(err) => {
-                error!("Failed to read m3u8 upstream body: {}", err);
-                (StatusCode::BAD_GATEWAY, "Failed reading playlist body").into_response()
+            Err((status, message)) => {
+                let mut resp = (status, message).into_response();
+                add_security_headers(resp.headers_mut());
+                resp
             }
         }
     } else {
         // Binary chunk stream (video/audio chunk)
+        if let Some(cl) = upstream_resp.content_length() {
+            if cl > MAX_STREAM_BYTES {
+                let mut resp = (StatusCode::PAYLOAD_TOO_LARGE, "Stream segment exceeds maximum allowed size (50MB)").into_response();
+                add_security_headers(resp.headers_mut());
+                return resp;
+            }
+        }
+
         let mut resp_builder = Response::builder().status(status);
 
         if let Some(ct) = upstream_resp.headers().get(header::CONTENT_TYPE) {
@@ -754,13 +912,154 @@ pub async fn handle_stream_proxy(
             .header(header::ACCEPT_RANGES, "bytes")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
-            .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*");
+            .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
+            .header("X-Frame-Options", "DENY");
 
         let stream = upstream_resp.bytes_stream();
         resp_builder
             .body(Body::from_stream(stream))
-            .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Stream error").into_response())
+            .unwrap_or_else(|_| {
+                let mut err_resp = (StatusCode::INTERNAL_SERVER_ERROR, "Stream error").into_response();
+                add_security_headers(err_resp.headers_mut());
+                err_resp
+            })
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImageProxyQuery {
+    pub url: String,
+}
+
+pub async fn handle_image_proxy(
+    Query(query): Query<ImageProxyQuery>,
+) -> Response {
+    let target_str = query.url.trim();
+    if target_str.is_empty() {
+        let mut r = (StatusCode::BAD_REQUEST, "Missing 'url' query parameter").into_response();
+        add_security_headers(r.headers_mut());
+        return r;
+    }
+
+    let parsed_url = match is_valid_remote_url(target_str) {
+        Ok(u) => u,
+        Err(err) => {
+            let mut r = (StatusCode::FORBIDDEN, err).into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+
+    let host = match parsed_url.host_str() {
+        Some(h) => h,
+        None => {
+            let mut r = (StatusCode::BAD_REQUEST, "Missing host in image URL").into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+    let port = parsed_url.port_or_known_default().unwrap_or(443);
+
+    let resolved_addr = match resolve_and_validate_host(host, port).await {
+        Ok(addr) => addr,
+        Err(err) => {
+            let mut r = (StatusCode::FORBIDDEN, err).into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+
+    let hop_client = match Client::builder()
+        .timeout(Duration::from_secs(12))
+        .resolve(host, resolved_addr)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            let mut r = (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client").into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+
+    let resp = match hop_client
+        .get(parsed_url.as_str())
+        .header(header::REFERER, format!("https://{}/", host))
+        .header(header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .header(header::ACCEPT, "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            let redacted = redact_url_secrets(parsed_url.as_str());
+            warn!("Image fetch error for {}", redacted);
+            let mut r = (StatusCode::BAD_GATEWAY, "Failed to connect to image upstream").into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let mut r = (status, "Image upstream returned error").into_response();
+        add_security_headers(r.headers_mut());
+        return r;
+    }
+
+    if let Some(cl) = resp.content_length() {
+        if cl > MAX_IMAGE_BYTES as u64 {
+            let mut r = (StatusCode::PAYLOAD_TOO_LARGE, "Image exceeds maximum allowed size (10MB)").into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    }
+
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    // Whitelist check: only raster images allowed, no SVG, HTML, or scripts
+    if !is_allowed_image_mime(&content_type) {
+        warn!("Image proxy rejected disallowed MIME type: '{}'", content_type);
+        let mut r = (StatusCode::UNSUPPORTED_MEDIA_TYPE, "Disallowed image media type (only raster images supported)").into_response();
+        add_security_headers(r.headers_mut());
+        return r;
+    }
+
+    let bytes = match read_body_with_cap(resp, MAX_IMAGE_BYTES).await {
+        Ok(b) => b,
+        Err((status, message)) => {
+            let mut r = (status, message).into_response();
+            add_security_headers(r.headers_mut());
+            return r;
+        }
+    };
+
+    let mut response = Response::new(Body::from(bytes));
+    let headers_mut = response.headers_mut();
+    if let Ok(ct_val) = HeaderValue::from_str(&content_type) {
+        headers_mut.insert(header::CONTENT_TYPE, ct_val);
+    } else {
+        headers_mut.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+    }
+    headers_mut.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400, stale-while-revalidate=43200"),
+    );
+    headers_mut.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    add_security_headers(headers_mut);
+    response
 }
 
 // Module for simple urlencoding
@@ -940,5 +1239,31 @@ https://v16m-default.akamaicdn.net/chunk01.image
     async fn test_resolve_and_validate_host_fails_closed_on_dns_failure() {
         let res = resolve_and_validate_host("nonexistent-domain-xyz-12345.com", 443).await;
         assert_eq!(res.unwrap_err(), "Failed to resolve host via DNS");
+    }
+
+    #[test]
+    fn test_mime_validation() {
+        // Disallowed stream MIME types (HTML, SVG, XML, JS)
+        assert!(is_disallowed_stream_mime("text/html"));
+        assert!(is_disallowed_stream_mime("text/html; charset=utf-8"));
+        assert!(is_disallowed_stream_mime("image/svg+xml"));
+        assert!(is_disallowed_stream_mime("application/javascript"));
+        assert!(is_disallowed_stream_mime("application/xml"));
+        assert!(is_disallowed_stream_mime("text/xml"));
+        assert!(!is_disallowed_stream_mime("application/vnd.apple.mpegurl"));
+        assert!(!is_disallowed_stream_mime("application/x-mpegURL"));
+        assert!(!is_disallowed_stream_mime("video/mp4"));
+        assert!(!is_disallowed_stream_mime("video/mp2t"));
+        assert!(!is_disallowed_stream_mime("application/octet-stream"));
+
+        // Allowed image MIME types (raster only)
+        assert!(is_allowed_image_mime("image/jpeg"));
+        assert!(is_allowed_image_mime("image/png"));
+        assert!(is_allowed_image_mime("image/webp"));
+        assert!(is_allowed_image_mime("image/avif"));
+        assert!(is_allowed_image_mime("image/gif"));
+        assert!(!is_allowed_image_mime("image/svg+xml"));
+        assert!(!is_allowed_image_mime("text/html"));
+        assert!(!is_allowed_image_mime("application/javascript"));
     }
 }

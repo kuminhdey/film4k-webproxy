@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}};
 use rusqlite::{params, Connection};
 use anyhow::Context;
 use tracing::{info, warn};
@@ -9,6 +9,8 @@ use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, Movi
 #[derive(Clone)]
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    readers: Arc<Vec<Mutex<Connection>>>,
+    next_reader: Arc<AtomicUsize>,
 }
 
 impl Database {
@@ -21,10 +23,19 @@ impl Database {
         }
         let conn = Connection::open(p)?;
         conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
-        let db = Self {
+        let mut db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            readers: Arc::new(Vec::new()),
+            next_reader: Arc::new(AtomicUsize::new(0)),
         };
         db.init_tables()?;
+        let mut readers = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let reader = Connection::open(p)?;
+            reader.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA query_only = ON;")?;
+            readers.push(Mutex::new(reader));
+        }
+        db.readers = Arc::new(readers);
         Ok(db)
     }
 
@@ -33,6 +44,8 @@ impl Database {
         conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            readers: Arc::new(Vec::new()),
+            next_reader: Arc::new(AtomicUsize::new(0)),
         };
         db.init_tables()?;
         Ok(db)
@@ -41,6 +54,16 @@ impl Database {
     fn init_tables(&self) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().unwrap();
         Self::run_migrations(&mut conn)
+    }
+
+    fn read_conn(&self) -> MutexGuard<'_, Connection> {
+        if self.readers.is_empty() {
+            // In-memory databases must keep one shared connection for read-after-write.
+            self.conn.lock().unwrap()
+        } else {
+            let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
+            self.readers[index].lock().unwrap()
+        }
     }
 
     pub fn get_column_names(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
@@ -53,6 +76,7 @@ impl Database {
     }
 
     fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -71,12 +95,9 @@ impl Database {
 
         // Migration 1: Base schema (movies, episodes, home_cache, playlist_cache, indexes)
         if !applied_versions.contains(&1) {
-            conn.execute_batch(
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch(
                 r#"
-                PRAGMA busy_timeout = 5000;
-                PRAGMA journal_mode = WAL;
-                PRAGMA synchronous = NORMAL;
-
                 CREATE TABLE IF NOT EXISTS movies (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     slug TEXT UNIQUE NOT NULL,
@@ -137,71 +158,75 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_playlist_cache_expires ON playlist_cache(expires_at);
                 "#,
             )?;
-            conn.execute(
+            tx.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (1, 'base_schema')",
                 [],
             )?;
+            tx.commit()?;
             info!("Applied schema migration 1: base_schema");
         }
 
         // Migration 2: Verify and safely migrate extra columns for pre-existing databases
         if !applied_versions.contains(&2) {
-            let movie_cols = Self::get_column_names(conn, "movies")?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let movie_cols = Self::get_column_names(&tx, "movies")?;
             if !movie_cols.contains(&"servers_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE movies ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
             if !movie_cols.contains(&"subtitles_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE movies ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
             if !movie_cols.contains(&"audio_tracks_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE movies ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
             if !movie_cols.contains(&"views".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE movies ADD COLUMN views INTEGER NOT NULL DEFAULT 0",
                     [],
                 )?;
             }
 
-            let ep_cols = Self::get_column_names(conn, "episodes")?;
+            let ep_cols = Self::get_column_names(&tx, "episodes")?;
             if !ep_cols.contains(&"servers_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE episodes ADD COLUMN servers_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
             if !ep_cols.contains(&"subtitles_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE episodes ADD COLUMN subtitles_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
             if !ep_cols.contains(&"audio_tracks_json".to_string()) {
-                conn.execute(
+                tx.execute(
                     "ALTER TABLE episodes ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]'",
                     [],
                 )?;
             }
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (2, 'extra_json_columns')",
                 [],
             )?;
+            tx.commit()?;
             info!("Applied schema migration 2: extra_json_columns");
         }
 
         // Migration 3: Add playlist_cache table and cleanup redundant index
         if !applied_versions.contains(&3) {
-            conn.execute_batch(
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch(
                 r#"
                 DROP INDEX IF EXISTS idx_movies_slug;
 
@@ -215,18 +240,39 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_playlist_cache_expires ON playlist_cache(expires_at);
                 "#,
             )?;
-            conn.execute(
+            tx.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (3, 'playlist_cache_and_index_cleanup')",
                 [],
             )?;
+            tx.commit()?;
             info!("Applied schema migration 3: playlist_cache_and_index_cleanup");
+        }
+
+        // Migration 4: Crawler persistent lease & fencing table (atomic DDL + version insert)
+        if !applied_versions.contains(&4) {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS crawler_leases (
+                    name TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    fence_token INTEGER NOT NULL DEFAULT 1,
+                    expires_at INTEGER NOT NULL,
+                    acquired_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                "#,
+            )?;
+            tx.execute("INSERT INTO schema_migrations (version, name) VALUES (4, 'crawler_leases')", [])?;
+            tx.commit()?;
+            info!("Applied schema migration 4: crawler_leases atomically");
         }
 
         Ok(())
     }
 
     pub fn get_playlist_cache(&self, cache_key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -278,6 +324,200 @@ impl Database {
             params![now],
         )?;
         Ok(count)
+    }
+
+    /// Check the schema needed by request handlers without scanning the entire database.
+    pub fn check_health(&self) -> anyhow::Result<(i64, bool)> {
+        let conn = self.read_conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2, 3, 4)",
+            [],
+            |r| r.get(0),
+        )?;
+        let ping: i32 = conn.query_row("SELECT 1", [], |r| r.get(0))?;
+        for table in ["movies", "episodes", "home_cache", "playlist_cache", "crawler_leases"] {
+            conn.prepare(&format!("SELECT 1 FROM {table} LIMIT 0"))?;
+        }
+        Ok((count, ping == 1 && count == 4))
+    }
+
+    /// Acquire or take over crawler lease atomically with monotonic fencing token.
+    /// Returns Some(fence_token) on success, or None if currently held by another active owner.
+    pub fn acquire_crawler_lease(
+        &self,
+        name: &str,
+        owner_id: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<Option<i64>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let expires_at = now + (ttl_secs as i64).max(5);
+
+        let existing: Option<(String, i64, i64)> = match tx.query_row(
+            "SELECT owner_id, fence_token, expires_at FROM crawler_leases WHERE name = ?1",
+            params![name],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ) {
+            Ok(row) => Some(row),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        match existing {
+            None => {
+                tx.execute(
+                    r#"
+                    INSERT INTO crawler_leases (name, owner_id, fence_token, expires_at, acquired_at, updated_at)
+                    VALUES (?1, ?2, 1, ?3, ?4, ?4)
+                    "#,
+                    params![name, owner_id, expires_at, now],
+                )?;
+                tx.commit()?;
+                Ok(Some(1))
+            }
+            Some((_cur_owner, cur_fence, cur_expires)) => {
+                if cur_expires < now {
+                    // Lease expired: monotonic takeover with incremented fence token
+                    let new_fence = cur_fence + 1;
+                    tx.execute(
+                        r#"
+                        UPDATE crawler_leases
+                        SET owner_id = ?1, fence_token = ?2, expires_at = ?3, acquired_at = ?4, updated_at = ?4
+                        WHERE name = ?5
+                        "#,
+                        params![owner_id, new_fence, expires_at, now, name],
+                    )?;
+                    tx.commit()?;
+                    Ok(Some(new_fence))
+                } else {
+                    // An active run cannot re-enter under the same process owner.
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    /// Renew crawler lease if fence token and owner match and lease is not expired.
+    pub fn renew_crawler_lease(
+        &self,
+        name: &str,
+        owner_id: &str,
+        fence_token: i64,
+        ttl_secs: u64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let new_expires_at = now + (ttl_secs as i64).max(5);
+
+        let rows = conn.execute(
+            r#"
+            UPDATE crawler_leases
+            SET expires_at = ?1, updated_at = ?2
+            WHERE name = ?3 AND owner_id = ?4 AND fence_token = ?5 AND expires_at >= ?2
+            "#,
+            params![new_expires_at, now, name, owner_id, fence_token],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Release crawler lease if still owned by this owner and fence token.
+    /// Preserves monotonic fencing by expiring the lease rather than deleting the row.
+    pub fn release_crawler_lease(
+        &self,
+        name: &str,
+        owner_id: &str,
+        fence_token: i64,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        conn.execute(
+            "UPDATE crawler_leases SET expires_at = ?1, updated_at = ?2 WHERE name = ?3 AND owner_id = ?4 AND fence_token = ?5",
+            params![now - 1, now, name, owner_id, fence_token],
+        )?;
+        Ok(())
+    }
+
+    /// Verify that the crawler fence is valid and active
+    pub fn verify_crawler_fence(
+        &self,
+        name: &str,
+        owner_id: &str,
+        fence_token: i64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.read_conn();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let valid: bool = match conn.query_row(
+            "SELECT 1 FROM crawler_leases WHERE name = ?1 AND owner_id = ?2 AND fence_token = ?3 AND expires_at >= ?4",
+            params![name, owner_id, fence_token, now],
+            |_| Ok(true),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => return Err(e.into()),
+        };
+        Ok(valid)
+    }
+
+    /// Upsert a movie ensuring that the crawler lease fence token is valid within the SAME immediate transaction.
+    /// Eliminates the takeover race between a standalone fence check and the write transaction.
+    pub fn upsert_movie_with_fence(
+        &self,
+        movie: &Movie,
+        owner_id: &str,
+        fence_token: i64,
+    ) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let valid: bool = match tx.query_row(
+            "SELECT 1 FROM crawler_leases WHERE name = 'crawler_main' AND owner_id = ?1 AND fence_token = ?2 AND expires_at >= ?3",
+            params![owner_id, fence_token, now],
+            |_| Ok(true),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => return Err(e.into()),
+        };
+
+        if !valid {
+            anyhow::bail!("Crawler lease fence token expired or superseded during transaction");
+        }
+
+        Self::upsert_movie_conn(&tx, movie)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Retrieve current lease info (owner_id, fence_token, expires_at)
+    pub fn get_crawler_lease(&self, name: &str) -> anyhow::Result<Option<(String, i64, i64)>> {
+        let conn = self.read_conn();
+        match conn.query_row(
+            "SELECT owner_id, fence_token, expires_at FROM crawler_leases WHERE name = ?1",
+            params![name],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ) {
+            Ok(tuple) => Ok(Some(tuple)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn start_cleanup_task(&self, playlist_cache: Option<crate::playlist_cache::PlaylistCacheService>) {
@@ -455,7 +695,7 @@ impl Database {
         &self,
         query: &MoviesQuery,
     ) -> anyhow::Result<(Vec<MovieSummary>, i64)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
 
         let mut where_clauses = Vec::new();
         let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -668,7 +908,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let pattern_full = format!("%{}%", trimmed.to_lowercase());
         let exact = trimmed.to_lowercase();
         let prefix = format!("{}%", trimmed.to_lowercase());
@@ -746,7 +986,7 @@ impl Database {
             placeholders.join(", ")
         );
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let mut stmt = conn.prepare(&sql)?;
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = clean_slugs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
@@ -790,7 +1030,7 @@ impl Database {
         let max_items = limit.clamp(1, 24);
         let movie_opt = self.get_movie_by_slug(slug)?;
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let mut results = Vec::new();
         let mut seen_slugs = std::collections::HashSet::new();
         seen_slugs.insert(slug.to_string());
@@ -904,7 +1144,7 @@ impl Database {
     }
 
     pub fn get_movie_by_slug(&self, slug: &str) -> anyhow::Result<Option<Movie>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
 
         let mut movie_opt: Option<Movie> = conn.query_row(
             r#"
@@ -990,7 +1230,7 @@ impl Database {
     }
 
     pub fn find_slug_by_stream_url(&self, url: &str) -> Option<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
 
         // 1. If URL has /api/hls/<token>/..., extract token
         if let Some(idx) = url.find("/api/hls/") {
@@ -1019,6 +1259,11 @@ impl Database {
     }
 
     pub fn update_movie_stream(&self, slug: &str, new_hls_url: &str) -> anyhow::Result<bool> {
+        let trimmed_url = new_hls_url.trim();
+        if trimmed_url.is_empty() {
+            return Ok(false);
+        }
+
         let conn = self.conn.lock().unwrap();
 
         let current: Option<(Option<String>, String)> = conn.query_row(
@@ -1027,18 +1272,25 @@ impl Database {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).ok();
 
-        if let Some((_, servers_json_str)) = current {
+        if let Some((cur_stream, servers_json_str)) = current {
+            // Idempotent check: if stream URL is already set to trimmed_url, skip write
+            if let Some(ref existing) = cur_stream {
+                if existing == trimmed_url {
+                    return Ok(false);
+                }
+            }
+
             let mut servers: Vec<ServerSource> = serde_json::from_str(&servers_json_str).unwrap_or_default();
-            let proxy_url = format!("https://secret.dangducminh.io.vn/?url={}", crate::proxy::urlencoding::encode(new_hls_url));
+            let proxy_url = format!("https://secret.dangducminh.io.vn/?url={}", crate::proxy::urlencoding::encode(trimmed_url));
 
             if let Some(first) = servers.first_mut() {
-                first.hls_url = new_hls_url.to_string();
+                first.hls_url = trimmed_url.to_string();
                 first.proxy_stream_url = Some(proxy_url);
             } else {
                 servers.push(ServerSource {
                     id: Some(serde_json::json!("server-vip-4k")),
                     label: "Server VIP (4K CDN)".to_string(),
-                    hls_url: new_hls_url.to_string(),
+                    hls_url: trimmed_url.to_string(),
                     proxy_stream_url: Some(proxy_url),
                     quality: Some("4K".to_string()),
                 });
@@ -1051,10 +1303,10 @@ impl Database {
                 SET stream = ?1, servers_json = ?2, updated_at = CURRENT_TIMESTAMP
                 WHERE slug = ?3
                 "#,
-                params![new_hls_url, new_servers_json, slug],
+                params![trimmed_url, new_servers_json, slug],
             )?;
 
-            info!("Updated stream & servers_json for movie {} to {}", slug, new_hls_url);
+            info!("Updated stream & servers_json for movie {}", slug);
             Ok(updated > 0)
         } else {
             Ok(false)
@@ -1062,7 +1314,7 @@ impl Database {
     }
 
     pub fn get_stats(&self) -> anyhow::Result<(i64, i64, i64)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM movies", [], |r| r.get(0))
             .unwrap_or(0);
@@ -1091,8 +1343,39 @@ impl Database {
         Ok(())
     }
 
+    pub fn save_home_cache_with_fence(
+        &self,
+        home: &HomeResponse,
+        owner_id: &str,
+        fence_token: i64,
+    ) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        let active = tx.query_row(
+            "SELECT 1 FROM crawler_leases WHERE name = 'crawler_main' AND owner_id = ?1 AND fence_token = ?2 AND expires_at >= ?3",
+            params![owner_id, fence_token, now],
+            |_| Ok(()),
+        );
+        match active {
+            Ok(()) => {}
+            Err(rusqlite::Error::QueryReturnedNoRows) => anyhow::bail!("Crawler lease expired or superseded"),
+            Err(error) => return Err(error.into()),
+        }
+        let json_str = serde_json::to_string(home)?;
+        tx.execute(
+            "INSERT INTO home_cache (id, data_json, updated_at) VALUES (1, ?1, CURRENT_TIMESTAMP) \
+             ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, updated_at = CURRENT_TIMESTAMP",
+            params![json_str],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_home_cache(&self) -> anyhow::Result<Option<HomeResponse>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let mut stmt = conn.prepare("SELECT data_json FROM home_cache WHERE id = 1")?;
         let res = stmt.query_row([], |row| {
             let json_str: String = row.get(0)?;
@@ -1109,7 +1392,7 @@ impl Database {
     }
 
     pub fn get_home_cache_age_seconds(&self) -> anyhow::Result<Option<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let mut stmt = conn.prepare("SELECT CAST((strftime('%s', 'now') - strftime('%s', updated_at)) AS INTEGER) FROM home_cache WHERE id = 1")?;
         let res = stmt.query_row([], |row| {
             let age: i64 = row.get(0)?;
@@ -1123,7 +1406,7 @@ impl Database {
     }
 
     pub fn get_movie_summary_by_slug(&self, slug: &str) -> anyhow::Result<Option<MovieSummary>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read_conn();
         let mut stmt = conn.prepare(
             r#"
             SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
@@ -1432,13 +1715,15 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
 
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].0, 1);
         assert_eq!(rows[0].1, "base_schema");
         assert_eq!(rows[1].0, 2);
         assert_eq!(rows[1].1, "extra_json_columns");
         assert_eq!(rows[2].0, 3);
         assert_eq!(rows[2].1, "playlist_cache_and_index_cleanup");
+        assert_eq!(rows[3].0, 4);
+        assert_eq!(rows[3].1, "crawler_leases");
 
         // 2. Verify all expected columns exist in movies
         let movie_cols = Database::get_column_names(&conn, "movies").unwrap();
@@ -1452,6 +1737,138 @@ mod tests {
         assert!(ep_cols.contains(&"servers_json".to_string()));
         assert!(ep_cols.contains(&"subtitles_json".to_string()));
         assert!(ep_cols.contains(&"audio_tracks_json".to_string()));
+    }
+
+    #[test]
+    fn test_crawler_lease_monotonic_fencing_and_takeover() {
+        let db = Database::new_in_memory().unwrap();
+
+        // 1. Initial acquisition
+        let token1 = db.acquire_crawler_lease("crawler_main", "owner_a", 60).unwrap();
+        assert_eq!(token1, Some(1));
+
+        // A second run in the same process must not share the active lease.
+        let token1_again = db.acquire_crawler_lease("crawler_main", "owner_a", 60).unwrap();
+        assert_eq!(token1_again, None);
+
+        // 2. Competing acquisition while active fails (returns None)
+        let token_b_fail = db.acquire_crawler_lease("crawler_main", "owner_b", 60).unwrap();
+        assert_eq!(token_b_fail, None);
+
+        // 3. Voluntary release expires lease row rather than deleting it
+        db.release_crawler_lease("crawler_main", "owner_a", 1).unwrap();
+
+        // Verify lease row exists but is expired
+        let (owner, fence, expires_at) = db.get_crawler_lease("crawler_main").unwrap().unwrap();
+        assert_eq!(owner, "owner_a");
+        assert_eq!(fence, 1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(expires_at < now);
+
+        // 4. Acquisition after release increments token monotonically (must NOT reset to 1)
+        let token_b = db.acquire_crawler_lease("crawler_main", "owner_b", 60).unwrap();
+        assert_eq!(token_b, Some(2));
+
+        // 5. Expired lease takeover by owner_c increments token again
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE crawler_leases SET expires_at = ?1 WHERE name = 'crawler_main'",
+                rusqlite::params![now - 10],
+            ).unwrap();
+        }
+        let token_c = db.acquire_crawler_lease("crawler_main", "owner_c", 60).unwrap();
+        assert_eq!(token_c, Some(3));
+
+        // 6. Test upsert_movie_with_fence within same transaction
+        let movie = Movie {
+            id: None,
+            slug: "test-fenced-movie".to_string(),
+            movie_type: "movie".to_string(),
+            title_vi: Some("Phim Test Fenced".to_string()),
+            title_en: Some("Test Fenced Movie".to_string()),
+            year: Some(2026),
+            quality: Some("HD".to_string()),
+            score: Some(8.0),
+            genres: vec!["Action".to_string()],
+            country: Some("US".to_string()),
+            poster: None,
+            backdrop: None,
+            overview: None,
+            total_episodes: Some(1),
+            stream: Some(serde_json::Value::String("https://example.com/stream.m3u8".to_string())),
+            episodes: vec![],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
+        };
+
+        // Stale owner or stale fence token fails
+        let err_stale = db.upsert_movie_with_fence(&movie, "owner_a", 1);
+        assert!(err_stale.is_err());
+
+        // Valid owner & active fence token succeeds
+        let ok_upsert = db.upsert_movie_with_fence(&movie, "owner_c", 3);
+        assert!(ok_upsert.is_ok());
+
+        let retrieved = db.get_movie_by_slug("test-fenced-movie").unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().title_en, Some("Test Fenced Movie".to_string()));
+    }
+
+    #[test]
+    fn test_crawler_fence_across_independent_connections() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("webproxy-crawler-fence-{}-{unique}.db", std::process::id()));
+        let db_a = Database::new(&path).unwrap();
+        let db_b = Database::new(&path).unwrap();
+        let movie: Movie = serde_json::from_value(serde_json::json!({"slug": "fence-two-connections"})).unwrap();
+
+        assert_eq!(db_a.acquire_crawler_lease("crawler_main", "first", 60).unwrap(), Some(1));
+        assert_eq!(db_b.acquire_crawler_lease("crawler_main", "second", 60).unwrap(), None);
+        db_a.upsert_movie_with_fence(&movie, "first", 1).unwrap();
+
+        db_a.release_crawler_lease("crawler_main", "first", 1).unwrap();
+        assert_eq!(db_b.acquire_crawler_lease("crawler_main", "second", 60).unwrap(), Some(2));
+        assert!(db_a.upsert_movie_with_fence(&movie, "first", 1).is_err());
+        assert!(db_a.save_home_cache_with_fence(&HomeResponse::default(), "first", 1).is_err());
+        db_b.upsert_movie_with_fence(&movie, "second", 2).unwrap();
+        db_b.save_home_cache_with_fence(&HomeResponse::default(), "second", 2).unwrap();
+        assert!(db_a.get_movie_by_slug("fence-two-connections").unwrap().is_some());
+
+        drop(db_a);
+        drop(db_b);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn test_file_read_pool_does_not_wait_for_writer_mutex() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("webproxy-read-pool-{}-{unique}.db", std::process::id()));
+        let db = Database::new(&path).unwrap();
+        assert_eq!(db.readers.len(), 4);
+        let writer = db.conn.lock().unwrap();
+        let reader_db = db.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let _ = sender.send(reader_db.get_stats());
+        });
+        let result = receiver.recv_timeout(std::time::Duration::from_secs(1));
+        drop(writer);
+        reader.join().unwrap();
+        assert!(result.unwrap().is_ok());
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 
     #[test]

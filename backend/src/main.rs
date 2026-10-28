@@ -34,11 +34,10 @@ async fn main() -> anyhow::Result<()> {
     ];
     for seed_path in &seed_paths {
         if std::path::Path::new(seed_path).exists() {
-            if let Ok(count) = db.seed_from_file(seed_path) {
-                if count > 0 {
-                    info!("🌱 Seeded {} movies from {}", count, seed_path);
-                    break;
-                }
+            let count = db.seed_from_file(seed_path)?;
+            if count > 0 {
+                info!("🌱 Seeded {} movies from {}", count, seed_path);
+                break;
             }
         }
     }
@@ -70,7 +69,11 @@ async fn main() -> anyhow::Result<()> {
     info!("🚀 Server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

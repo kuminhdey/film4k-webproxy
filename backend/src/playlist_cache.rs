@@ -16,11 +16,18 @@ use url::Url;
 
 use crate::{
     db::Database,
-    proxy::{fetch_upstream_title_hls, is_cdn_segment, resolve_relative_url},
+    proxy::{
+        add_security_headers, fetch_upstream_title_hls, is_cdn_segment, is_valid_remote_url,
+        read_body_with_cap, redact_url_secrets, resolve_and_validate_host, resolve_relative_url,
+        MAX_PLAYLIST_BYTES,
+    },
     AppState,
 };
 
 static URI_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"URI="([^"]+)""#).unwrap());
+static EXPIRES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(?:^|[?&;,=\"'\s])(?:x-expires|expires)=([0-9]{1,13})"#).unwrap()
+});
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct StreamParams {
@@ -32,6 +39,8 @@ pub struct StreamParams {
     pub season: Option<i32>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub server: Option<usize>,
 }
 
 impl StreamParams {
@@ -59,49 +68,38 @@ pub fn extract_filename(uri: &str) -> String {
 pub const MAX_CACHE_AGE_SECS: u64 = 4 * 3600;
 
 pub fn extract_expiration_timestamp(content: &str, stream_url: &str) -> Option<u64> {
-    if let Ok(u) = Url::parse(stream_url) {
-        for (k, v) in u.query_pairs() {
-            if k == "x-expires" || k == "expires" {
-                if let Ok(ts) = v.parse::<u64>() {
-                    return Some(ts);
+    fn decode_once(input: &str) -> String {
+        let bytes = input.as_bytes();
+        let mut output = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' && index + 2 < bytes.len() {
+                let digit = |byte: u8| (byte as char).to_digit(16).map(|value| value as u8);
+                if let (Some(high), Some(low)) = (digit(bytes[index + 1]), digit(bytes[index + 2])) {
+                    output.push((high << 4) | low);
+                    index += 3;
+                    continue;
                 }
             }
+            output.push(bytes[index]);
+            index += 1;
         }
+        String::from_utf8_lossy(&output).into_owned()
     }
-    for line in content.lines() {
-        if let Some(pos) = line.find("x-expires=") {
-            let rest = &line[pos + 10..];
-            let val_str = rest
-                .split('&')
-                .next()
-                .unwrap_or(rest)
-                .split('"')
-                .next()
-                .unwrap_or(rest)
-                .split('\'')
-                .next()
-                .unwrap_or(rest);
-            if let Ok(ts) = val_str.parse::<u64>() {
-                return Some(ts);
-            }
-        } else if let Some(pos) = line.find("expires=") {
-            let rest = &line[pos + 8..];
-            let val_str = rest
-                .split('&')
-                .next()
-                .unwrap_or(rest)
-                .split('"')
-                .next()
-                .unwrap_or(rest)
-                .split('\'')
-                .next()
-                .unwrap_or(rest);
-            if let Ok(ts) = val_str.parse::<u64>() {
-                return Some(ts);
+
+    let mut text = format!("{stream_url}\n{content}");
+    let mut earliest = None;
+    for _ in 0..3 {
+        for captures in EXPIRES_REGEX.captures_iter(&text) {
+            if let Ok(timestamp) = captures[1].parse::<u64>() {
+                earliest = Some(earliest.map_or(timestamp, |current: u64| current.min(timestamp)));
             }
         }
+        let decoded = decode_once(&text);
+        if decoded == text { break; }
+        text = decoded;
     }
-    None
+    earliest
 }
 
 #[derive(Clone, Debug)]
@@ -175,31 +173,53 @@ impl PlaylistCache {
         self.base_dir.clone()
     }
 
-    pub fn cache_slug_dir(&self, slug: &str, ep: Option<i32>) -> PathBuf {
+    pub fn cache_slug_dir_with_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>) -> PathBuf {
+        let srv_suffix = match server {
+            Some(s) if s > 0 => format!("_srv{}", s),
+            _ => String::new(),
+        };
         match ep {
-            Some(e) if e > 1 => self.base_dir.join(format!("{}_ep{}", slug, e)),
-            _ => self.base_dir.join(slug),
+            Some(e) if e > 1 => self.base_dir.join(format!("{}_ep{}{}", slug, e, srv_suffix)),
+            _ => {
+                if srv_suffix.is_empty() {
+                    self.base_dir.join(slug)
+                } else {
+                    self.base_dir.join(format!("{}{}", slug, srv_suffix))
+                }
+            }
         }
     }
 
+    pub fn cache_slug_dir(&self, slug: &str, ep: Option<i32>) -> PathBuf {
+        self.cache_slug_dir_with_server(slug, ep, None)
+    }
+
     pub fn slug_dir(&self, slug: &str) -> PathBuf {
-        self.cache_slug_dir(slug, None)
+        self.cache_slug_dir_with_server(slug, None, None)
     }
 
     pub fn master_path(&self, slug: &str) -> PathBuf {
-        self.master_path_for_ep(slug, None)
+        self.master_path_for_ep_server(slug, None, None)
     }
 
     pub fn master_path_for_ep(&self, slug: &str, ep: Option<i32>) -> PathBuf {
-        self.cache_slug_dir(slug, ep).join("master.m3u8")
+        self.master_path_for_ep_server(slug, ep, None)
+    }
+
+    pub fn master_path_for_ep_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>) -> PathBuf {
+        self.cache_slug_dir_with_server(slug, ep, server).join("master.m3u8")
     }
 
     pub fn file_path(&self, slug: &str, file: &str) -> PathBuf {
-        self.file_path_for_ep(slug, None, file)
+        self.file_path_for_ep_server(slug, None, None, file)
     }
 
     pub fn file_path_for_ep(&self, slug: &str, ep: Option<i32>, file: &str) -> PathBuf {
-        self.cache_slug_dir(slug, ep).join(file)
+        self.file_path_for_ep_server(slug, ep, None, file)
+    }
+
+    pub fn file_path_for_ep_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>, file: &str) -> PathBuf {
+        self.cache_slug_dir_with_server(slug, ep, server).join(file)
     }
 
     pub fn cache_count(&self) -> usize {
@@ -261,8 +281,19 @@ impl PlaylistCache {
         refresh: bool,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let master_file = self.master_path_for_ep(slug, ep);
-        let slug_dir = self.cache_slug_dir(slug, ep);
+        self.get_master_for_episode_server(slug, ep, None, refresh, db).await
+    }
+
+    pub async fn get_master_for_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        server: Option<usize>,
+        refresh: bool,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let master_file = self.master_path_for_ep_server(slug, ep, server);
+        let slug_dir = self.cache_slug_dir_with_server(slug, ep, server);
 
         if !refresh && master_file.exists() {
             // Check signed URL expiration via metadata or file inspection
@@ -277,24 +308,25 @@ impl PlaylistCache {
                 match tokio::fs::read_to_string(&meta_path).await {
                     Ok(meta_str) => match serde_json::from_str::<serde_json::Value>(&meta_str) {
                         Ok(meta_json) => {
+                            let cached_at = meta_json
+                                .get("cached_at")
+                                .and_then(|v| v.as_u64())
+                                .or_else(|| {
+                                    master_file.metadata().ok().and_then(|m| {
+                                        m.modified().ok()
+                                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                            .map(|d| d.as_secs())
+                                    })
+                                })
+                                .unwrap_or(0);
                             if let Some(exp) = meta_json.get("expires_at").and_then(|v| v.as_u64()) {
-                                if now >= exp.saturating_sub(60) {
+                                let bounded_exp = exp.min(cached_at.saturating_add(MAX_CACHE_AGE_SECS));
+                                if now >= bounded_exp.saturating_sub(60) {
                                     is_expired = true;
-                                    warn!("Cached master playlist for '{:?}' expired at {}. Re-fetching...", slug, exp);
+                                    warn!("Cached master playlist for '{:?}' expired. Re-fetching...", slug);
                                 }
                             } else {
                                 // expires_at is null, missing, or invalid: apply bounded TTL
-                                let cached_at = meta_json
-                                    .get("cached_at")
-                                    .and_then(|v| v.as_u64())
-                                    .or_else(|| {
-                                        master_file.metadata().ok().and_then(|m| {
-                                            m.modified().ok()
-                                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                                .map(|d| d.as_secs())
-                                        })
-                                    })
-                                    .unwrap_or(0);
                                 if now >= cached_at.saturating_add(MAX_CACHE_AGE_SECS) {
                                     is_expired = true;
                                     warn!("Cached master playlist for '{:?}' with null expires_at exceeded max TTL (cached_at: {}). Re-fetching...", slug, cached_at);
@@ -335,14 +367,20 @@ impl PlaylistCache {
                     }
 
                     if let Some(exp) = detected_exp {
-                        if now >= exp.saturating_sub(60) {
+                        let cached_at = master_file.metadata().ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let bounded_exp = exp.min(cached_at.saturating_add(MAX_CACHE_AGE_SECS));
+                        if now >= bounded_exp.saturating_sub(60) {
                             is_expired = true;
-                            warn!("Legacy cached playlist for '{:?}' has expired timestamp {}. Re-fetching...", slug, exp);
+                            warn!("Legacy cached playlist for '{:?}' expired. Re-fetching...", slug);
                         } else {
                             // Backfill metadata with detected timestamp
                             let meta_json = serde_json::json!({
-                                "cached_at": now,
-                                "expires_at": exp,
+                                "cached_at": cached_at,
+                                "expires_at": bounded_exp,
                                 "source_url": ""
                             });
                             let _ = tokio::fs::write(&meta_path, meta_json.to_string()).await;
@@ -377,12 +415,12 @@ impl PlaylistCache {
                 }
             }
             warn!(
-                "Cached master.m3u8 for slug '{}' (ep: {:?}) is stale or corrupt. Re-crawling...",
-                slug, ep
+                "Cached master.m3u8 for slug '{}' (ep: {:?}, server: {:?}) is stale or corrupt. Re-crawling...",
+                slug, ep, server
             );
         }
 
-        self.crawl_and_cache_for_episode(slug, ep, db).await
+        self.crawl_and_cache_for_episode_server(slug, ep, server, db).await
     }
 
     pub async fn get_file(
@@ -391,7 +429,7 @@ impl PlaylistCache {
         file: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        self.get_file_for_episode(slug, None, file, db).await
+        self.get_file_for_episode_server(slug, None, None, file, db).await
     }
 
     pub async fn get_file_for_episode(
@@ -401,7 +439,18 @@ impl PlaylistCache {
         file: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let file_path = self.file_path_for_ep(slug, ep, file);
+        self.get_file_for_episode_server(slug, ep, None, file, db).await
+    }
+
+    pub async fn get_file_for_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        server: Option<usize>,
+        file: &str,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let file_path = self.file_path_for_ep_server(slug, ep, server, file);
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -412,7 +461,7 @@ impl PlaylistCache {
         }
 
         // Also check if cached in sub/ directory
-        let sub_file = self.cache_slug_dir(slug, ep).join("sub").join(file);
+        let sub_file = self.cache_slug_dir_with_server(slug, ep, server).join("sub").join(file);
         if sub_file.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&sub_file).await {
                 if !content.trim().is_empty() {
@@ -423,15 +472,15 @@ impl PlaylistCache {
 
         // If file is a .vtt subtitle, fetch upstream via subtitle proxy
         if file.ends_with(".vtt") {
-            return self.get_sub_for_episode(slug, ep, file).await;
+            return self.get_sub_for_episode_server(slug, ep, server, file).await;
         }
 
         // Self-healing: if file is not found, attempt crawl
         info!(
-            "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}). Attempting self-healing crawl...",
-            file, slug, ep
+            "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}, server: {:?}). Attempting self-healing crawl...",
+            file, slug, ep, server
         );
-        let _ = self.crawl_and_cache_for_episode(slug, ep, db).await;
+        let _ = self.crawl_and_cache_for_episode_server(slug, ep, server, db).await;
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -451,7 +500,17 @@ impl PlaylistCache {
         ep: Option<i32>,
         file: &str,
     ) -> Result<String, (StatusCode, String)> {
-        let slug_dir = self.cache_slug_dir(slug, ep);
+        self.get_sub_for_episode_server(slug, ep, None, file).await
+    }
+
+    pub async fn get_sub_for_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        server: Option<usize>,
+        file: &str,
+    ) -> Result<String, (StatusCode, String)> {
+        let slug_dir = self.cache_slug_dir_with_server(slug, ep, server);
         let sub_dir = slug_dir.join("sub");
         let sub_file = sub_dir.join(file);
         let direct_file = slug_dir.join(file);
@@ -472,15 +531,34 @@ impl PlaylistCache {
             }
         }
 
-        // 2. Fetch upstream https://fiml4k.fun/api/subs/<filename> with Referer: https://fiml4k.fun/
+        // 2. Fetch upstream https://fiml4k.fun/api/subs/<filename> with SSRF check and DNS pinning
         let upstream_url = format!("https://fiml4k.fun/api/subs/{}", file);
-        let client = reqwest::Client::builder()
+        let parsed_url = is_valid_remote_url(&upstream_url).map_err(|e| {
+            (
+                StatusCode::FORBIDDEN,
+                format!("Subtitle URL rejected by SSRF security policy: {}", e),
+            )
+        })?;
+
+        let host = parsed_url.host_str().unwrap_or("fiml4k.fun");
+        let port = parsed_url.port_or_known_default().unwrap_or(443);
+        let resolved_addr = resolve_and_validate_host(host, port).await.map_err(|e| {
+            (
+                StatusCode::FORBIDDEN,
+                format!("Subtitle host DNS resolution failed or blocked: {}", e),
+            )
+        })?;
+
+        let client = Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .resolve(host, resolved_addr)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
 
         let resp = client
-            .get(&upstream_url)
+            .get(parsed_url.as_str())
             .header(header::REFERER, "https://fiml4k.fun/")
             .header(
                 header::USER_AGENT,
@@ -488,10 +566,11 @@ impl PlaylistCache {
             )
             .send()
             .await
-            .map_err(|e| {
+            .map_err(|_| {
+                let redacted = redact_url_secrets(&upstream_url);
                 (
                     StatusCode::BAD_GATEWAY,
-                    format!("Failed to fetch upstream subtitle from {}: {}", upstream_url, e),
+                    format!("Failed to fetch upstream subtitle from {}", redacted),
                 )
             })?;
 
@@ -503,12 +582,12 @@ impl PlaylistCache {
             ));
         }
 
-        let content = resp.text().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to read upstream subtitle body: {}", e),
-            )
-        })?;
+        let content = read_body_with_cap(resp, MAX_PLAYLIST_BYTES)
+            .await
+            .map_err(|(code, message)| (code, message.to_string()))
+            .and_then(|body| String::from_utf8(body).map_err(|_| {
+                (StatusCode::BAD_GATEWAY, "Invalid UTF-8 subtitle".to_string())
+            }))?;
 
         // 3. Cache to disk
         if let Err(e) = tokio::fs::create_dir_all(&sub_dir).await {
@@ -519,8 +598,8 @@ impl PlaylistCache {
         }
 
         info!(
-            "Successfully fetched and cached subtitle '{}' for slug '{}' (ep: {:?})",
-            file, slug, ep
+            "Successfully fetched and cached subtitle '{}' for slug '{}' (ep: {:?}, server: {:?})",
+            file, slug, ep, server
         );
         Ok(content)
     }
@@ -530,7 +609,7 @@ impl PlaylistCache {
         slug: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        self.crawl_and_cache_for_episode(slug, None, db).await
+        self.crawl_and_cache_for_episode_server(slug, None, None, db).await
     }
 
     pub async fn crawl_and_cache_for_episode(
@@ -539,110 +618,85 @@ impl PlaylistCache {
         ep_num: Option<i32>,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        info!("Crawling upstream playlists for slug '{}' (ep: {:?})...", slug, ep_num);
+        self.crawl_and_cache_for_episode_server(slug, ep_num, None, db).await
+    }
 
-        // 1. Get fresh upstream master HLS URL from API or DB fallback
-        let master_hls_url = match ep_num {
-            Some(e_num) if e_num > 1 => {
-                let ep_source = if let Some(db) = db {
-                    if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
-                        let target_ep = movie.episodes.iter().find(|e| e.episode == e_num);
-                        if let Some(ep) = target_ep {
-                            if let Some(src) = ep.sources.iter().find(|s| !s.hls_url.trim().is_empty()) {
-                                Some(src.hls_url.clone())
-                            } else if let Some(srv) = ep.servers.iter().find(|s| !s.hls_url.trim().is_empty()) {
-                                Some(srv.hls_url.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+    pub async fn crawl_and_cache_for_episode_server(
+        &self,
+        slug: &str,
+        ep_num: Option<i32>,
+        server: Option<usize>,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        info!("Crawling upstream playlists for slug '{}' (ep: {:?}, server: {:?})...", slug, ep_num, server);
+
+        // An explicit episode/server never falls back to another source.
+        let requested_server = server.unwrap_or(0);
+        let db_source = db
+            .and_then(|database| database.get_movie_by_slug(slug).ok().flatten())
+            .and_then(|movie| {
+                let episode = movie.episodes.iter().find(|ep| ep.episode == ep_num.unwrap_or(1))?;
+                episode.sources.get(requested_server)
+                    .filter(|source| !source.hls_url.trim().is_empty())
+                    .map(|source| source.hls_url.clone())
+                    .or_else(|| episode.servers.get(requested_server)
+                        .filter(|source| !source.hls_url.trim().is_empty())
+                        .map(|source| source.hls_url.clone()))
+            });
+        let master_hls_url = if requested_server > 0 || ep_num.unwrap_or(1) > 1 {
+            db_source.ok_or_else(|| (StatusCode::NOT_FOUND,
+                if requested_server == 0 {
+                    format!("Episode {} for slug '{}' is not available", ep_num.unwrap_or(1), slug)
                 } else {
-                    None
-                };
-
-                // When ep_num > 1 has no matching source, return a clear unavailable error.
-                // NEVER fall back to title API or episode 1.
-                match ep_source {
-                    Some(url) => url,
-                    None => {
-                        return Err((
-                            StatusCode::NOT_FOUND,
-                            format!("Episode {} for slug '{}' is not available", e_num, slug),
-                        ));
-                    }
-                }
-            }
-            _ => match fetch_upstream_title_hls(slug).await {
+                    format!("Episode {}, server {} for slug '{}' is not available", ep_num.unwrap_or(1), requested_server, slug)
+                }))?
+        } else {
+            match fetch_upstream_title_hls(slug).await {
                 Some(url) => url,
-                None => {
-                    if let Some(db) = db {
-                        if let Ok(Some(movie)) = db.get_movie_by_slug(slug) {
-                            let target_ep = movie.episodes.first();
-                            if let Some(ep) = target_ep {
-                                if let Some(src) = ep.sources.first() {
-                                    if !src.hls_url.trim().is_empty() {
-                                        src.hls_url.clone()
-                                    } else {
-                                        return Err((
-                                            StatusCode::NOT_FOUND,
-                                            format!("No HLS stream URL available for slug '{}'", slug),
-                                        ));
-                                    }
-                                } else {
-                                    return Err((
-                                        StatusCode::NOT_FOUND,
-                                        format!("No stream sources available for slug '{}'", slug),
-                                    ));
-                                }
-                            } else if let Some(ref stream_val) = movie.stream {
-                                if let Some(s) = stream_val.as_str() {
-                                    s.to_string()
-                                } else if let Some(s) = stream_val.get("hlsUrl").and_then(|u| u.as_str()) {
-                                    s.to_string()
-                                } else {
-                                    return Err((
-                                        StatusCode::NOT_FOUND,
-                                        format!("No stream available for slug '{}'", slug),
-                                    ));
-                                }
-                            } else {
-                                return Err((
-                                    StatusCode::NOT_FOUND,
-                                    format!("No stream available for slug '{}'", slug),
-                                ));
-                            }
-                        } else {
-                            return Err((
-                                StatusCode::NOT_FOUND,
-                                format!("Movie with slug '{}' not found upstream or in database", slug),
-                            ));
-                        }
-                    } else {
-                        return Err((
-                            StatusCode::NOT_FOUND,
-                            format!("Failed to retrieve upstream HLS URL for slug '{}'", slug),
-                        ));
-                    }
-                }
-            },
+                None => db_source.or_else(|| db.and_then(|database|
+                    database.get_movie_by_slug(slug).ok().flatten()
+                        .and_then(|movie| movie.stream)
+                        .and_then(|stream| stream.as_str().map(str::to_owned)
+                            .or_else(|| stream.get("hlsUrl").and_then(|url| url.as_str()).map(str::to_owned)))))
+                    .ok_or_else(|| (StatusCode::NOT_FOUND,
+                        format!("No HLS stream URL available for slug '{}'", slug)))?,
+            }
         };
 
-        let master_url_parsed = Url::parse(&master_hls_url).map_err(|e| {
+        // SSRF check on master_hls_url
+        let master_url_parsed = is_valid_remote_url(&master_hls_url).map_err(|e| {
             (
-                StatusCode::BAD_GATEWAY,
-                format!("Invalid master HLS URL '{}': {}", master_hls_url, e),
+                StatusCode::FORBIDDEN,
+                format!("Master HLS URL rejected by SSRF security policy: {}", e),
+            )
+        })?;
+
+        let host = master_url_parsed.host_str().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Master HLS URL missing host".to_string(),
+            )
+        })?;
+        let port = master_url_parsed.port_or_known_default().unwrap_or(443);
+        let resolved_addr = resolve_and_validate_host(host, port).await.map_err(|e| {
+            (
+                StatusCode::FORBIDDEN,
+                format!("Master HLS host DNS resolution failed or blocked: {}", e),
             )
         })?;
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .resolve(host, resolved_addr)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to build pinned HTTP client: {}", e),
+                )
+            })?;
 
         let master_resp = client
             .get(master_url_parsed.as_str())
@@ -653,11 +707,12 @@ impl PlaylistCache {
             )
             .send()
             .await
-            .map_err(|e| {
-                error!("Failed to fetch upstream master playlist for {}: {}", slug, e);
+            .map_err(|_| {
+                let redacted = redact_url_secrets(&master_hls_url);
+                error!("Failed to fetch upstream master playlist for {}", redacted);
                 (
                     StatusCode::BAD_GATEWAY,
-                    format!("Failed to connect to upstream master playlist: {}", e),
+                    "Failed to connect to upstream master playlist".to_string(),
                 )
             })?;
 
@@ -668,12 +723,12 @@ impl PlaylistCache {
             ));
         }
 
-        let master_body = master_resp.text().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to read upstream master playlist body: {}", e),
-            )
-        })?;
+        let master_body = read_body_with_cap(master_resp, MAX_PLAYLIST_BYTES)
+            .await
+            .map_err(|(code, message)| (code, message.to_string()))
+            .and_then(|body| String::from_utf8(body).map_err(|_| {
+                (StatusCode::BAD_GATEWAY, "Invalid UTF-8 playlist".to_string())
+            }))?;
 
         if !master_body.trim().starts_with("#EXTM3U") {
             return Err((
@@ -684,10 +739,10 @@ impl PlaylistCache {
 
         // Parse and rewrite master, extract sub-playlists
         let (rewritten_master, sub_playlists) =
-            parse_master_and_extract_subs(&master_body, &master_url_parsed);
+            parse_master_and_extract_subs_for_server(&master_body, &master_url_parsed, server);
 
-        // Ensure local directory exists for this episode
-        let slug_dir = self.cache_slug_dir(slug, ep_num);
+        // Ensure local directory exists for this episode & server
+        let slug_dir = self.cache_slug_dir_with_server(slug, ep_num, server);
         tokio::fs::create_dir_all(&slug_dir).await.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -702,29 +757,43 @@ impl PlaylistCache {
             .unwrap_or(0);
         let mut expires_at = extract_expiration_timestamp(&master_body, &master_hls_url);
 
-        // Download all sub-playlists in parallel
+        // Download all sub-playlists in parallel with SSRF validation and DNS pinning
         let mut join_set = tokio::task::JoinSet::new();
         for (filename, sub_url) in sub_playlists {
             let file_dest = slug_dir.join(&filename);
-            let client = client.clone();
             join_set.spawn(async move {
-                if let Ok(resp) = client
-                    .get(&sub_url)
-                    .header(header::REFERER, "https://fiml4k.fun/")
-                    .header(
-                        header::USER_AGENT,
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-                    )
-                    .send()
-                    .await
-                {
-                    if resp.status().is_success() {
-                        if let Ok(sub_body) = resp.text().await {
-                            if let Ok(parsed_sub_url) = Url::parse(&sub_url) {
-                                let sub_exp = extract_expiration_timestamp(&sub_body, &sub_url);
-                                let processed = process_sub_playlist(&sub_body, &parsed_sub_url);
-                                let _ = tokio::fs::write(&file_dest, processed).await;
-                                return sub_exp;
+                if let Ok(parsed_sub) = is_valid_remote_url(&sub_url) {
+                    if let Some(sub_host) = parsed_sub.host_str() {
+                        let sub_port = parsed_sub.port_or_known_default().unwrap_or(443);
+                        if let Ok(sub_addr) = resolve_and_validate_host(sub_host, sub_port).await {
+                            if let Ok(sub_client) = Client::builder()
+                                .timeout(Duration::from_secs(15))
+                                .resolve(sub_host, sub_addr)
+                                .no_proxy()
+                                .redirect(reqwest::redirect::Policy::none())
+                                .build()
+                            {
+                                if let Ok(resp) = sub_client
+                                    .get(parsed_sub.as_str())
+                                    .header(header::REFERER, "https://fiml4k.fun/")
+                                    .header(
+                                        header::USER_AGENT,
+                                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+                                    )
+                                    .send()
+                                    .await
+                                {
+                                    if resp.status().is_success() {
+                                        if let Ok(sub_body) = read_body_with_cap(resp, MAX_PLAYLIST_BYTES).await {
+                                            let Ok(sub_body) = String::from_utf8(sub_body) else { return None; };
+                                            let sub_exp = extract_expiration_timestamp(&sub_body, &sub_url);
+                                            let processed = process_sub_playlist_for_server(&sub_body, &parsed_sub, server);
+                                            if tokio::fs::write(&file_dest, processed).await.is_ok() {
+                                                return Some(sub_exp);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -733,15 +802,25 @@ impl PlaylistCache {
             });
         }
 
+        let mut all_subs_ok = true;
         while let Some(res) = join_set.join_next().await {
-            if let Ok(Some(exp)) = res {
-                if expires_at.is_none() || expires_at > Some(exp) {
-                    expires_at = Some(exp);
+            match res {
+                Ok(Some(Some(exp))) => {
+                    if expires_at.is_none() || expires_at > Some(exp) {
+                        expires_at = Some(exp);
+                    }
                 }
+                Ok(Some(None)) => {}
+                _ => all_subs_ok = false,
             }
+        }
+        if !all_subs_ok {
+            return Err((StatusCode::BAD_GATEWAY, "Failed to fetch or store child playlist".to_string()));
         }
 
         // Save metadata for expiration tracking
+        expires_at = Some(expires_at.unwrap_or(now.saturating_add(MAX_CACHE_AGE_SECS))
+            .min(now.saturating_add(MAX_CACHE_AGE_SECS)));
         let meta_json = serde_json::json!({
             "cached_at": now,
             "expires_at": expires_at,
@@ -750,7 +829,7 @@ impl PlaylistCache {
         let _ = tokio::fs::write(slug_dir.join(".metadata.json"), meta_json.to_string()).await;
 
         // Save rewritten master.m3u8
-        let master_dest = self.master_path_for_ep(slug, ep_num);
+        let master_dest = self.master_path_for_ep_server(slug, ep_num, server);
         tokio::fs::write(&master_dest, &rewritten_master)
             .await
             .map_err(|e| {
@@ -761,8 +840,8 @@ impl PlaylistCache {
             })?;
 
         info!(
-            "Successfully cached all playlists for slug '{}' (ep: {:?}) to {:?}",
-            slug, ep_num, slug_dir
+            "Successfully cached all playlists for slug '{}' (ep: {:?}, server: {:?}) to {:?}",
+            slug, ep_num, server, slug_dir
         );
         Ok(rewritten_master)
     }
@@ -771,6 +850,21 @@ impl PlaylistCache {
 pub fn parse_master_and_extract_subs(
     content: &str,
     master_url: &Url,
+) -> (String, Vec<(String, String)>) {
+    parse_master_and_extract_subs_for_server(content, master_url, None)
+}
+
+fn local_playlist_name(filename: &str, server: Option<usize>) -> String {
+    match server.filter(|index| *index > 0) {
+        Some(index) => format!("{}?server={}", filename, index),
+        None => filename.to_owned(),
+    }
+}
+
+pub fn parse_master_and_extract_subs_for_server(
+    content: &str,
+    master_url: &Url,
+    server: Option<usize>,
 ) -> (String, Vec<(String, String)>) {
     let mut lines = Vec::new();
     let mut sub_playlists = Vec::new();
@@ -794,7 +888,7 @@ pub fn parse_master_and_extract_subs(
             let filename = extract_filename(trimmed);
             let full_url = resolve_relative_url(master_url, trimmed);
             sub_playlists.push((filename.clone(), full_url));
-            lines.push(filename);
+            lines.push(local_playlist_name(&filename, server));
             continue;
         }
 
@@ -804,7 +898,7 @@ pub fn parse_master_and_extract_subs(
                 let filename = extract_filename(sub_uri);
                 let full_url = resolve_relative_url(master_url, sub_uri);
                 sub_playlists.push((filename.clone(), full_url));
-                format!("URI=\"{}\"", filename)
+                format!("URI=\"{}\"", local_playlist_name(&filename, server))
             });
             lines.push(rewritten_line.to_string());
             continue;
@@ -826,6 +920,10 @@ pub fn parse_master_and_extract_subs(
 }
 
 pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
+    process_sub_playlist_for_server(content, sub_url, None)
+}
+
+pub fn process_sub_playlist_for_server(content: &str, sub_url: &Url, server: Option<usize>) -> String {
     let mut new_lines = Vec::new();
     for line in content.lines() {
         let stripped = line.trim();
@@ -841,7 +939,7 @@ pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
                     let clean = map_uri.split('?').next().unwrap_or(map_uri);
                     if clean.to_lowercase().ends_with(".vtt") {
                         let filename = extract_filename(map_uri);
-                        format!("URI=\"sub/{}\"", filename)
+                        format!("URI=\"{}\"", local_playlist_name(&format!("sub/{}", filename), server))
                     } else if is_cdn_segment(map_uri) {
                         format!("URI=\"{}\"", map_uri)
                     } else {
@@ -858,7 +956,7 @@ pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
             let clean = stripped.split('?').next().unwrap_or(stripped);
             if clean.to_lowercase().ends_with(".vtt") {
                 let filename = extract_filename(stripped);
-                new_lines.push(format!("sub/{}", filename));
+                new_lines.push(local_playlist_name(&format!("sub/{}", filename), server));
             } else if is_cdn_segment(stripped) {
                 new_lines.push(stripped.to_string());
             } else {
@@ -881,7 +979,13 @@ pub async fn handle_stream_master(
 
     match state
         .playlist_cache
-        .get_master_for_episode(&slug, params.ep, params.is_refresh(), Some(&state.db))
+        .get_master_for_episode_server(
+            &slug,
+            params.ep,
+            params.server,
+            params.is_refresh(),
+            Some(&state.db),
+        )
         .await
     {
         Ok(content) => {
@@ -902,7 +1006,13 @@ pub async fn handle_stream_master_ep(
 
     match state
         .playlist_cache
-        .get_master_for_episode(&slug, Some(ep), params.is_refresh(), Some(&state.db))
+        .get_master_for_episode_server(
+            &slug,
+            Some(ep),
+            params.server,
+            params.is_refresh(),
+            Some(&state.db),
+        )
         .await
     {
         Ok(content) => {
@@ -935,7 +1045,7 @@ pub async fn handle_stream_file(
 
     match state
         .playlist_cache
-        .get_file_for_episode(&slug, params.ep, &file, Some(&state.db))
+        .get_file_for_episode_server(&slug, params.ep, params.server, &file, Some(&state.db))
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
@@ -966,7 +1076,7 @@ pub async fn handle_stream_file_ep(
 
     match state
         .playlist_cache
-        .get_file_for_episode(&slug, Some(ep), &file, Some(&state.db))
+        .get_file_for_episode_server(&slug, Some(ep), params.server, &file, Some(&state.db))
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
@@ -985,7 +1095,7 @@ pub async fn handle_stream_sub(
 
     match state
         .playlist_cache
-        .get_sub_for_episode(&slug, params.ep, &file)
+        .get_sub_for_episode_server(&slug, params.ep, params.server, &file)
         .await
     {
         Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
@@ -996,7 +1106,7 @@ pub async fn handle_stream_sub(
 pub async fn handle_stream_sub_ep(
     State(state): State<AppState>,
     AxumPath((slug, ep, file)): AxumPath<(String, i32, String)>,
-    Query(_params): Query<StreamParams>,
+    Query(params): Query<StreamParams>,
 ) -> Response {
     if !is_safe_filename(&slug) || !is_safe_filename(&file) || ep <= 0 {
         return (StatusCode::BAD_REQUEST, "Invalid slug, episode, or file parameter").into_response();
@@ -1004,7 +1114,7 @@ pub async fn handle_stream_sub_ep(
 
     match state
         .playlist_cache
-        .get_sub_for_episode(&slug, Some(ep), &file)
+        .get_sub_for_episode_server(&slug, Some(ep), params.server, &file)
         .await
     {
         Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
@@ -1035,6 +1145,7 @@ pub fn create_playlist_response(content: String, content_type: &'static str) -> 
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-store, must-revalidate"),
     );
+    add_security_headers(headers_mut);
     resp
 }
 
@@ -1085,6 +1196,10 @@ mod tests {
         assert_eq!(subs[0].1, "https://fiml4k.fun/api/hls/TOKEN123/a0.m3u8");
         assert_eq!(subs[1].0, "s0.m3u8");
         assert_eq!(subs[2].0, "v.m3u8");
+
+        let (server_master, _) = parse_master_and_extract_subs_for_server(master, &base_url, Some(2));
+        assert!(server_master.contains(r#"URI="a0.m3u8?server=2""#));
+        assert!(server_master.contains("\nv.m3u8?server=2"));
     }
 
     #[test]
@@ -1130,6 +1245,24 @@ relative_segment.ts
             cache.file_path_for_ep("breaking-bad", Some(2), "v0.m3u8"),
             PathBuf::from("/tmp/test_cache/breaking-bad_ep2/v0.m3u8")
         );
+
+        // Server-isolated cache dirs
+        assert_eq!(
+            cache.cache_slug_dir_with_server("breaking-bad", None, Some(0)),
+            PathBuf::from("/tmp/test_cache/breaking-bad")
+        );
+        assert_eq!(
+            cache.cache_slug_dir_with_server("breaking-bad", None, Some(1)),
+            PathBuf::from("/tmp/test_cache/breaking-bad_srv1")
+        );
+        assert_eq!(
+            cache.cache_slug_dir_with_server("breaking-bad", Some(2), Some(1)),
+            PathBuf::from("/tmp/test_cache/breaking-bad_ep2_srv1")
+        );
+        assert_eq!(
+            cache.master_path_for_ep_server("breaking-bad", Some(2), Some(1)),
+            PathBuf::from("/tmp/test_cache/breaking-bad_ep2_srv1/master.m3u8")
+        );
     }
 
     #[test]
@@ -1163,6 +1296,14 @@ relative_segment.ts
             extract_expiration_timestamp(m3u8_quoted, "https://film4k.net/master.m3u8"),
             Some(1789444444)
         );
+
+        let duplicate = "https://film4k.net/master.m3u8?expires=1789444444&expires=1789000001";
+        assert_eq!(extract_expiration_timestamp("", duplicate), Some(1789000001));
+        let encoded = "#EXT-X-MAP:URI=\"https://film4k.net/map.mp4?next=1%26x-expires%3D1789000002\"";
+        assert_eq!(extract_expiration_timestamp(encoded, duplicate), Some(1789000001));
+        assert_eq!(extract_expiration_timestamp(encoded, ""), Some(1789000002));
+        let double_encoded = "https://film4k.net/x?next=x%252Dexpires%253D1789000003";
+        assert_eq!(extract_expiration_timestamp("", double_encoded), Some(1789000003));
 
         let no_exp = "https://film4k.net/api/hls/master.m3u8";
         assert_eq!(extract_expiration_timestamp("#EXTM3U\n", no_exp), None);
@@ -1213,7 +1354,9 @@ relative_segment.ts
         assert!(meta_path.exists());
         let meta_str = tokio::fs::read_to_string(&meta_path).await.unwrap();
         let meta_json: serde_json::Value = serde_json::from_str(&meta_str).unwrap();
-        assert_eq!(meta_json.get("expires_at").and_then(|v| v.as_u64()), Some(future_exp));
+        let expires_at = meta_json.get("expires_at").and_then(|v| v.as_u64()).unwrap();
+        assert!(expires_at < future_exp);
+        assert!(expires_at <= meta_json.get("cached_at").and_then(|v| v.as_u64()).unwrap() + MAX_CACHE_AGE_SECS);
 
         // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;

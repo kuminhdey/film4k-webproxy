@@ -8,7 +8,7 @@ pub mod proxy;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -73,6 +73,8 @@ impl AppState {
 pub fn create_app(state: AppState) -> Router {
     let api_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/health/live", get(health_live_handler))
+        .route("/health/ready", get(health_ready_handler))
         .route("/home", get(get_home))
         .route("/movies", get(list_movies))
         .route("/movies/by-slugs", get(get_movies_by_slugs_handler))
@@ -81,6 +83,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/movies/:slug/related", get(get_movie_recommendations))
         .route("/search/suggest", get(search_suggest))
         .route("/proxy/stream", get(handle_stream_proxy))
+        .route("/proxy/image", get(proxy::handle_image_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
         .route("/stream/:slug/ep/:ep/master.m3u8", get(handle_stream_master_ep))
         .route("/stream/:slug/ep/:ep/sub/:file", get(handle_stream_sub_ep))
@@ -129,6 +132,10 @@ pub fn create_app(state: AppState) -> Router {
 
     Router::new()
         .nest("/api", api_routes)
+        .route("/health", get(health_check))
+        .route("/health/live", get(health_live_handler))
+        .route("/health/ready", get(health_ready_handler))
+        .route("/proxy/image", get(proxy::handle_image_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
         .route("/stream/:slug/ep/:ep/master.m3u8", get(handle_stream_master_ep))
         .route("/stream/:slug/ep/:ep/sub/:file", get(handle_stream_sub_ep))
@@ -171,8 +178,66 @@ pub struct RootQuery {
     pub slug: Option<String>,
 }
 
-pub async fn health_check() -> &'static str {
-    "OK"
+pub async fn health_live_handler() -> (StatusCode, axum::Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "status": "alive"
+        })),
+    )
+}
+
+pub async fn health_ready_handler(
+    State(state): State<AppState>,
+) -> (StatusCode, axum::Json<serde_json::Value>) {
+    let build_commit = option_env!("BUILD_COMMIT").unwrap_or("unknown");
+    let assets_ready = build_commit == "unknown"
+        || std::path::Path::new("frontend/dist/index.html").is_file();
+    match state.db.check_health() {
+        Ok((migration_count, is_healthy)) if is_healthy && assets_ready => (
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "status": "ready",
+                "ready": true,
+                "migrations_applied": migration_count,
+                "commit": build_commit
+            })),
+        ),
+        Ok((migration_count, _)) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({
+                "status": "unhealthy",
+                "ready": false,
+                "reason": "Database schema or static assets unavailable",
+                "migrations_applied": migration_count
+            })),
+        ),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({
+                "status": "unhealthy",
+                "ready": false,
+                "reason": "Database unavailable"
+            })),
+        ),
+    }
+}
+
+pub async fn health_check(State(state): State<AppState>) -> Response {
+    match state.db.check_health() {
+        Ok((_, is_healthy))
+            if is_healthy
+                && (option_env!("BUILD_COMMIT").is_none()
+                    || std::path::Path::new("frontend/dist/index.html").is_file()) =>
+        {
+            (StatusCode::OK, "OK").into_response()
+        }
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Degraded: Database unhealthy",
+        )
+            .into_response(),
+    }
 }
 
 pub async fn spa_page_handler() -> axum::response::Response {
