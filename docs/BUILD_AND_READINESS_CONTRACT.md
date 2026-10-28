@@ -79,7 +79,7 @@ The objective is to eliminate configuration and deployment drift by ensuring tha
      ```
    - Base images are strictly pinned:
      - Frontend builder: `node:22.14.0-alpine3.21`
-     - Backend builder: `rust:1.85.0-bookworm`
+     - Backend builder: `rust:1.88.0-bookworm`
      - Runtime base: `debian:bookworm-20250224-slim`
 
 2. **Docker Compose Contract:**

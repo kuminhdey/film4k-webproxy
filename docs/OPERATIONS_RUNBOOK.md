@@ -270,7 +270,7 @@ curl -sf http://127.0.0.1:8090/health/ready | jq .
 
 ### 6.1 Continuous Integration Architecture
 The GitHub Actions workflow (`.github/workflows/ci.yml`) enforces the following gates on every push and pull request:
-1. `backend-verification`: `cargo check --locked` and `cargo test --locked` using Rust 1.85.0.
+1. `backend-verification`: `cargo check --locked` and `cargo test --locked` using Rust 1.88.0.
 2. `frontend-verification`: `npm ci --no-audit --no-fund` and `npm run build` using Node.js 22.x.
 3. `ops-scripts-verification`: Automated test suite (`scripts/test_ops_scripts.sh`) validating backup, atomic rotation, failure aborts, and rehearsal isolation.
 4. `docker-image-smoke`:

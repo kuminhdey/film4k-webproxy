@@ -8,7 +8,7 @@
 #
 # Base Image Pinning Policy:
 # Base images are pinned to specific stable distribution snapshots and toolchain
-# releases (Node 22.14.0 Alpine 3.21, Rust 1.85.0 Bookworm, Debian Bookworm 20250224 slim).
+# releases (Node 22.14.0 Alpine 3.21, Rust 1.88.0 Bookworm, Debian Bookworm 20250224 slim).
 # In multi-platform CI/CD registries, architecture-specific manifest digests (@sha256:...)
 # can be appended where single-architecture pinning is required.
 # ==============================================================================
@@ -22,7 +22,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Backend (Rust Axum Tokio)
-FROM rust:1.85.0-bookworm AS backend-builder
+FROM rust:1.88.0-bookworm AS backend-builder
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
