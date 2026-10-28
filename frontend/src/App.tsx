@@ -342,9 +342,9 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
 
                       <button
                         onClick={() => navigateTo('/danh-sach/phim-moi')}
-                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
                       >
-                        <span>Xem tất cả</span>
+                        <span>Xem thêm</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -380,9 +380,9 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
                       </div>
                       <button
                         onClick={() => navigateTo('/danh-sach/phim-bo')}
-                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
                       >
-                        <span>Xem tất cả</span>
+                        <span>Xem thêm</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -411,9 +411,9 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
                       </div>
                       <button
                         onClick={() => navigateTo('/danh-sach/phim-le')}
-                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
                       >
-                        <span>Xem tất cả</span>
+                        <span>Xem thêm</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -442,9 +442,9 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
                       </div>
                       <button
                         onClick={() => navigateTo('/danh-sach/tv-shows')}
-                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
                       >
-                        <span>Xem tất cả</span>
+                        <span>Xem thêm</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
@@ -473,9 +473,9 @@ function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: 
                       </div>
                       <button
                         onClick={() => navigateTo('/the-loai/hoat-hinh')}
-                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors"
+                        className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
                       >
-                        <span>Xem tất cả</span>
+                        <span>Xem thêm</span>
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>

@@ -34,15 +34,23 @@ pub struct AppState {
     pub crawler: CrawlerService,
     pub playlist_cache: PlaylistCacheService,
     pub admin: AdminService,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
     pub fn new(db: Database, crawler: CrawlerService) -> Self {
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             db,
             crawler,
             playlist_cache: PlaylistCacheService::default(),
             admin: AdminService::new(),
+            http_client,
         }
     }
 
@@ -53,6 +61,11 @@ impl AppState {
 
     pub fn with_admin(mut self, admin: AdminService) -> Self {
         self.admin = admin;
+        self
+    }
+
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.http_client = client;
         self
     }
 }

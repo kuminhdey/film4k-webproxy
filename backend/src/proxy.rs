@@ -30,7 +30,6 @@ pub const ALLOWED_DOMAINS: &[&str] = &[
     "ibytedtos.com",
     "ibyteimg.com",
     "tmdb.org",
-    "example.com",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -201,17 +200,6 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
     }
 
     let parsed = Url::parse(target).map_err(|_| "Invalid URL format")?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        _ => return Err("Only http and https schemes are supported"),
-    }
-
-    // Check port: standard http/https ports only
-    if let Some(port) = parsed.port() {
-        if port != 80 && port != 443 {
-            return Err("Access to internal host is denied");
-        }
-    }
 
     let host_str = match parsed.host_str() {
         Some(h) => h,
@@ -232,6 +220,17 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
             return Err("Access to IP literal is not permitted by proxy policy");
         }
         return Ok(parsed);
+    }
+
+    if parsed.scheme() != "https" {
+        return Err("Only https scheme is supported");
+    }
+
+    // Check port: standard https port 443 only
+    if let Some(port) = parsed.port() {
+        if port != 443 {
+            return Err("Access to internal host is denied");
+        }
     }
 
     if !is_allowed_origin(&host_lower) {
@@ -273,15 +272,6 @@ pub async fn resolve_and_validate_host(host: &str, port: u16) -> Result<SocketAd
 
 /// Validate redirect destinations synchronously
 pub fn validate_redirect_target(url: &Url) -> Result<(), &'static str> {
-    match url.scheme() {
-        "http" | "https" => {}
-        _ => return Err("Forbidden scheme in redirect"),
-    }
-    if let Some(p) = url.port() {
-        if p != 80 && p != 443 {
-            return Err("Forbidden port in redirect");
-        }
-    }
     let host = url.host_str().ok_or("Missing host in redirect")?;
     let host_lower = host.to_lowercase();
     if host_lower == "localhost" {
@@ -295,6 +285,14 @@ pub fn validate_redirect_target(url: &Url) -> Result<(), &'static str> {
             return Err("Access to IP literal is not permitted by proxy policy");
         }
         return Ok(());
+    }
+    if url.scheme() != "https" {
+        return Err("Forbidden scheme in redirect");
+    }
+    if let Some(p) = url.port() {
+        if p != 443 {
+            return Err("Forbidden port in redirect");
+        }
     }
     if !is_allowed_origin(&host_lower) {
         return Err("Host not permitted in redirect");
@@ -318,6 +316,27 @@ pub fn validate_redirect_target(url: &Url) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// Extract the raw upstream target URL from a proxied URL parameter accurately using URL parsing
+/// instead of naive substring search.
+pub fn extract_raw_url_from_proxy(url_str: &str) -> String {
+    let parsed = if url_str.starts_with('/') {
+        Url::parse(&format!("http://localhost{}", url_str)).ok()
+    } else {
+        Url::parse(url_str).ok()
+    };
+
+    if let Some(p) = parsed {
+        if p.path().contains("/proxy/stream") {
+            for (k, v) in p.query_pairs() {
+                if k == "url" && !v.trim().is_empty() {
+                    return v.into_owned();
+                }
+            }
+        }
+    }
+    url_str.to_string()
 }
 
 pub fn resolve_relative_url(base: &Url, rel: &str) -> String {
@@ -429,13 +448,17 @@ pub fn create_m3u8_response(rewritten: String) -> Response {
     resp
 }
 
-/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug
+/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug using a shared client
 pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .ok()?;
+    fetch_upstream_title_hls_with_client(&client, slug).await
+}
 
+/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug with provided HTTP client
+pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -> Option<String> {
     let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
     let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
 
@@ -490,8 +513,9 @@ pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
     Some(full_hls)
 }
 
-/// Perform an HTTP GET request with DNS pinning and manual fail-closed redirect following
-pub async fn fetch_pinned_stream(
+/// Perform an HTTP GET request with DNS validation and manual fail-closed redirect following using the provided HTTP client
+pub async fn fetch_stream_with_client(
+    client: &Client,
     target_url: &Url,
     range: Option<&HeaderValue>,
     max_hops: usize,
@@ -506,17 +530,9 @@ pub async fn fetch_pinned_stream(
         let port = current_url.port_or_known_default().unwrap_or(443);
 
         // Fail-closed DNS resolution & blocked IP validation
-        let resolved_addr = resolve_and_validate_host(host, port)
+        let _resolved_addr = resolve_and_validate_host(host, port)
             .await
             .map_err(|err| (StatusCode::FORBIDDEN, err))?;
-
-        // Pin the resolved IP address and disable unpinned automatic redirects
-        let client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .resolve(host, resolved_addr)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client"))?;
 
         let mut req = client.get(current_url.as_str());
         if let Some(r) = range {
@@ -565,6 +581,20 @@ pub async fn fetch_pinned_stream(
     }
 }
 
+/// Perform an HTTP GET request with DNS pinning and manual fail-closed redirect following
+pub async fn fetch_pinned_stream(
+    target_url: &Url,
+    range: Option<&HeaderValue>,
+    max_hops: usize,
+) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client"))?;
+    fetch_stream_with_client(&client, target_url, range, max_hops).await
+}
+
 pub async fn handle_stream_proxy(
     State(state): State<AppState>,
     Query(query): Query<ProxyQuery>,
@@ -607,8 +637,8 @@ pub async fn handle_stream_proxy(
         state.db.find_slug_by_stream_url(target_str)
     });
 
-    // Execute request with fail-closed DNS resolution, IP pinning, and secure redirect handling
-    let (upstream_resp, final_url) = match fetch_pinned_stream(&parsed_url, headers.get(header::RANGE), 5).await {
+    // Execute request with fail-closed DNS resolution and secure redirect handling using shared http_client
+    let (upstream_resp, final_url) = match fetch_stream_with_client(&state.http_client, &parsed_url, headers.get(header::RANGE), 5).await {
         Ok(res) => res,
         Err((code, msg)) => return (code, msg).into_response(),
     };
@@ -657,7 +687,7 @@ pub async fn handle_stream_proxy(
                         status, detected_slug, redacted_target
                     );
                     if let Some(ref slug) = detected_slug {
-                        if let Some(fresh_hls) = fetch_upstream_title_hls(slug).await {
+                        if let Some(fresh_hls) = fetch_upstream_title_hls_with_client(&state.http_client, slug).await {
                             if fresh_hls != target_str {
                                 info!(
                                     "Successfully retrieved fresh stream token for {}: {} -> {}",
@@ -666,7 +696,7 @@ pub async fn handle_stream_proxy(
                                 let _ = state.db.update_movie_stream(slug, &fresh_hls);
 
                                 if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
-                                    if let Ok((retry_resp, final_fresh_url)) = fetch_pinned_stream(&fresh_url, headers.get(header::RANGE), 5).await {
+                                    if let Ok((retry_resp, final_fresh_url)) = fetch_stream_with_client(&state.http_client, &fresh_url, headers.get(header::RANGE), 5).await {
                                         if retry_resp.status().is_success() {
                                             if let Ok(fresh_bytes) = retry_resp.bytes().await {
                                                 if fresh_bytes.len() <= MAX_PLAYLIST_BYTES {
@@ -748,8 +778,12 @@ mod tests {
     #[test]
     fn test_valid_remote_urls() {
         assert!(is_valid_remote_url("https://film4k.net/api/hls/master.m3u8").is_ok());
-        assert!(is_valid_remote_url("http://fiml4k.fun/api/hls/test/master.m3u8").is_ok());
+        assert!(is_valid_remote_url("https://fiml4k.fun/api/hls/test/master.m3u8").is_ok());
         assert!(is_valid_remote_url("https://v16m-default.akamaicdn.net/test.png").is_ok());
+        assert_eq!(
+            is_valid_remote_url("http://fiml4k.fun/api/hls/test/master.m3u8").unwrap_err(),
+            "Only https scheme is supported"
+        );
     }
 
     #[test]
@@ -832,43 +866,43 @@ https://v16m-default.akamaicdn.net/chunk01.image
     #[test]
     fn test_reject_all_unallowlisted_ip_literals() {
         // Public IPv4
-        let err1 = is_valid_remote_url("http://1.1.1.1/master.m3u8").unwrap_err();
+        let err1 = is_valid_remote_url("https://1.1.1.1/master.m3u8").unwrap_err();
         assert_eq!(err1, "Access to IP literal is not permitted by proxy policy");
 
-        let err2 = is_valid_remote_url("http://8.8.8.8/chunk.ts").unwrap_err();
+        let err2 = is_valid_remote_url("https://8.8.8.8/chunk.ts").unwrap_err();
         assert_eq!(err2, "Access to IP literal is not permitted by proxy policy");
 
         // Public IPv6
-        let err3 = is_valid_remote_url("http://[2606:4700:4700::1111]/master.m3u8").unwrap_err();
+        let err3 = is_valid_remote_url("https://[2606:4700:4700::1111]/master.m3u8").unwrap_err();
         assert_eq!(err3, "Access to IP literal is not permitted by proxy policy");
 
         // Private / loopback IPv4
-        let err4 = is_valid_remote_url("http://127.0.0.1:8090/status").unwrap_err();
+        let err4 = is_valid_remote_url("https://127.0.0.1:8090/status").unwrap_err();
         assert_eq!(err4, "Access to internal host is denied");
 
-        let err5 = is_valid_remote_url("http://192.168.1.1/admin").unwrap_err();
+        let err5 = is_valid_remote_url("https://192.168.1.1/admin").unwrap_err();
         assert_eq!(err5, "Access to internal host is denied");
 
         // Loopback IPv6
-        let err6 = is_valid_remote_url("http://[::1]/status").unwrap_err();
+        let err6 = is_valid_remote_url("https://[::1]/status").unwrap_err();
         assert_eq!(err6, "Access to internal host is denied");
     }
 
     #[test]
     fn test_validate_redirect_target_rejects_ip_literals() {
-        let u1 = Url::parse("http://1.1.1.1/sub.m3u8").unwrap();
+        let u1 = Url::parse("https://1.1.1.1/sub.m3u8").unwrap();
         assert_eq!(
             validate_redirect_target(&u1).unwrap_err(),
             "Access to IP literal is not permitted by proxy policy"
         );
 
-        let u2 = Url::parse("http://127.0.0.1/sub.m3u8").unwrap();
+        let u2 = Url::parse("https://127.0.0.1/sub.m3u8").unwrap();
         assert_eq!(
             validate_redirect_target(&u2).unwrap_err(),
             "Access to internal IP is denied"
         );
 
-        let u3 = Url::parse("http://[2606:4700:4700::1111]/sub.m3u8").unwrap();
+        let u3 = Url::parse("https://[2606:4700:4700::1111]/sub.m3u8").unwrap();
         assert_eq!(
             validate_redirect_target(&u3).unwrap_err(),
             "Access to IP literal is not permitted by proxy policy"
@@ -882,6 +916,24 @@ https://v16m-default.akamaicdn.net/chunk01.image
 
         let u_valid = Url::parse("https://film4k.net/api/hls/sub.m3u8").unwrap();
         assert!(validate_redirect_target(&u_valid).is_ok());
+
+        let u_http = Url::parse("http://film4k.net/api/hls/sub.m3u8").unwrap();
+        assert_eq!(
+            validate_redirect_target(&u_http).unwrap_err(),
+            "Forbidden scheme in redirect"
+        );
+    }
+
+    #[test]
+    fn test_extract_raw_url_from_proxy() {
+        let proxied = "/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fvideo.m3u8&keep_cdn=1";
+        assert_eq!(extract_raw_url_from_proxy(proxied), "https://film4k.net/video.m3u8");
+
+        let full_proxied = "https://mysite.com/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fvideo.m3u8";
+        assert_eq!(extract_raw_url_from_proxy(full_proxied), "https://film4k.net/video.m3u8");
+
+        let direct = "https://film4k.net/direct.m3u8";
+        assert_eq!(extract_raw_url_from_proxy(direct), direct);
     }
 
     #[tokio::test]

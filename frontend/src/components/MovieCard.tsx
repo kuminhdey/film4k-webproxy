@@ -120,10 +120,10 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 
       {/* Info Below Poster (A11Y-01 upgraded contrast >= 5.5:1) */}
       <div className="mt-2.5 space-y-1 flex-1 flex flex-col justify-between">
-        <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug min-h-[2.5rem]">
+        <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug h-[2.5rem] min-h-[2.5rem]">
           {movie.name}
         </h3>
-        <div className="flex items-center justify-between text-[11px] text-[#a8cca2] min-h-[1.1rem]">
+        <div className="flex items-center justify-between text-[11px] text-[#a8cca2] h-[1.2rem] min-h-[1.2rem]">
           <span className="line-clamp-1 flex-1 pr-2 truncate">
             {movie.original_name || 'Đang cập nhật'}
           </span>

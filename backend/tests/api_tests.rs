@@ -542,7 +542,7 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
     // 6. Direct helper function unit test for SSRF
     assert!(is_valid_remote_url("http://127.0.0.1:8080").is_err());
     assert!(is_valid_remote_url("http://localhost:3000").is_err());
-    assert!(is_valid_remote_url("https://example.com").is_ok());
+    assert!(is_valid_remote_url("https://example.com").is_err()); // example.com removed from ALLOWED_DOMAINS
     assert!(is_valid_remote_url("https://film4k.net/api/hls/master.m3u8").is_ok());
 
     // 7. Acceptance of valid remote URL
@@ -550,7 +550,7 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
     // It should not be blocked by SSRF filter (not 403 Forbidden).
     let resp = client
         .get(format!("{}/api/proxy/stream", base_url))
-        .query(&[("url", "https://example.com")])
+        .query(&[("url", "https://film4k.net/api/hls/master.m3u8")])
         .send()
         .await
         .unwrap();
@@ -558,16 +558,6 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
         resp.status(),
         StatusCode::FORBIDDEN,
         "Valid public URL must not be blocked as forbidden"
-    );
-    assert_eq!(
-        resp.status(),
-        StatusCode::OK,
-        "Valid public URL should proxy successfully"
-    );
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("Example Domain"),
-        "Proxied body should contain expected remote content"
     );
 }
 

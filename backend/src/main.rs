@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 4. Initialize Playlist Cache & Crawler Service
     let playlist_cache = webproxy_backend::PlaylistCacheService::default();
+    playlist_cache.start_cleanup_task(db.clone());
     let mut crawler = CrawlerService::new(db.clone());
     crawler.set_playlist_cache(playlist_cache.clone());
     crawler.start_background_schedule(1); // Hourly homepage sync & crawl (every 1 hour)

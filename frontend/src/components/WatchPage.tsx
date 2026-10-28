@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Loader2, Info, Film, AlertCircle, Minimize2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ArrowLeft, Loader2, Info, Film, AlertCircle, Minimize2, Maximize2, X } from 'lucide-react';
 import { getMovieDetail } from '../api';
 import { MovieDetail, EpisodeServer, EpisodeItem } from '../types';
 import { VideoPlayer } from './VideoPlayer';
@@ -30,6 +30,49 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const [activeServerIndex, setActiveServerIndex] = useState(0);
   const [playerMode, setPlayerMode] = useState<'hls' | 'embed'>('hls');
   const [isTheater, setIsTheater] = useState(false);
+
+  // ===== Scroll-Driven Floating Miniplayer =====
+  const miniSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [isMiniplayer, setIsMiniplayer] = useState(false);
+  const [miniplayerClosed, setMiniplayerClosed] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const el = miniSentinelRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const past = rect.bottom < 0;
+      setIsMiniplayer((prev) => {
+        const next = past;
+        if (!next && prev) {
+          setMiniplayerClosed(false);
+        }
+        return next;
+      });
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  const showMiniplayer = isMiniplayer && !isTheater && !miniplayerClosed;
+
+  const handleMaximizeMiniplayer = useCallback(() => {
+    const el = miniSentinelRef.current;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    setIsMiniplayer(false);
+    setMiniplayerClosed(false);
+  }, []);
+
+  const handleCloseMiniplayer = useCallback(() => {
+    setMiniplayerClosed(true);
+  }, []);
 
   const toggleTheater = useCallback(() => {
     setIsTheater((prev) => !prev);
@@ -275,7 +318,45 @@ export const WatchPage: React.FC<WatchPageProps> = ({
       </div>
 
       {/* Video Player */}
-      <div className="w-full">
+      <div ref={miniSentinelRef} aria-hidden className="h-0" />
+      {showMiniplayer && (
+        <div className="aspect-video w-full rounded-2xl bg-[#071307] border border-lime-500/25 flex items-center justify-center text-xs text-[#8aa885] border-dashed">
+          <span className="truncate">Đang phát ở miniplayer góc màn hình</span>
+        </div>
+      )}
+      <div
+        className={
+          showMiniplayer
+            ? 'fixed bottom-4 right-4 z-[55] w-[380px] max-w-[92vw] rounded-2xl bg-[#09150a] border border-lime-500/40 shadow-[0_18px_55px_rgba(0,0,0,0.9)] overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200'
+            : 'w-full'
+        }
+      >
+        {showMiniplayer && (
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#0a1f0d] border-b border-lime-500/30">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-lime-300 truncate min-w-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-lime-400 animate-pulse flex-shrink-0" />
+              <span className="truncate">{movie.name}</span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                type="button"
+                onClick={handleMaximizeMiniplayer}
+                className="p-1 rounded-lg bg-lime-950/50 hover:bg-lime-500 hover:text-black text-lime-300 border border-lime-500/30 transition-colors cursor-pointer"
+                title="Mở rộng trình phát"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleCloseMiniplayer}
+                className="p-1 rounded-lg bg-lime-950/50 hover:bg-red-500 hover:text-black text-lime-300 border border-lime-500/30 transition-colors cursor-pointer"
+                title="Đóng miniplayer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
         {playerElement}
       </div>
 

@@ -30,13 +30,19 @@ import {
   SlidersHorizontal,
   MonitorPlay,
   Keyboard,
+  Timer,
   Share2,
   Gauge,
+  AlarmClockOff,
+  Camera,
   Captions,
   Type,
   FileUp,
+  Film,
   Info,
   ImageOff,
+  Bookmark,
+  Repeat,
   Sparkles,
   Link2,
   Activity,
@@ -45,6 +51,7 @@ import {
   Waves,
   AudioLines,
   Moon,
+  MessageSquare,
 } from 'lucide-react';
 import {
   saveHistory,
@@ -120,11 +127,64 @@ interface PlayerPrefs {
   subtitleDelay: number;
   subtitleSize: 'sm' | 'md' | 'lg';
   subtitleColor: string;
+  autoSkipIntro: boolean;
+  introDuration: number;
   colorFilter: VideoFilterValues;
   showHealthGauge: boolean;
 }
 
+const INTRO_DURATION_OPTIONS = [60, 85, 90, 120];
+
 const PREFS_KEY = 'bofilm_player_prefs';
+
+// ===== Danmaku / Floating Bullet Comments =====
+type DanmakuFontSize = 12 | 14 | 18;
+
+interface DanmakuSettings {
+  enabled: boolean;
+  opacity: number;
+  fontSize: DanmakuFontSize;
+}
+
+interface DanmakuComment {
+  t: number;
+  text: string;
+  kind: 'text' | 'emoji';
+}
+
+interface DanmakuFlying {
+  id: number;
+  text: string;
+  kind: 'text' | 'emoji';
+  lane: number;
+  duration: number;
+}
+
+const DANMAKU_SETTINGS_KEY = 'bofilm_danmaku_settings';
+const DANMAKU_LANES = 5;
+const DANMAKU_REACTIONS = ['❤️', '🔥', '😂', '👏', '🍿', '😭', '😱'];
+const DANMAKU_SEED_TEXTS = [
+  'Phim hay quá!',
+  'Đoạn này đỉnh thật sự 🔥',
+  'Nhạc phim cuốn dã man',
+  'Bơ Film xem mượt ghê ❤️',
+];
+
+const loadDanmakuSettings = (): DanmakuSettings => {
+  if (typeof window === 'undefined') return { enabled: true, opacity: 0.85, fontSize: 14 };
+  try {
+    const raw = localStorage.getItem(DANMAKU_SETTINGS_KEY);
+    if (!raw) return { enabled: true, opacity: 0.85, fontSize: 14 };
+    const parsed = JSON.parse(raw) as Partial<DanmakuSettings>;
+    return {
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+      opacity: Math.min(1, Math.max(0.3, typeof parsed.opacity === 'number' ? parsed.opacity : 0.85)),
+      fontSize: parsed.fontSize === 12 || parsed.fontSize === 18 ? parsed.fontSize : 14,
+    };
+  } catch {
+    return { enabled: true, opacity: 0.85, fontSize: 14 };
+  }
+};
 
 const loadPlayerPrefs = (): PlayerPrefs => {
   const defaults: PlayerPrefs = {
@@ -132,8 +192,10 @@ const loadPlayerPrefs = (): PlayerPrefs => {
     subtitleDelay: 0,
     subtitleSize: 'md',
     subtitleColor: '#ffffff',
+    autoSkipIntro: false,
+    introDuration: 85,
     colorFilter: DEFAULT_FILTER,
-    showHealthGauge: false,
+    showHealthGauge: true,
   };
   if (typeof window === 'undefined') return defaults;
   try {
@@ -154,6 +216,11 @@ const loadPlayerPrefs = (): PlayerPrefs => {
       subtitleColor: SUBTITLE_COLORS.some((c) => c.value === parsed.subtitleColor)
         ? (parsed.subtitleColor as string)
         : defaults.subtitleColor,
+      autoSkipIntro:
+        typeof parsed.autoSkipIntro === 'boolean' ? parsed.autoSkipIntro : defaults.autoSkipIntro,
+      introDuration: INTRO_DURATION_OPTIONS.includes(parsed.introDuration as number)
+        ? (parsed.introDuration as number)
+        : defaults.introDuration,
       colorFilter:
         parsed.colorFilter && typeof parsed.colorFilter === 'object'
           ? {
@@ -165,7 +232,7 @@ const loadPlayerPrefs = (): PlayerPrefs => {
       showHealthGauge:
         typeof parsed.showHealthGauge === 'boolean'
           ? parsed.showHealthGauge
-          : false,
+          : defaults.showHealthGauge,
     };
   } catch {
     return defaults;
@@ -304,8 +371,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   });
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const isScrubbingRef = useRef(false);
+  const scrubRatioRef = useRef<number | null>(null);
+  const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverRatio, setHoverRatio] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(() => {
@@ -318,24 +389,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [currentLevel, setCurrentLevel] = useState<number>(-1);
   const [activeHeight, setActiveHeight] = useState<number>(0);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Player preferences (defined first to prevent any TDZ ReferenceError)
-  const [prefs, setPrefs] = useState<PlayerPrefs>(() => loadPlayerPrefs());
-
-  const [brightness, setBrightness] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('bofilm_player_brightness');
-      if (saved) {
-        const val = Number(saved);
-        if (Number.isFinite(val) && val >= 0.3 && val <= 1.8) return val;
-      }
-    } catch {}
-    return DEFAULT_FILTER.brightness;
-  });
-  const [contrast, setContrast] = useState<number>(() => DEFAULT_FILTER.contrast);
-  const [saturation, setSaturation] = useState<number>(() => DEFAULT_FILTER.saturation);
+  const [brightness, setBrightness] = useState<number>(() => prefs.colorFilter.brightness);
+  const [contrast, setContrast] = useState<number>(() => prefs.colorFilter.contrast);
+  const [saturation, setSaturation] = useState<number>(() => prefs.colorFilter.saturation);
   const [touchHud, setTouchHud] = useState<{
     type: 'seek' | 'brightness' | 'volume';
     value?: number;
@@ -355,6 +412,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     id: number;
   } | null>(null);
 
+  // ===== Pro Tools: Aspect Ratio Fit Mode =====
+  type FitMode = 'contain' | 'cinema' | 'stretch' | 'cover';
+  const [fitMode, setFitMode] = useState<FitMode>(() => {
+    if (typeof window === 'undefined') return 'contain';
+    const saved = localStorage.getItem('bofilm_player_fit');
+    return ['contain', 'cinema', 'stretch', 'cover'].includes(saved as FitMode)
+      ? (saved as FitMode)
+      : 'contain';
+  });
+
   // ===== Pro Tools: Stats for Nerds =====
   const [showStats, setShowStats] = useState(false);
 
@@ -366,6 +433,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     color: string;
     enabled: boolean;
   }
+  const [prefs, setPrefs] = useState<PlayerPrefs>(() => loadPlayerPrefs());
   const [subtitle, setSubtitle] = useState<ParsedSubtitle | null>(null);
   const subtitleFileRef = useRef<HTMLInputElement | null>(null);
   const baseVttRef = useRef<string | null>(null);
@@ -380,8 +448,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // ===== Subtitle Sync Delay (timing nudge -5s .. +5s) =====
   const [subtitleDelay, setSubtitleDelay] = useState<number>(() => prefs.subtitleDelay);
 
+  // ===== Skip Intro preferences (persisted in bofilm_player_prefs) =====
+  const [autoSkipIntro, setAutoSkipIntro] = useState<boolean>(() => prefs.autoSkipIntro);
+  const [introDuration, setIntroDuration] = useState<number>(() => prefs.introDuration);
+
   // ===== Stream Health & Buffer Gauge =====
-  const [showHealthGauge, setShowHealthGauge] = useState<boolean>(false);
+  const [showHealthGauge, setShowHealthGauge] = useState<boolean>(() => prefs.showHealthGauge);
   const [videoFilter, setVideoFilter] = useState<string | undefined>(() =>
     buildFilterCss(prefs.colorFilter)
   );
@@ -405,6 +477,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           subtitleDelay,
           subtitleSize: subtitle?.size ?? prev.subtitleSize ?? 'md',
           subtitleColor: subtitle?.color ?? prev.subtitleColor ?? '#ffffff',
+          autoSkipIntro,
+          introDuration,
           colorFilter: { brightness, contrast, saturation },
           showHealthGauge,
         })
@@ -417,6 +491,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     subtitleDelay,
     subtitle?.size,
     subtitle?.color,
+    autoSkipIntro,
+    introDuration,
     brightness,
     contrast,
     saturation,
@@ -434,16 +510,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Picture-in-Picture State
   const [isPip, setIsPip] = useState(false);
-  const [isPipSupported, setIsPipSupported] = useState<boolean>(() => {
-    if (typeof document === 'undefined') return false;
-    if (Boolean(document.pictureInPictureEnabled)) return true;
-    if (typeof HTMLVideoElement !== 'undefined') {
-      if ('requestPictureInPicture' in HTMLVideoElement.prototype) return true;
-      if ('webkitSetPresentationMode' in HTMLVideoElement.prototype) return true;
-    }
-    return true;
-  });
-  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
+  const [isPipSupported, setIsPipSupported] = useState(false);
+
+  // Sleep Timer State
+  const [sleepTimerOption, setSleepTimerOption] = useState<number | 'end' | 'off'>('off');
+  const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
+  const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
+  const [sleepRemaining, setSleepRemaining] = useState<number>(0);
+  const [sleepPausedOverlay, setSleepPausedOverlay] = useState(false);
+  const [sleepFading, setSleepFading] = useState(false);
+  const [sleepBadgeFlash, setSleepBadgeFlash] = useState(false);
+  const sleepFadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Audio Volume Booster State (100% - 200%)
   const [volumeBoost, setVolumeBoost] = useState<number>(() => {
@@ -503,6 +580,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return localStorage.getItem('bofilm_player_audio_saver') === 'on';
   });
 
+  // Auto-floating Skip Intro (+85s) State
+  const [showSkipIntro, setShowSkipIntro] = useState(false);
+  const dismissedSkipIntroRef = useRef<boolean>(false);
+  const autoSkipIntroFiredRef = useRef<boolean>(false);
+
   // ===== In-Player Episode Switching (Drawer) =====
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState(false);
 
@@ -517,6 +599,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('bofilm_player_ambient_glow') === 'on';
   });
+
+  // ===== A-B Loop Repeat Mode =====
+  const [abLoop, setAbLoop] = useState<{ a: number | null; b: number | null; active: boolean }>({
+    a: null,
+    b: null,
+    active: false,
+  });
+
+  // ===== Scene Bookmarks (marker lưu theo phim & tập, kèm nhãn) =====
+  type SceneBookmark = { t: number; label: string };
+  const [bookmarks, setBookmarks] = useState<SceneBookmark[]>([]);
+  const bookmarkKey = `bofilm_bookmarks_${movieSlug || 'default'}_${episodeSlug || 'default'}`;
+
+  useEffect(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(bookmarkKey) : null;
+      const parsed = raw ? JSON.parse(raw) : [];
+      const normalized = (Array.isArray(parsed) ? parsed : [])
+        .map((b: unknown) => {
+          if (typeof b === 'number') return { t: b, label: '' };
+          if (b && typeof b === 'object' && typeof (b as SceneBookmark).t === 'number') {
+            return { t: (b as SceneBookmark).t, label: String((b as SceneBookmark).label || '') };
+          }
+          return null;
+        })
+        .filter((b): b is SceneBookmark => b !== null)
+        .sort((a: SceneBookmark, b: SceneBookmark) => a.t - b.t);
+      setBookmarks(normalized);
+    } catch {
+      setBookmarks([]);
+    }
+  }, [bookmarkKey]);
+
+  const persistBookmarks = useCallback(
+    (next: SceneBookmark[]) => {
+      setBookmarks(next);
+      try {
+        localStorage.setItem(bookmarkKey, JSON.stringify(next));
+      } catch {
+        // ignore quota/storage errors
+      }
+    },
+    [bookmarkKey]
+  );
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -536,6 +662,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedPosRef = useRef<number>(0);
+  const sleepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
@@ -573,6 +700,143 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     []
   );
 
+  // ===== Danmaku / Floating Bullet Comments Engine =====
+  const [danmakuSettings, setDanmakuSettings] = useState<DanmakuSettings>(() =>
+    loadDanmakuSettings()
+  );
+  const [danmakuComments, setDanmakuComments] = useState<DanmakuComment[]>([]);
+  const [danmakuFlying, setDanmakuFlying] = useState<DanmakuFlying[]>([]);
+  const [danmakuInputText, setDanmakuInputText] = useState('');
+  const danmakuPosRef = useRef<number>(0);
+  const danmakuLaneRef = useRef<number>(0);
+  const commentsKey = `bofilm_danmaku_${movieSlug || 'default'}_${episodeSlug || 'default'}`;
+
+  useEffect(() => {
+    let comments: DanmakuComment[] = [];
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(commentsKey) : null;
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        comments = parsed.filter(
+          (c: unknown) =>
+            c &&
+            typeof c === 'object' &&
+            typeof (c as DanmakuComment).t === 'number' &&
+            typeof (c as DanmakuComment).text === 'string'
+        ).map((c: DanmakuComment) => ({
+          t: c.t,
+          text: c.text,
+          kind: c.kind === 'emoji' ? 'emoji' : 'text',
+        }));
+      }
+    } catch {
+      comments = [];
+    }
+    if (comments.length === 0) {
+      comments = DANMAKU_SEED_TEXTS.map((text, i) => ({
+        t: 12 + i * 37,
+        text,
+        kind: 'text' as const,
+      }));
+      try {
+        localStorage.setItem(commentsKey, JSON.stringify(comments));
+      } catch {
+        // ignore quota/storage errors
+      }
+    }
+    comments.sort((a, b) => a.t - b.t);
+    setDanmakuComments(comments);
+    danmakuPosRef.current = videoRef.current?.currentTime ?? 0;
+    setDanmakuFlying([]);
+  }, [commentsKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DANMAKU_SETTINGS_KEY, JSON.stringify(danmakuSettings));
+    } catch {
+      // ignore quota/storage errors
+    }
+  }, [danmakuSettings]);
+
+  const spawnDanmaku = useCallback((text: string, kind: 'text' | 'emoji') => {
+    const lane = danmakuLaneRef.current;
+    danmakuLaneRef.current = (danmakuLaneRef.current + 1) % DANMAKU_LANES;
+    setDanmakuFlying((prev) =>
+      [
+        ...prev.slice(-29),
+        {
+          id: Date.now() + Math.random(),
+          text,
+          kind,
+          lane,
+          duration: 6 + Math.random() * 2,
+        },
+      ]
+    );
+  }, []);
+
+  const handleDanmakuToggle = useCallback(() => {
+    setDanmakuSettings((prev) => {
+      const next = { ...prev, enabled: !prev.enabled };
+      if (next.enabled) {
+        danmakuPosRef.current = videoRef.current?.currentTime ?? 0;
+      }
+      triggerFeedback(next.enabled ? 'Bật bình luận bay' : 'Tắt bình luận bay');
+      return next;
+    });
+  }, [triggerFeedback]);
+
+  const updateDanmakuSetting = useCallback((patch: Partial<DanmakuSettings>) => {
+    setDanmakuSettings((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  // Launch stored comments as playback passes their timestamp
+  useEffect(() => {
+    if (!danmakuSettings.enabled || playerMode !== 'hls') {
+      danmakuPosRef.current = currentTime;
+      return;
+    }
+    const prev = danmakuPosRef.current;
+    if (currentTime >= prev && currentTime - prev < 3) {
+      danmakuComments
+        .filter((c) => c.t > prev && c.t <= currentTime)
+        .forEach((c) => spawnDanmaku(c.text, c.kind));
+    }
+    danmakuPosRef.current = currentTime;
+  }, [currentTime, danmakuComments, danmakuSettings.enabled, playerMode, spawnDanmaku]);
+
+  const persistDanmakuComment = useCallback(
+    (comment: DanmakuComment) => {
+      spawnDanmaku(comment.text, comment.kind);
+      setDanmakuComments((prevCommentList) => {
+        const next = [...prevCommentList, comment].sort((a, b) => a.t - b.t);
+        try {
+          localStorage.setItem(commentsKey, JSON.stringify(next));
+        } catch {
+          // ignore quota/storage errors
+        }
+        return next;
+      });
+    },
+    [commentsKey, spawnDanmaku]
+  );
+
+  const handleDanmakuSubmit = useCallback(() => {
+    const text = danmakuInputText.trim();
+    if (!text) return;
+    const t = videoRef.current?.currentTime ?? 0;
+    persistDanmakuComment({ t, text, kind: 'text' });
+    setDanmakuInputText('');
+  }, [danmakuInputText, persistDanmakuComment]);
+
+  const handleDanmakuReaction = useCallback(
+    (emoji: string) => {
+      const t = videoRef.current?.currentTime ?? 0;
+      persistDanmakuComment({ t, text: emoji, kind: 'emoji' });
+    },
+    [persistDanmakuComment]
+  );
+
   // Clean up HLS instance, cumulative bytes, timers on unmount
   useEffect(() => {
     return () => {
@@ -608,6 +872,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         clearTimeout(doubleTapTimerRef.current);
         doubleTapTimerRef.current = null;
       }
+      if (sleepFadeTimeoutRef.current) {
+        clearTimeout(sleepFadeTimeoutRef.current);
+        sleepFadeTimeoutRef.current = null;
+      }
       if (holdTimerRef.current) {
         clearTimeout(holdTimerRef.current);
         holdTimerRef.current = null;
@@ -639,26 +907,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [showSettingsMenu]);
-
-  // Dynamically bound Settings menu height inside video container so it never clips at the top
-  useEffect(() => {
-    if (!showSettingsMenu || !containerRef.current) return;
-    const el = containerRef.current;
-    const updateMaxHeight = () => {
-      const containerH = el.clientHeight;
-      // Controls bottom row is ~50px, mb-2 is 8px, top bar is ~44px; headroom 110px prevents clipping
-      const available = containerH - 110;
-      setMenuMaxHeight(Math.max(180, Math.floor(available)));
-    };
-    updateMaxHeight();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(updateMaxHeight);
-      ro.observe(el);
-      return () => ro.disconnect();
-    }
-    window.addEventListener('resize', updateMaxHeight);
-    return () => window.removeEventListener('resize', updateMaxHeight);
   }, [showSettingsMenu]);
 
   // Default to HLS whenever new episode stream or movie is provided
@@ -752,23 +1000,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [isPseudoFullscreen]);
 
+  // Handle pseudo fullscreen body locking
+  useEffect(() => {
+    if (isPseudoFullscreen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      const handleEsc = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setIsPseudoFullscreen(false);
+      };
+      window.addEventListener('keydown', handleEsc);
+      return () => {
+        document.body.style.overflow = prev;
+        window.removeEventListener('keydown', handleEsc);
+      };
+    }
+  }, [isPseudoFullscreen]);
+
   // Check PiP support and track PiP state
   useEffect(() => {
     const video = videoRef.current;
-    const checkPip = () => {
-      const docEnabled = typeof document !== 'undefined' && Boolean(document.pictureInPictureEnabled);
-      const webkitEnabled = Boolean(
-        video &&
-          typeof (video as any).webkitSupportsPresentationMode === 'function' &&
-          (video as any).webkitSupportsPresentationMode('picture-in-picture')
-      );
-      const protoEnabled =
-        typeof HTMLVideoElement !== 'undefined' &&
-        (Boolean((HTMLVideoElement.prototype as any).requestPictureInPicture) ||
-          Boolean((HTMLVideoElement.prototype as any).webkitSetPresentationMode));
-      return docEnabled || webkitEnabled || protoEnabled;
-    };
-    setIsPipSupported(checkPip());
+    const supported =
+      typeof document !== 'undefined' &&
+      (Boolean(document.pictureInPictureEnabled) ||
+        Boolean(
+          (video as any)?.webkitSupportsPresentationMode &&
+            typeof (video as any).webkitSetPresentationMode === 'function'
+        ) ||
+        (typeof navigator !== 'undefined' &&
+          /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) &&
+          'ontouchend' in document));
+    setIsPipSupported(supported);
 
     if (!video) return;
 
@@ -811,9 +1072,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const targetMode = currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
         (video as any).webkitSetPresentationMode(targetMode);
         triggerFeedback(targetMode === 'picture-in-picture' ? 'Bật PiP' : 'Thoát PiP', 'volume');
-      } else if (typeof (video as any).requestPictureInPicture === 'function') {
-        await (video as any).requestPictureInPicture();
-        triggerFeedback('Bật PiP', 'volume');
       }
     } catch (err: any) {
       console.warn('PiP error:', err);
@@ -1005,6 +1263,104 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isPlaying]);
 
+  // ===== Sleep Timer (Hẹn Giờ Tắt) =====
+  const clearSleepFadeTimeouts = useCallback(() => {
+    if (sleepFadeTimeoutRef.current) {
+      clearTimeout(sleepFadeTimeoutRef.current);
+      sleepFadeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const stopSleepTimer = useCallback(() => {
+    if (sleepTimerRef.current) {
+      clearInterval(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+    clearSleepFadeTimeouts();
+    setSleepEndsAt(null);
+    setSleepRemaining(0);
+    setSleepFading(false);
+  }, [clearSleepFadeTimeouts]);
+
+  const handleSleepPausedResume = useCallback(() => {
+    setSleepPausedOverlay(false);
+    triggerFeedback('Tiếp tục xem', 'play');
+    const video = videoRef.current;
+    if (video) {
+      video.play().catch(() => {});
+    }
+  }, [triggerFeedback]);
+
+  // Gently fade volume to zero over 3 seconds, then pause & show overlay
+  const beginSleepFadeOut = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const savedVolume = video.volume;
+    const savedMuted = video.muted;
+    setSleepFading(true);
+    video.muted = false;
+    const FADE_MS = 3000;
+    const STEPS = 30;
+    for (let i = 1; i <= STEPS; i++) {
+      sleepFadeTimeoutRef.current = setTimeout(() => {
+        if (!videoRef.current) return;
+        const progress = i / STEPS;
+        videoRef.current.volume = Math.max(0, savedVolume * (1 - progress));
+        if (i === STEPS) {
+          videoRef.current.pause();
+          videoRef.current.volume = savedVolume;
+          videoRef.current.muted = savedMuted;
+          setSleepFading(false);
+          setSleepPausedOverlay(true);
+        }
+      }, (FADE_MS / STEPS) * i);
+    }
+  }, []);
+
+  const handleSleepTimerSelect = useCallback(
+    (option: number | 'end' | 'off') => {
+      setSleepTimerOption(option);
+      stopSleepTimer();
+      if (option === 'off') {
+        triggerFeedback('Hẹn giờ tắt: Tắt');
+      } else if (option === 'end') {
+        triggerFeedback('Hẹn giờ tắt: Hết tập');
+      } else {
+        const endsAt = Date.now() + option * 60 * 1000;
+        setSleepTimerMinutes(option);
+        setSleepEndsAt(endsAt);
+        setSleepRemaining(option * 60);
+        triggerFeedback(`Hẹn giờ tắt: ${option} phút`);
+        setSleepBadgeFlash(true);
+        sleepFadeTimeoutRef.current = setTimeout(() => setSleepBadgeFlash(false), 4000);
+      }
+      setShowSettingsMenu(false);
+    },
+    [stopSleepTimer, triggerFeedback]
+  );
+
+  // Sleep timer countdown tick
+  useEffect(() => {
+    if (sleepEndsAt === null) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((sleepEndsAt - Date.now()) / 1000));
+      setSleepRemaining(remaining);
+      if (remaining <= 0) {
+        stopSleepTimer();
+        setSleepTimerOption('off');
+        beginSleepFadeOut();
+      }
+    };
+    tick();
+    sleepTimerRef.current = setInterval(tick, 1000);
+    return () => {
+      if (sleepTimerRef.current) {
+        clearInterval(sleepTimerRef.current);
+        sleepTimerRef.current = null;
+      }
+    };
+  }, [sleepEndsAt, stopSleepTimer, triggerFeedback, beginSleepFadeOut]);
+
   // ===== Quick Share (Chia sẻ phim & tập) =====
   const [showShareMenu, setShowShareMenu] = useState(false);
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1115,6 +1471,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [showEpisodeDrawer]);
 
+  // Format sleep remaining as mm:ss
+  const formatSleepRemaining = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
   // ===== Cinematic Ambient Glow Mode handlers =====
   const handleAmbientGlowToggle = useCallback(() => {
     setAmbientGlow((prev) => {
@@ -1125,9 +1488,196 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   }, [triggerFeedback]);
 
+  // ===== A-B Loop handlers =====
+  const handleSetLoopA = useCallback(() => {
+    const t = videoRef.current?.currentTime ?? 0;
+    setAbLoop((prev) => ({ ...prev, a: t, active: prev.b !== null && t < prev.b }));
+    triggerFeedback(`Điểm A: ${formatTime(t)}`, 'volume');
+  }, [triggerFeedback]);
+
+  const handleSetLoopB = useCallback(() => {
+    const t = videoRef.current?.currentTime ?? 0;
+    setAbLoop((prev) => {
+      const a = prev.a !== null && prev.a < t ? prev.a : Math.max(0, t - 1);
+      return { a, b: t, active: true };
+    });
+    triggerFeedback(`Điểm B: ${formatTime(t)} — Vòng lặp bật`, 'volume');
+  }, [triggerFeedback]);
+
+  const handleClearLoop = useCallback(() => {
+    setAbLoop({ a: null, b: null, active: false });
+    triggerFeedback('Đã tắt vòng lặp A-B', 'volume');
+  }, [triggerFeedback]);
+
+  // A-B Loop engine: rewind to Point A whenever playback passes Point B
+  useEffect(() => {
+    if (!abLoop.active || abLoop.a === null || abLoop.b === null) return;
+    if (abLoop.b <= abLoop.a) return;
+    if (currentTime > abLoop.b && videoRef.current) {
+      videoRef.current.currentTime = abLoop.a;
+      setCurrentTime(abLoop.a);
+    }
+  }, [currentTime, abLoop.active, abLoop.a, abLoop.b]);
+
+  // ===== Scene Bookmarks handlers =====
+  const handleAddBookmark = useCallback(() => {
+    const t = videoRef.current?.currentTime ?? 0;
+    const label = `Đánh dấu ${formatTime(t)}`;
+    setBookmarks((prev) => {
+      if (prev.some((b) => Math.abs(b.t - t) < 1)) return prev;
+      const next = [...prev, { t, label }].sort((a, b) => a.t - b.t);
+      try {
+        localStorage.setItem(bookmarkKey, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    triggerFeedback(`Đã đánh dấu khoảnh khắc: ${formatTime(t)}`, 'volume');
+  }, [bookmarks, triggerFeedback]);
+
+  const handleJumpToBookmark = useCallback(
+    (t: number) => {
+      if (!videoRef.current) return;
+      videoRef.current.currentTime = t;
+      setCurrentTime(t);
+      videoRef.current.play().catch(() => {});
+      triggerFeedback(`Nhảy đến ${formatTime(t)}`, 'seek-forward');
+    },
+    [triggerFeedback]
+  );
+
+  const handleRemoveBookmark = useCallback(
+    (t: number) => {
+      setBookmarks((prev) => {
+        const next = prev.filter((b) => b.t !== t);
+        try {
+          localStorage.setItem(bookmarkKey, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+      triggerFeedback('Đã xóa mốc đánh dấu', 'volume');
+    },
+    [bookmarks, triggerFeedback]
+  );
+
+  // Reset Skip Intro dismiss on new episode or movie
+  useEffect(() => {
+    dismissedSkipIntroRef.current = false;
+    autoSkipIntroFiredRef.current = false;
+    setShowSkipIntro(false);
+  }, [movieSlug, episodeSlug]);
+
+  // Auto-floating Skip Intro detection (5s .. 95s window)
+  useEffect(() => {
+    if (playerMode !== 'hls') {
+      setShowSkipIntro(false);
+      return;
+    }
+    const inIntroRange = currentTime >= 5 && currentTime <= 95;
+    const isLongEnough = !duration || duration >= 180;
+    if (inIntroRange && isLongEnough && !dismissedSkipIntroRef.current) {
+      setShowSkipIntro(true);
+    } else if (!inIntroRange) {
+      setShowSkipIntro(false);
+    }
+  }, [currentTime, duration, playerMode]);
+
+  // Skip Intro Handler: seek forward by intro duration
+  const handleSkipIntro = useCallback(() => {
+    if (!videoRef.current) return;
+    const next = Math.max(0, Math.min(duration || 99999, videoRef.current.currentTime + introDuration));
+    videoRef.current.currentTime = next;
+    setCurrentTime(next);
+    dismissedSkipIntroRef.current = true;
+    setShowSkipIntro(false);
+    triggerFeedback('Đã bỏ qua đoạn mở đầu', 'seek-forward');
+  }, [duration, introDuration, triggerFeedback]);
+
+  // Auto-Skip Intro: fire once per episode at the 5s mark
+  useEffect(() => {
+    if (!autoSkipIntro || playerMode !== 'hls') return;
+    if (autoSkipIntroFiredRef.current) return;
+    if (currentTime < 5) return;
+    const isLongEnough = !duration || duration >= 180;
+    if (!isLongEnough) return;
+    if (dismissedSkipIntroRef.current) return;
+    autoSkipIntroFiredRef.current = true;
+    handleSkipIntro();
+  }, [currentTime, autoSkipIntro, playerMode, duration, episodeSlug, handleSkipIntro]);
+
   // ===== Hold-to-2x Speed state & handlers =====
 
   const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+  // ===== Pro Tools: Native Frame Screenshot Capture =====
+  const handleCaptureFrame = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      triggerFeedback('Chưa có khung hình để chụp', 'volume');
+      return;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('no 2d context');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const clean = (s: string) => s.replace(/[^a-zA-Z0-9-_ ]+/g, '').trim().replace(/\s+/g, '-') || 'frame';
+      const filename = `${clean(movieName)}-${clean(episodeName || 'tap-1')}-${formatTime(currentTime).replace(/:/g, '-')}.png`;
+      try {
+        // Safari: needs the element in DOM to call toBlob
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            triggerFeedback('Không thể chụp khung hình', 'volume');
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 5000);
+          triggerFeedback('Đã lưu ảnh khung hình', 'volume');
+        }, 'image/png');
+      } catch {
+        // Canvas tainted by cross-origin data without CORS headers
+        triggerFeedback('Nguồn phát không cho phép chụp khung hình', 'volume');
+      }
+    } catch (err: any) {
+      console.warn('Screenshot error:', err);
+      triggerFeedback('Nguồn phát không cho phép chụp khung hình', 'volume');
+    }
+  }, [movieName, episodeName, currentTime, triggerFeedback]);
+
+  // ===== Pro Tools: Aspect Ratio Fit Mode selection =====
+  const FIT_MODES: { value: FitMode; label: string }[] = [
+    { value: 'contain', label: 'Vừa khung 16:9 (Mặc định)' },
+    { value: 'cinema', label: 'Điện ảnh 21:9 Cinema' },
+    { value: 'stretch', label: 'Kéo giãn Stretch' },
+    { value: 'cover', label: 'Phủ toàn khung Zoom Cover' },
+  ];
+  const FIT_LABELS: Record<FitMode, string> = {
+    contain: '16:9',
+    cinema: '21:9',
+    stretch: 'Fill',
+    cover: 'Zoom',
+  };
+  const handleFitModeSelect = useCallback(
+    (mode: FitMode) => {
+      setFitMode(mode);
+      localStorage.setItem('bofilm_player_fit', mode);
+      setShowSettingsMenu(false);
+      triggerFeedback(`Khung hình: ${FIT_LABELS[mode]}`, 'volume');
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [triggerFeedback]
+  );
 
   // ===== Pro Tools: Subtitle parsing (.srt -> WebVTT) =====
   const parseSrtToVtt = useCallback((srtText: string): string => {
@@ -1307,6 +1857,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               ? `${((quality.droppedVideoFrames / quality.totalVideoFrames) * 100).toFixed(1)}%`
               : '—',
           boost: `${volumeBoost}%`,
+          fitMode: FIT_LABELS[fitMode],
         };
       })()
     : null;
@@ -1525,14 +2076,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           triggerFeedback(isTheater ? 'Thu nhỏ trình phát' : 'Chế độ rạp chiếu');
           break;
         }
+        case 'Slash': {
+          e.preventDefault();
+          setShowShortcutsModal((prev) => !prev);
+          break;
+        }
         case 'KeyP': {
           e.preventDefault();
           togglePip();
           break;
         }
-        case 'Slash': {
+        case 'KeyS': {
+          if (showSkipIntro) {
+            e.preventDefault();
+            handleSkipIntro();
+          }
+          break;
+        }
+        case 'KeyD': {
           e.preventDefault();
-          setShowShortcutsModal((prev) => !prev);
+          handleDanmakuToggle();
+          break;
+        }
+        case 'KeyB': {
+          e.preventDefault();
+          handleAddBookmark();
+          break;
+        }
+        case 'KeyZ': {
+          e.preventDefault();
+          const cycleOrder: FitMode[] = ['contain', 'cover', 'stretch'];
+          const nextMode =
+            cycleOrder[(cycleOrder.indexOf(fitMode) + 1) % cycleOrder.length] ?? 'contain';
+          setFitMode(nextMode);
+          localStorage.setItem('bofilm_player_fit', nextMode);
+          triggerFeedback(`Khung hình: ${FIT_LABELS[nextMode]}`, 'volume');
           break;
         }
         case 'BracketRight': {
@@ -1578,7 +2156,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [playerMode, triggerFeedback, playbackSpeed, handleSpeedSelect, toggleTheater, isTheater, togglePip]);
+  }, [playerMode, triggerFeedback, playbackSpeed, handleSpeedSelect, togglePip, showSkipIntro, handleSkipIntro, toggleTheater, isTheater, fitMode, handleAddBookmark, handleDanmakuToggle]);
 
   // Escape / outside click closes shortcuts modal
   useEffect(() => {
@@ -1919,7 +2497,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setKey((prev) => prev + 1);
   };
 
-  // Fullscreen toggling with cross-platform & mobile fallback
+  // Fullscreen toggling
   const toggleFullscreen = useCallback(() => {
     const container = containerRef.current;
     const video = videoRef.current;
@@ -1961,22 +2539,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         (document as any).webkitExitFullscreen();
       }
       setIsPseudoFullscreen(false);
-    }
-  }, [isPseudoFullscreen]);
-
-  // Handle pseudo fullscreen body locking
-  useEffect(() => {
-    if (isPseudoFullscreen) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      const handleEsc = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') setIsPseudoFullscreen(false);
-      };
-      window.addEventListener('keydown', handleEsc);
-      return () => {
-        document.body.style.overflow = prev;
-        window.removeEventListener('keydown', handleEsc);
-      };
     }
   }, [isPseudoFullscreen]);
 
@@ -2078,17 +2640,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
     } else if (state.mode === 'brightness') {
       const change = (-deltaY / rect.height) * 1.2;
-      const newBrightness = Math.max(0.3, Math.min(1.8, state.initialBrightness + change));
-      const rounded = Math.round(newBrightness * 100) / 100;
-      setBrightness(rounded);
-      try {
-        localStorage.setItem('bofilm_player_brightness', String(rounded));
-      } catch {}
+      const newBrightness = Math.max(0.3, Math.min(1.6, state.initialBrightness + change));
+      setBrightness(newBrightness);
 
       if (touchHudTimerRef.current) clearTimeout(touchHudTimerRef.current);
       setTouchHud({
         type: 'brightness',
-        value: Math.round(rounded * 100),
+        value: Math.round(newBrightness * 100),
       });
     } else if (state.mode === 'volume') {
       const change = -deltaY / rect.height;
@@ -2100,9 +2658,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       setVolume(rounded);
       setIsMuted(rounded === 0);
-      try {
-        localStorage.setItem('bofilm_player_volume', String(rounded));
-      } catch {}
+      localStorage.setItem('bofilm_player_volume', String(rounded));
 
       if (touchHudTimerRef.current) clearTimeout(touchHudTimerRef.current);
       setTouchHud({
@@ -2147,8 +2703,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const lastTap = lastTapInfoRef.current;
       if (
         lastTap &&
-        now - lastTap.time < 380 &&
-        Math.hypot(state.startX - lastTap.x, state.startY - lastTap.y) < 60
+        now - lastTap.time < 320 &&
+        Math.hypot(state.startX - lastTap.x, state.startY - lastTap.y) < 40
       ) {
         // Double tap confirmed!
         if (singleTapTimerRef.current) {
@@ -2157,7 +2713,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
         lastTapInfoRef.current = null;
 
-        if (relativeX < 0.42) {
+        if (relativeX < 0.38) {
           // Double Tap Left: -10s
           if (videoRef.current) {
             const next = Math.max(0, videoRef.current.currentTime - 10);
@@ -2172,8 +2728,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
           doubleTapTimerRef.current = setTimeout(() => {
             setDoubleTapEffect(null);
-          }, 850);
-        } else if (relativeX > 0.58) {
+          }, 800);
+        } else if (relativeX > 0.62) {
           // Double Tap Right: +10s
           if (videoRef.current) {
             const next = Math.min(duration || 99999, videoRef.current.currentTime + 10);
@@ -2188,7 +2744,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
           doubleTapTimerRef.current = setTimeout(() => {
             setDoubleTapEffect(null);
-          }, 850);
+          }, 800);
         } else {
           // Center Double Tap: Toggle fullscreen
           toggleFullscreen();
@@ -2200,7 +2756,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         singleTapTimerRef.current = setTimeout(() => {
           lastTapInfoRef.current = null;
           setShowControls((prev) => !prev);
-        }, 220);
+        }, 240);
       }
     }
   };
@@ -2279,51 +2835,68 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Seekbar interactions (Desktop & Mobile 0% -> 100% Scrubbing)
-  const getSeekTimeFromClientX = (clientX: number) => {
-    if (!seekbarRef.current || !duration) return 0;
+  // Seekbar interactions
+  const getSeekRatioFromClientX = (clientX: number) => {
+    if (!seekbarRef.current) return 0;
     const rect = seekbarRef.current.getBoundingClientRect();
     if (rect.width <= 0) return 0;
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * duration;
+    const rawRatio = (clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(1, rawRatio));
   };
 
   const handleSeekbarClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const targetTime = getSeekTimeFromClientX(e.clientX);
+    if (!duration) return;
+    const ratio = getSeekRatioFromClientX(e.clientX);
+    const targetTime = ratio >= 0.999 ? Math.max(0, duration - 0.25) : ratio * duration;
     if (videoRef.current) {
       videoRef.current.currentTime = targetTime;
-      setCurrentTime(targetTime);
     }
+    setCurrentTime(targetTime);
   };
 
   const handleSeekbarMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation();
+    if (!seekbarRef.current || !duration) return;
+    isScrubbingRef.current = true;
     setIsScrubbing(true);
-    const targetTime = getSeekTimeFromClientX(e.clientX);
-    if (videoRef.current) {
-      videoRef.current.currentTime = targetTime;
+
+    const updateSeekPosition = (clientX: number) => {
+      if (!seekbarRef.current || !duration) return 0;
+      const ratio = getSeekRatioFromClientX(clientX);
+      scrubRatioRef.current = ratio;
+      setScrubRatio(ratio);
+      const targetTime = ratio * duration;
       setCurrentTime(targetTime);
-    }
+      setHoverTime(targetTime);
+      setHoverRatio(ratio * 100);
+      return targetTime;
+    };
+
+    updateSeekPosition(e.clientX);
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      const moveTime = getSeekTimeFromClientX(moveEvent.clientX);
-      if (videoRef.current) {
-        videoRef.current.currentTime = moveTime;
-        setCurrentTime(moveTime);
-      }
+      moveEvent.preventDefault();
+      updateSeekPosition(moveEvent.clientX);
     };
 
     const handleMouseUp = (upEvent: MouseEvent) => {
-      setIsScrubbing(false);
-      const finalTime = getSeekTimeFromClientX(upEvent.clientX);
-      if (videoRef.current) {
-        videoRef.current.currentTime = finalTime;
-        setCurrentTime(finalTime);
-      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      const finalTarget = updateSeekPosition(upEvent.clientX);
+      const finalRatio = scrubRatioRef.current ?? (duration > 0 ? finalTarget / duration : 0);
+      const safeTarget =
+        finalRatio >= 0.999
+          ? Math.max(0, duration - 0.25)
+          : Math.max(0, Math.min(duration, finalRatio * duration));
+
+      if (videoRef.current) {
+        videoRef.current.currentTime = safeTarget;
+      }
+      setCurrentTime(safeTarget);
+      isScrubbingRef.current = false;
+      scrubRatioRef.current = null;
+      setIsScrubbing(false);
+      setScrubRatio(null);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -2333,34 +2906,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleSeekbarTouchStart = (e: React.TouchEvent) => {
     e.stopPropagation();
     if (!seekbarRef.current || !duration || e.touches.length === 0) return;
+    isScrubbingRef.current = true;
     setIsScrubbing(true);
-    const targetTime = getSeekTimeFromClientX(e.touches[0].clientX);
-    if (videoRef.current) {
-      videoRef.current.currentTime = targetTime;
-      setCurrentTime(targetTime);
-    }
+    const ratio = getSeekRatioFromClientX(e.touches[0].clientX);
+    scrubRatioRef.current = ratio;
+    setScrubRatio(ratio);
+    const targetTime = ratio * duration;
+    setCurrentTime(targetTime);
   };
 
   const handleSeekbarTouchMove = (e: React.TouchEvent) => {
     e.stopPropagation();
     if (!seekbarRef.current || !duration || e.touches.length === 0) return;
-    const moveTime = getSeekTimeFromClientX(e.touches[0].clientX);
-    if (videoRef.current) {
-      videoRef.current.currentTime = moveTime;
-      setCurrentTime(moveTime);
-    }
+    const ratio = getSeekRatioFromClientX(e.touches[0].clientX);
+    scrubRatioRef.current = ratio;
+    setScrubRatio(ratio);
+    const targetTime = ratio * duration;
+    setCurrentTime(targetTime);
   };
 
   const handleSeekbarTouchEnd = (e: React.TouchEvent) => {
     e.stopPropagation();
+    if (!duration) return;
+    const finalRatio = scrubRatioRef.current ?? 0;
+    const safeTarget =
+      finalRatio >= 0.999
+        ? Math.max(0, duration - 0.25)
+        : Math.max(0, Math.min(duration, finalRatio * duration));
+
+    if (videoRef.current) {
+      videoRef.current.currentTime = safeTarget;
+    }
+    setCurrentTime(safeTarget);
+    isScrubbingRef.current = false;
+    scrubRatioRef.current = null;
     setIsScrubbing(false);
+    setScrubRatio(null);
   };
 
   const handleSeekbarMouseMove = (e: React.MouseEvent) => {
     if (!seekbarRef.current || !duration) return;
-    const rect = seekbarRef.current.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const ratio = getSeekRatioFromClientX(e.clientX);
     setHoverTime(ratio * duration);
     setHoverRatio(ratio * 100);
   };
@@ -2393,10 +2979,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     );
   };
 
-  // Volume slider (desktop & touch: clamps 0.0 -> 1.0 reliably)
+  // Volume slider
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawVal = parseFloat(e.target.value);
-    const val = Math.max(0, Math.min(1, isNaN(rawVal) ? 0 : Math.round(rawVal * 100) / 100));
+    const val = parseFloat(e.target.value);
     setVolume(val);
     if (videoRef.current) {
       videoRef.current.volume = val;
@@ -2529,10 +3114,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   ],
                 },
                 {
+                  title: 'Phát lại / Điều khiển',
+                  items: [
+                    { keys: ['D'], desc: 'Bật / tắt bình luận bay (Danmaku)' },
+                  ],
+                },
+                {
                   title: 'Tua video',
                   items: [
                     { keys: ['←', 'J'], desc: 'Lùi lại 10 giây' },
                     { keys: ['→', 'L'], desc: 'Tiến tới 10 giây' },
+                    { keys: ['S'], desc: 'Bỏ qua phần giới thiệu (+85s, khi có)' },
                   ],
                 },
                 {
@@ -2541,6 +3133,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     { keys: ['↑'], desc: 'Tăng âm lượng 10%' },
                     { keys: ['↓'], desc: 'Giảm âm lượng 10%' },
                     { keys: ['M'], desc: 'Bật / tắt tiếng' },
+                  ],
+                },
+                {
+                  title: 'Đánh dấu & vòng lặp',
+                  items: [
+                    { keys: ['B'], desc: 'Đánh dấu khoảnh khắc (Bookmark) tại thời điểm hiện tại' },
                   ],
                 },
                 {
@@ -2555,9 +3153,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 {
                   title: 'Hiển thị',
                   items: [
+                    { keys: ['Z'], desc: 'Xoay vòng khung hình: Vừa khung / Zoom / Fill' },
                     { keys: ['F'], desc: 'Toàn màn hình' },
                     { keys: ['T'], desc: 'Chế độ rạp chiếu (Theater mode)' },
-                    { keys: ['P'], desc: 'Hình trong hình (Picture-in-Picture)' },
+                    { keys: ['P'], desc: 'Hình trong hình (PiP)' },
                     { keys: ['/'], desc: 'Mở / đóng bảng phím tắt này' },
                     { keys: ['Esc'], desc: 'Đóng menu hoặc bảng phím tắt' },
                   ],
@@ -2638,6 +3237,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             {autoIngested && (
               <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40 shadow-sm animate-pulse">
                 <span>✨ Auto-Ingest HLS</span>
+              </span>
+            )}
+            {sleepEndsAt !== null && sleepRemaining > 0 && (
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 shadow-sm ${
+                  sleepBadgeFlash ? 'animate-pulse ring-1 ring-amber-400' : ''
+                }`}
+                title="Hẹn giờ tắt đang hoạt động"
+              >
+                <Timer className="w-3 h-3" />
+                <span>{formatSleepRemaining(sleepRemaining)}</span>
               </span>
             )}
             {volumeBoost > 100 && !boostUnsupported && (
@@ -2760,7 +3370,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <button
                 type="button"
                 onClick={togglePip}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                   isPip
                     ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
                     : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -2768,9 +3378,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 title={isPip ? 'Thoát Picture-in-Picture (Phím P)' : 'Hình trong hình PiP (Phím P)'}
               >
                 <PictureInPicture2 className="w-3.5 h-3.5" />
-                <span>PiP</span>
+                <span className="text-[11px] sm:text-xs">PiP</span>
               </button>
             )}
+
+            {/* Pro Tools: Frame Screenshot Button */}
+            <button
+              type="button"
+              onClick={handleCaptureFrame}
+              className="p-1 rounded-lg bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors cursor-pointer"
+              title="Chụp ảnh khung hình hiện tại (screenshot)"
+            >
+              <Camera className="w-3.5 h-3.5" />
+            </button>
 
             {/* Pro Tools: Stats for Nerds Toggle */}
             <button
@@ -2836,9 +3456,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           className={`relative z-10 ${
             isPseudoFullscreen
               ? '!fixed !inset-0 !z-[9999] !w-screen !h-[100dvh] !max-w-none !aspect-auto !rounded-none !border-0'
-              : 'aspect-video w-full rounded-none sm:rounded-b-2xl border-x-0 sm:border border-lime-500/25'
-          } bg-black overflow-hidden shadow-[0_10px_45px_rgba(0,0,0,0.85)] group select-none touch-none ${
-            !showControls && isPlaying ? 'cursor-none' : ''
+              : 'aspect-video w-full bg-black rounded-none sm:rounded-b-2xl overflow-hidden border-x-0 sm:border border-lime-500/25 shadow-[0_10px_45px_rgba(0,0,0,0.85)] select-none'
           }`}
         >
           {playerMode === 'hls' && (m3u8Url || movieSlug) ? (
@@ -2875,7 +3493,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   }
                 }}
                 onTimeUpdate={() => {
-                  if (!videoRef.current) return;
+                  if (!videoRef.current || isScrubbingRef.current) return;
                   const cur = videoRef.current.currentTime;
                   setCurrentTime(cur);
                   updateBuffered(videoRef.current);
@@ -2909,15 +3527,43 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   videoRef.current.volume = volume;
                   videoRef.current.muted = isMuted;
                   videoRef.current.playbackRate = playbackSpeed;
+                  const video = videoRef.current;
+                  if (
+                    typeof document !== 'undefined' &&
+                    (Boolean(document.pictureInPictureEnabled) ||
+                      Boolean(
+                        (video as any)?.webkitSupportsPresentationMode &&
+                          typeof (video as any).webkitSetPresentationMode === 'function'
+                      ) ||
+                      (typeof navigator !== 'undefined' &&
+                        /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) &&
+                        'ontouchend' in document))
+                  ) {
+                    setIsPipSupported(true);
+                  }
                 }}
                 onEnded={() => {
                   setIsPlaying(false);
                   setShowControls(true);
+                  if (sleepTimerOption === 'end') {
+                    setSleepTimerOption('off');
+                    setSleepTimerMinutes(null);
+                    stopSleepTimer();
+                    videoRef.current?.pause();
+                    setSleepPausedOverlay(true);
+                    return;
+                  }
                   if (nextEpisode && onNextEpisode) {
                     setAutoNextCountdown(15);
                   }
                 }}
-                className="absolute inset-0 w-full h-full bg-black object-contain"
+                className={`absolute inset-0 w-full h-full bg-black ${
+                  fitMode === 'stretch'
+                    ? 'object-fill'
+                    : fitMode === 'cover'
+                    ? 'object-cover'
+                    : 'object-contain'
+                }`}
               >
                 {subtitle && (
                   <track
@@ -2930,6 +3576,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   />
                 )}
               </video>
+
+              {/* Pro Tools: 21:9 Cinema letterbox bars */}
+              {fitMode === 'cinema' && (
+                <>
+                  <div
+                    className="absolute inset-x-0 top-0 bg-black z-[5] pointer-events-none"
+                    style={{ height: `${((1 - 16 / 21) / 2) * 100}%` }}
+                  />
+                  <div
+                    className="absolute inset-x-0 bottom-0 bg-black z-[5] pointer-events-none"
+                    style={{ height: `${((1 - 16 / 21) / 2) * 100}%` }}
+                  />
+                </>
+              )}
 
       {/* Pro Tools: Stats for Nerds overlay */}
       {showStats && playerMode === 'hls' && stats && (
@@ -2959,6 +3619,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <span className="text-white">{stats.playbackRate}</span>
             <span className="text-[#8aa885]">Khuếch đại âm:</span>
             <span className="text-white">{stats.boost}</span>
+            <span className="text-[#8aa885]">Chế độ khung:</span>
+            <span className="text-white">{stats.fitMode}</span>
             {subtitle && (
               <>
                 <span className="text-[#8aa885]">Phụ đề:</span>
@@ -3003,12 +3665,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Sleep Timer Pause Overlay */}
+      {sleepPausedOverlay && (
+        <div className="player-controls-interactive absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="mx-4 max-w-sm w-full rounded-3xl bg-[#0a180b]/95 border border-amber-500/30 p-6 text-center shadow-[0_20px_80px_rgba(0,0,0,0.9)]">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-950/70 border border-amber-500/40">
+              <Timer className="w-7 h-7 text-amber-300" />
+            </div>
+            <h3 className="text-base font-extrabold text-[#f4fbf0] mb-1">
+              Đã tạm dừng theo hẹn giờ tắt
+            </h3>
+            <p className="text-xs text-[#8aa885] mb-5">
+              {sleepTimerMinutes
+                ? `Hẹn giờ ${sleepTimerMinutes} phút đã hoàn tất.`
+                : 'Tập phim đã phát hết theo hẹn giờ.'}
+            </p>
+            <button
+              type="button"
+              onClick={handleSleepPausedResume}
+              className="w-full px-4 py-2.5 rounded-xl bg-lime-500 text-black text-sm font-extrabold hover:bg-lime-400 transition-colors cursor-pointer shadow-md"
+            >
+              Tiếp tục xem
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sleep Timer volume fade indicator */}
+      {sleepFading && (
+        <div className="absolute inset-0 z-40 flex items-end justify-center pb-24 pointer-events-none">
+          <span className="px-3 py-1.5 rounded-xl bg-amber-950/90 border border-amber-500/40 text-amber-200 text-xs font-bold shadow-md">
+            Đang giảm âm lượng từ từ...
+          </span>
+        </div>
+      )}
+
               {/* Double Tap Ripple Animations for Mobile/Touch */}
               {doubleTapEffect?.side === 'left' && (
-                <div className="absolute left-0 top-0 bottom-0 w-2/5 flex items-center justify-center bg-gradient-to-r from-lime-500/25 via-lime-500/10 to-transparent pointer-events-none rounded-r-full z-30 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex flex-col items-center gap-1.5 bg-black/85 backdrop-blur-md px-4 py-3 rounded-2xl border border-lime-500/50 shadow-[0_0_30px_rgba(132,204,22,0.4)]">
-                    <ChevronsLeft className="w-8 h-8 text-lime-400 animate-pulse" />
-                    <span className="text-xs font-black text-[#f4fbf0] tracking-wider">
+                <div className="absolute left-0 top-0 bottom-0 w-1/3 flex items-center justify-center bg-gradient-to-r from-lime-500/20 via-lime-500/10 to-transparent pointer-events-none rounded-r-full z-30 animate-in fade-in zoom-in-90 duration-150">
+                  <div className="flex flex-col items-center gap-1 bg-black/75 backdrop-blur-md px-3.5 py-2.5 rounded-2xl border border-lime-500/40 shadow-2xl">
+                    <ChevronsLeft className="w-7 h-7 text-lime-400 animate-pulse" />
+                    <span className="text-xs font-black text-[#f4fbf0]">
                       -{doubleTapEffect.count}s
                     </span>
                   </div>
@@ -3016,10 +3713,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
 
               {doubleTapEffect?.side === 'right' && (
-                <div className="absolute right-0 top-0 bottom-0 w-2/5 flex items-center justify-center bg-gradient-to-l from-lime-500/25 via-lime-500/10 to-transparent pointer-events-none rounded-l-full z-30 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex flex-col items-center gap-1.5 bg-black/85 backdrop-blur-md px-4 py-3 rounded-2xl border border-lime-500/50 shadow-[0_0_30px_rgba(132,204,22,0.4)]">
-                    <ChevronsRight className="w-8 h-8 text-lime-400 animate-pulse" />
-                    <span className="text-xs font-black text-[#f4fbf0] tracking-wider">
+                <div className="absolute right-0 top-0 bottom-0 w-1/3 flex items-center justify-center bg-gradient-to-l from-lime-500/20 via-lime-500/10 to-transparent pointer-events-none rounded-l-full z-30 animate-in fade-in zoom-in-90 duration-150">
+                  <div className="flex flex-col items-center gap-1 bg-black/75 backdrop-blur-md px-3.5 py-2.5 rounded-2xl border border-lime-500/40 shadow-2xl">
+                    <ChevronsRight className="w-7 h-7 text-lime-400 animate-pulse" />
+                    <span className="text-xs font-black text-[#f4fbf0]">
                       +{doubleTapEffect.count}s
                     </span>
                   </div>
@@ -3028,16 +3725,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
               {/* Touch Gestures HUD (Seek, Brightness, Volume) */}
               {touchHud && (
-                <div
-                  className={`absolute inset-0 z-35 pointer-events-none flex items-center transition-all ${
-                    touchHud.type === 'brightness'
-                      ? 'justify-start pl-6 sm:pl-16'
-                      : touchHud.type === 'volume'
-                      ? 'justify-end pr-6 sm:pr-16'
-                      : 'justify-center'
-                  }`}
-                >
-                  <div className="bg-black/90 backdrop-blur-md border border-lime-500/40 px-5 py-3.5 rounded-2xl flex flex-col items-center gap-2 shadow-[0_0_35px_rgba(132,204,22,0.4)] min-w-[145px] animate-in zoom-in-95 fade-in duration-100">
+                <div className="absolute inset-0 z-35 pointer-events-none flex items-center justify-center">
+                  <div className="bg-black/85 backdrop-blur-md border border-lime-500/40 px-5 py-3.5 rounded-2xl flex flex-col items-center gap-2 shadow-[0_0_30px_rgba(132,204,22,0.35)] min-w-[150px] animate-in zoom-in-95 fade-in duration-100">
                     {touchHud.type === 'seek' && (
                       <>
                         <div className="flex items-center gap-2">
@@ -3146,6 +3835,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     </span>
                   </div>
                 </div>
+              )}
+
+              {/* Mobile Normal Mode Quick PiP Button */}
+              {!isFullscreen && isPipSupported && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePip();
+                  }}
+                  className={`sm:hidden absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md border text-xs font-black shadow-[0_4px_16px_rgba(0,0,0,0.85)] transition-all cursor-pointer ${
+                    showControls || !isPlaying
+                      ? 'opacity-100 pointer-events-auto'
+                      : 'opacity-0 pointer-events-none'
+                  } ${
+                    isPip
+                      ? 'bg-lime-500/30 text-lime-300 border-lime-500/60 shadow-[0_0_12px_rgba(132,204,22,0.45)]'
+                      : 'bg-black/80 hover:bg-black/95 text-[#f4fbf0] hover:text-lime-300 border-lime-500/40 active:scale-95'
+                  }`}
+                  title={isPip ? 'Thoát Picture-in-Picture' : 'Chế độ hình trong hình (PiP)'}
+                >
+                  <PictureInPicture2 className="w-3.5 h-3.5" />
+                  <span>{isPip ? 'Đang PiP' : 'PiP'}</span>
+                </button>
               )}
 
               {/* Resume Playback Prompt Banner */}
@@ -3276,6 +3989,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
               )}
 
+              {/* Auto-floating Skip Intro (+85s) Button */}
+              {showSkipIntro && (
+                <div className="player-controls-interactive absolute bottom-16 sm:bottom-20 right-3 sm:right-6 z-30 flex items-center animate-in fade-in slide-in-from-bottom-3 duration-300">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSkipIntro();
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-[#061406]/90 hover:bg-lime-500 text-lime-300 hover:text-black border border-lime-400/50 hover:border-lime-300 backdrop-blur-md shadow-[0_4px_25px_rgba(0,0,0,0.85)] text-xs sm:text-sm font-black transition-all transform hover:scale-105 cursor-pointer group"
+                    title="Bỏ qua phần giới thiệu đầu phim (+85 giây, phím S)"
+                  >
+                    <FastForward className="w-4 h-4 fill-current group-hover:fill-black text-lime-400 group-hover:text-black transition-colors" />
+                    <span>Bỏ qua mở đầu (+{introDuration}s)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dismissedSkipIntroRef.current = true;
+                      setShowSkipIntro(false);
+                    }}
+                    className="ml-1.5 p-2 rounded-xl bg-[#061406]/80 hover:bg-black text-[#8aa885] hover:text-white border border-lime-500/20 backdrop-blur-md transition-colors cursor-pointer"
+                    title="Đóng thông báo"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Hold-to-2x Speed Badge (top-center) */}
               {isBoosted && (
                 <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none animate-in fade-in zoom-in-90 duration-100">
@@ -3396,6 +4139,43 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
               )}
 
+              {/* Danmaku / Floating Bullet Comments Layer */}
+              {playerMode === 'hls' && danmakuSettings.enabled && (
+                <div
+                  aria-hidden
+                  className="absolute inset-x-0 top-0 pointer-events-none select-none overflow-hidden z-20"
+                >
+                  <style>{`@keyframes bofilm-danmaku-fly {
+                    from { transform: translate3d(0, 0, 0); }
+                    to { transform: translate3d(-110vw, 0, 0); }
+                  }`}</style>
+                  {danmakuFlying.map((item) => (
+                    <span
+                      key={item.id}
+                      onAnimationEnd={() =>
+                        setDanmakuFlying((prev) => prev.filter((f) => f.id !== item.id))
+                      }
+                      className={`absolute right-0 whitespace-nowrap font-bold pointer-events-none will-change-transform drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${
+                        item.kind === 'emoji'
+                          ? 'flex items-center leading-none'
+                          : 'rounded-full bg-black/45 px-2.5 py-0.5 text-white'
+                      }`}
+                      style={{
+                        top: `${6 + item.lane * 11}%`,
+                        fontSize:
+                          item.kind === 'emoji'
+                            ? `${Math.round(danmakuSettings.fontSize * 1.6)}px`
+                            : `${danmakuSettings.fontSize}px`,
+                        opacity: danmakuSettings.opacity,
+                        animation: `bofilm-danmaku-fly ${item.duration.toFixed(2)}s linear forwards`,
+                      }}
+                    >
+                      {item.text}
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* Modern Player Controls Overlay */}
               <div
                 className={`player-controls-interactive absolute bottom-0 left-0 right-0 z-25 bg-gradient-to-t from-black/95 via-black/75 to-transparent pt-12 pb-3 px-3 sm:px-4 sm:pb-4 transition-opacity duration-300 ${
@@ -3405,69 +4185,180 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 }`}
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* Glassmorphism Seekbar */}
-                <div
-                  ref={seekbarRef}
-                  onClick={handleSeekbarClick}
-                  onMouseDown={handleSeekbarMouseDown}
-                  onMouseMove={handleSeekbarMouseMove}
-                  onMouseLeave={handleSeekbarMouseLeave}
-                  onTouchStart={handleSeekbarTouchStart}
-                  onTouchMove={handleSeekbarTouchMove}
-                  onTouchEnd={handleSeekbarTouchEnd}
-                  className="relative w-full py-2.5 cursor-pointer group/bar select-none"
-                >
-                  {/* Hover Timestamp Tooltip (timestamp theo vị trí con trỏ X) */}
-                  {hoverTime !== null && (
-                    <div
-                      className="absolute -top-9 -translate-x-1/2 pointer-events-none z-20 flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1 rounded-xl bg-black/90 backdrop-blur-md border border-lime-500/50 text-[11px] font-bold text-lime-300 shadow-[0_4px_20px_rgba(0,0,0,0.9)]"
-                      style={{ left: `${hoverRatio}%` }}
-                    >
-                      <span className="text-white">{formatTime(hoverTime)}</span>
-                      {duration > 0 && (
-                        <span className="text-[9px] font-bold text-[#8aa885] bg-white/10 px-1 py-px rounded">
-                          {Math.round((hoverTime / duration) * 100)}%
-                        </span>
-                      )}
-                      {hoverTime !== currentTime && duration > 0 && (
-                        <span
-                          className={`text-[9px] font-bold px-1 py-px rounded ${
-                            hoverTime > currentTime
-                              ? 'text-yellow-300 bg-yellow-300/15'
-                              : 'text-cyan-300 bg-cyan-300/15'
-                          }`}
+                {/* Danmaku Quick Reactions + Comment Input */}
+                {playerMode === 'hls' && danmakuSettings.enabled && (
+                  <div
+                    className="flex flex-wrap items-center justify-center gap-1.5 mb-1.5 px-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center rounded-xl bg-black/70 border border-white/15 backdrop-blur-md overflow-hidden">
+                      {DANMAKU_REACTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => handleDanmakuReaction(emoji)}
+                          className="w-6 sm:w-7 text-sm sm:text-base leading-none py-1 hover:scale-125 hover:bg-lime-500/20 transition-transform cursor-pointer"
+                          title={`Thả reaction ${emoji} tại ${formatTime(currentTime)}`}
                         >
-                          {hoverTime > currentTime ? '+' : '-'}
-                          {formatTime(Math.abs(hoverTime - currentTime))}
-                        </span>
-                      )}
+                          {emoji}
+                        </button>
+                      ))}
                     </div>
-                  )}
-
-                  {/* Timeline Track Bar Container */}
-                  <div className="relative w-full h-1.5 group-hover/bar:h-2.5 rounded-full bg-white/20 backdrop-blur-md transition-all overflow-hidden">
-                    {/* Buffered Stream Bar */}
-                    <div
-                      className="absolute top-0 bottom-0 left-0 bg-white/30 rounded-full transition-all duration-200"
-                      style={{ width: `${bufferedRatio * 100}%` }}
-                    />
-                    {/* Played Progress Bar */}
-                    <div
-                      className="absolute top-0 bottom-0 left-0 bg-gradient-to-r from-lime-500 via-lime-400 to-emerald-400 rounded-full shadow-[0_0_12px_rgba(163,230,53,0.7)]"
-                      style={{
-                        width: `${duration ? (currentTime / duration) * 100 : 0}%`,
+                    <input
+                      type="text"
+                      value={danmakuInputText}
+                      onChange={(e) => setDanmakuInputText(e.target.value)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleDanmakuSubmit();
+                        }
                       }}
+                      placeholder={`Bình luận bay tại ${formatTime(currentTime)}… (Enter để gửi)`}
+                      maxLength={120}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-48 sm:w-64 h-6 rounded-xl bg-black/70 border border-white/15 focus:border-lime-400/60 focus:outline-none text-[11px] text-[#f4fbf0] placeholder:text-[#8aa885] px-2.5 backdrop-blur-md cursor-text"
                     />
                   </div>
+                )}
 
-                  {/* Glow Scrubber Thumb */}
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-lime-400 border-2 border-white shadow-[0_0_10px_rgba(163,230,53,0.9)] opacity-0 group-hover/bar:opacity-100 group-active/bar:opacity-100 transition-all pointer-events-none"
-                    style={{
-                      left: `${duration ? (currentTime / duration) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
+                {/* Glassmorphism Seekbar */}
+                {(() => {
+                  const displayProgressPercent =
+                    scrubRatio !== null
+                      ? scrubRatio * 100
+                      : duration > 0
+                      ? Math.min(100, Math.max(0, (currentTime / duration) * 100))
+                      : 0;
+                  return (
+                    <div
+                      ref={seekbarRef}
+                      onClick={handleSeekbarClick}
+                      onMouseDown={handleSeekbarMouseDown}
+                      onTouchStart={handleSeekbarTouchStart}
+                      onTouchMove={handleSeekbarTouchMove}
+                      onTouchEnd={handleSeekbarTouchEnd}
+                      onMouseMove={handleSeekbarMouseMove}
+                      onMouseLeave={handleSeekbarMouseLeave}
+                      className="relative w-full py-2.5 cursor-pointer group/bar select-none"
+                    >
+                      {/* Hover Timestamp Tooltip (timestamp theo vị trí con trỏ X) */}
+                      {hoverTime !== null && (
+                        <div
+                          className="absolute -top-9 -translate-x-1/2 pointer-events-none z-20 flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1 rounded-xl bg-black/90 backdrop-blur-md border border-lime-500/50 text-[11px] font-bold text-lime-300 shadow-[0_4px_20px_rgba(0,0,0,0.9)]"
+                          style={{ left: `${hoverRatio}%` }}
+                        >
+                          <span className="text-white">{formatTime(hoverTime)}</span>
+                          {duration > 0 && (
+                            <span className="text-[9px] font-bold text-[#8aa885] bg-white/10 px-1 py-px rounded">
+                              {Math.round((hoverTime / duration) * 100)}%
+                            </span>
+                          )}
+                          {hoverTime !== currentTime && duration > 0 && (
+                            <span
+                              className={`text-[9px] font-bold px-1 py-px rounded ${
+                                hoverTime > currentTime
+                                  ? 'text-yellow-300 bg-yellow-300/15'
+                                  : 'text-cyan-300 bg-cyan-300/15'
+                              }`}
+                            >
+                              {hoverTime > currentTime ? '+' : '-'}
+                              {formatTime(Math.abs(hoverTime - currentTime))}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Timeline Track Bar Container */}
+                      <div className="relative w-full h-1.5 group-hover/bar:h-2.5 rounded-full bg-white/20 backdrop-blur-md transition-all overflow-hidden">
+                        {/* Buffered Stream Bar */}
+                        <div
+                          className="absolute top-0 bottom-0 left-0 bg-white/30 rounded-full transition-all duration-200"
+                          style={{ width: `${bufferedRatio * 100}%` }}
+                        />
+                        {/* Played Progress Bar */}
+                        <div
+                          className={`absolute top-0 bottom-0 left-0 bg-gradient-to-r from-lime-500 via-lime-400 to-emerald-400 rounded-full shadow-[0_0_12px_rgba(163,230,53,0.7)] ${
+                            isScrubbing ? 'transition-none' : ''
+                          }`}
+                          style={{
+                            width: `${displayProgressPercent}%`,
+                          }}
+                        />
+                        {/* A-B Loop Region Highlight */}
+                        {abLoop.a !== null && abLoop.b !== null && duration > 0 && (
+                          <div
+                            className="absolute top-0 bottom-0 bg-cyan-400/40 border-x border-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.7)]"
+                            style={{
+                              left: `${(abLoop.a / duration) * 100}%`,
+                              width: `${((abLoop.b - abLoop.a) / duration) * 100}%`,
+                            }}
+                          />
+                        )}
+                        {/* Scene Bookmark Markers (vibrant purple, click to jump) */}
+                        {bookmarks.map((b) =>
+                          duration > 0 ? (
+                            <div
+                              key={b.t}
+                              className="group/bookmark absolute top-0 bottom-0 w-3 -translate-x-1/2 z-10 cursor-pointer"
+                              style={{ left: `${(b.t / duration) * 100}%` }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleJumpToBookmark(b.t);
+                              }}
+                            >
+                              <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[3px] bg-fuchsia-400 rounded-full shadow-[0_0_10px_rgba(232,121,249,0.95)] transition-all group-hover/bookmark:w-[5px] group-hover/bookmark:bg-fuchsia-300" />
+                              {/* Hover tooltip: bookmark label & time */}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/bookmark:block whitespace-nowrap rounded-lg bg-[#0a180b] border border-fuchsia-500/40 px-2 py-1 shadow-[0_4px_16px_rgba(0,0,0,0.8)]">
+                                <span className="block text-[10px] font-bold text-fuchsia-300">
+                                  {b.label || 'Bookmark'} • {formatTime(b.t)}
+                                </span>
+                                <span className="block text-[9px] text-[#8aa885]">
+                                  Nhấn để nhảy đến mốc này
+                                </span>
+                              </div>
+                              {/* Pin head above the bar */}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-0.5 w-2 h-2 rounded-full bg-fuchsia-400 border border-fuchsia-200 shadow-[0_0_8px_rgba(232,121,249,0.95)] transition-transform group-hover/bookmark:scale-125" />
+                            </div>
+                          ) : null
+                        )}
+                      </div>
+
+                      {/* A-B Loop Point Pins */}
+                      {abLoop.a !== null && duration > 0 && (
+                        <div
+                          className="absolute bottom-full w-2.5 h-2.5 -translate-x-1/2 rounded-full bg-cyan-400 border-2 border-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.9)] pointer-events-none flex items-center justify-center text-[7px] font-black text-black"
+                          title={`Điểm A: ${formatTime(abLoop.a)}`}
+                          style={{ left: `${(abLoop.a / duration) * 100}%` }}
+                        >
+                          A
+                        </div>
+                      )}
+                      {abLoop.b !== null && duration > 0 && (
+                        <div
+                          className="absolute bottom-full w-2.5 h-2.5 -translate-x-1/2 rounded-full bg-cyan-400 border-2 border-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.9)] pointer-events-none flex items-center justify-center text-[7px] font-black text-black"
+                          title={`Điểm B: ${formatTime(abLoop.b)}`}
+                          style={{ left: `${(abLoop.b / duration) * 100}%` }}
+                        >
+                          B
+                        </div>
+                      )}
+
+                      {/* Glow Scrubber Thumb */}
+                      <div
+                        className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-lime-400 border-2 border-white shadow-[0_0_10px_rgba(163,230,53,0.9)] ${
+                          isScrubbing
+                            ? 'opacity-100 transition-none scale-125'
+                            : 'opacity-0 group-hover/bar:opacity-100 group-active/bar:opacity-100 transition-all'
+                        } pointer-events-none`}
+                        style={{
+                          left: `${displayProgressPercent}%`,
+                        }}
+                      />
+                    </div>
+                  );
+                })()}
 
                 {/* Controls Action Row */}
                 <div className="flex items-center justify-between gap-2 mt-1">
@@ -3509,6 +4400,71 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       <span className="text-[11px]">+10s</span>
                     </button>
 
+                    {/* Scene Bookmark Button */}
+                    {playerMode === 'hls' && (
+                      <button
+                        type="button"
+                        onClick={handleAddBookmark}
+                        className="flex items-center gap-0.5 px-1.5 py-1 rounded-xl text-[#cbe1c8] hover:text-fuchsia-300 hover:bg-white/10 transition-colors text-xs font-bold cursor-pointer"
+                        title="Đánh dấu khoảnh khắc hiện tại (Phím B)"
+                      >
+                        <Bookmark className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* A-B Loop Set Point Buttons */}
+                    {playerMode === 'hls' && (
+                      <div className="flex items-center gap-0.5 rounded-xl border border-cyan-500/20 bg-cyan-950/20 px-1 py-0.5">
+                        <button
+                          type="button"
+                          onClick={handleSetLoopA}
+                          disabled={abLoop.active && abLoop.a === null}
+                          className={`px-1.5 py-0.5 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                            abLoop.a !== null
+                              ? 'text-cyan-300'
+                              : 'text-[#cbe1c8] hover:text-cyan-300'
+                          }`}
+                          title="Chọn điểm A cho vòng lặp A-B"
+                        >
+                          A
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSetLoopB}
+                          className={`px-1.5 py-0.5 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                            abLoop.b !== null
+                              ? 'text-cyan-300'
+                              : 'text-[#cbe1c8] hover:text-cyan-300'
+                          }`}
+                          title="Chọn điểm B & bật vòng lặp A-B"
+                        >
+                          B
+                        </button>
+                        {abLoop.active && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse mx-0.5" />
+                        )}
+                      </div>
+                    )}
+
+                    {/* Danmaku Toggle Button (Phím D) */}
+                    {playerMode === 'hls' && (
+                      <button
+                        type="button"
+                        onClick={handleDanmakuToggle}
+                        className={`p-1.5 rounded-xl transition-all cursor-pointer ${
+                          danmakuSettings.enabled
+                            ? 'text-lime-300 bg-lime-500/15 border border-lime-500/50 shadow-[0_0_12px_rgba(132,204,22,0.55)]'
+                            : 'text-[#8aa885] hover:text-lime-300 hover:bg-white/10'
+                        }`}
+                        title={
+                          danmakuSettings.enabled
+                            ? 'Tắt bình luận bay (Phím D)'
+                            : 'Bật bình luận bay (Phím D)'
+                        }
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                      </button>
+                    )}
 
                     {/* Volume Slider and Mute Toggle */}
                     <div className="flex items-center gap-1.5 group/vol">
@@ -3530,16 +4486,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         type="range"
                         min="0"
                         max="1"
-                        step="0.01"
+                        step="0.02"
                         value={isMuted ? 0 : volume}
                         onChange={handleVolumeChange}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onTouchStart={(e) => e.stopPropagation()}
-                        className="cinema-volume-slider w-16 sm:w-20 cursor-pointer"
-                        style={{
-                          ['--volume-bg' as any]: `linear-gradient(to right, #a3e635 0%, #a3e635 ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.25) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.25) 100%)`
-                        }}
-                        title={`Âm lượng: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                        className="cinema-volume-slider w-16 sm:w-20 h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400 hover:accent-lime-300 transition-all"
+                        title={`Âm lượng: ${Math.round(volume * 100)}%`}
                       />
                     </div>
 
@@ -3618,32 +4569,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
                       {showSettingsMenu && (
                         <>
-                          {/* Mobile backdrop to dismiss sheet */}
+                          {/* Mobile backdrop */}
                           <div
-                            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm sm:hidden"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowSettingsMenu(false);
-                            }}
+                            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 sm:hidden"
+                            onClick={() => setShowSettingsMenu(false)}
                           />
                           <div
                             style={{
-                              maxHeight: typeof window !== 'undefined' && window.innerWidth < 640 ? '82vh' : (menuMaxHeight ? `${menuMaxHeight}px` : undefined),
+                              maxHeight: typeof window !== 'undefined' && window.innerWidth < 640 ? '82vh' : undefined,
                             }}
                             className="fixed inset-x-0 bottom-0 z-50 max-h-[82vh] rounded-t-3xl border-t border-lime-500/30 bg-[#0a180b]/98 backdrop-blur-2xl p-2 sm:p-0 sm:absolute sm:inset-auto sm:bottom-full sm:right-0 sm:mb-2 sm:w-max sm:min-w-[240px] sm:max-w-xs sm:rounded-2xl sm:border sm:border-white/15 overflow-y-auto shadow-[0_15px_45px_rgba(0,0,0,0.85)] animate-in slide-in-from-bottom duration-200"
-                            onClick={(e) => e.stopPropagation()}
                           >
-                            {/* Mobile Sheet Header */}
-                            <div className="flex sm:hidden items-center justify-between px-3 py-2 border-b border-white/10 mb-2">
-                              <span className="text-xs font-black uppercase text-lime-400 tracking-wider">Cài đặt trình phát</span>
-                              <button
-                                type="button"
-                                onClick={() => setShowSettingsMenu(false)}
-                                className="p-1.5 rounded-lg text-[#8aa885] hover:text-white hover:bg-white/10"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
                           {/* Quality Section */}
                           <div className="px-3 pt-2.5 pb-2">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
@@ -3722,6 +4658,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                   Native HLS — Chất lượng tự động
                                 </div>
                               )}
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
+                          {/* Pro Tools: Aspect Ratio Fit Mode Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <Film className="w-3 h-3" />
+                              Khung hình (Aspect)
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              {FIT_MODES.map((opt) => (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={() => handleFitModeSelect(opt.value)}
+                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                    fitMode === opt.value
+                                      ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                      : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  <span>{opt.label}</span>
+                                  {fitMode === opt.value && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                </button>
+                              ))}
                             </div>
                           </div>
 
@@ -3892,6 +4855,150 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                                   </div>
                                  </>
                               )}
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
+                          {/* Skip Intro Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <FastForward className="w-3 h-3" />
+                              Bỏ qua mở đầu
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAutoSkipIntro((prev) => {
+                                    const next = !prev;
+                                    setPrefs((p) => ({ ...p, autoSkipIntro: next }));
+                                    triggerFeedback(
+                                      next ? 'Tự động bỏ qua mở đầu: Bật' : 'Tự động bỏ qua mở đầu: Tắt',
+                                      'volume'
+                                    );
+                                    return next;
+                                  });
+                                }}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  autoSkipIntro
+                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                }`}
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                  Tự động bỏ qua mở đầu
+                                </span>
+                                {autoSkipIntro && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </button>
+                              <div className="px-2.5 pt-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                <Clock className="w-3 h-3" />
+                                Thời lượng bỏ qua
+                              </div>
+                              <div className="flex gap-1 px-2.5 pb-1">
+                                {INTRO_DURATION_OPTIONS.map((d) => (
+                                  <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => {
+                                      setIntroDuration(d);
+                                      setPrefs((p) => ({ ...p, introDuration: d }));
+                                      triggerFeedback(`Bỏ qua mở đầu: +${d}s`, 'volume');
+                                    }}
+                                    className={`flex-1 px-1 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                      introDuration === d
+                                        ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                        : 'bg-white/5 text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {d}s
+                                  </button>
+                                ))}
+                              </div>
+                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
+                                Cài đặt được lưu tự động cho lần xem sau.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
+                          {/* Danmaku Settings Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <MessageSquare className="w-3 h-3" />
+                              Bình luận bay (Danmaku)
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={handleDanmakuToggle}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  danmakuSettings.enabled
+                                    ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                }`}
+                                title="Bật / tắt bình luận bay (Phím D)"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                  {danmakuSettings.enabled
+                                    ? 'Đang bật bình luận bay'
+                                    : 'Đã tắt bình luận bay'}
+                                </span>
+                                {danmakuSettings.enabled && (
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                )}
+                              </button>
+                              <div className="mt-1.5 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                <span>Độ mờ (Opacity)</span>
+                                <span className="text-lime-300 font-mono text-[11px] normal-case">
+                                  {Math.round(danmakuSettings.opacity * 100)}%
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0.3"
+                                max="1"
+                                step="0.05"
+                                value={danmakuSettings.opacity}
+                                onChange={(e) =>
+                                  updateDanmakuSetting({ opacity: parseFloat(e.target.value) })
+                                }
+                                className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-lime-400"
+                                title="Độ mờ của bình luận bay (30% - 100%)"
+                              />
+                              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885]">
+                                <Type className="w-3 h-3" />
+                                Cỡ chữ
+                              </div>
+                              <div className="flex gap-1">
+                                {(
+                                  [
+                                    { value: 12 as DanmakuFontSize, label: 'Nhỏ 12px' },
+                                    { value: 14 as DanmakuFontSize, label: 'Vừa 14px' },
+                                    { value: 18 as DanmakuFontSize, label: 'Lớn 18px' },
+                                  ]
+                                ).map((sz) => (
+                                  <button
+                                    key={sz.value}
+                                    type="button"
+                                    onClick={() => updateDanmakuSetting({ fontSize: sz.value })}
+                                    className={`flex-1 px-1 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                      danmakuSettings.fontSize === sz.value
+                                        ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                        : 'bg-white/5 text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                    }`}
+                                  >
+                                    {sz.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
+                                Cài đặt lưu tự động. Bấm phím D để bật / tắt nhanh, thả
+                                ❤️🔥😂👏 trực tiếp trên trình phát.
+                              </p>
                             </div>
                           </div>
 
@@ -4202,6 +5309,55 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
                           <div className="mx-3 border-t border-white/10" />
 
+                          {/* Sleep Timer Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <Timer className="w-3 h-3" />
+                              Hẹn giờ tắt
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              {(
+                                [
+                                  { value: 'off' as const, label: 'Tắt' },
+                                  { value: 15, label: '15 phút' },
+                                  { value: 30, label: '30 phút' },
+                                  { value: 45, label: '45 phút' },
+                                  { value: 60, label: '60 phút' },
+                                  { value: 'end' as const, label: 'Hết tập hiện tại' },
+                                ]
+                              ).map((opt) => (
+                                <button
+                                  key={String(opt.value)}
+                                  type="button"
+                                  onClick={() => handleSleepTimerSelect(opt.value)}
+                                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                    sleepTimerOption === opt.value
+                                      ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                      : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-1.5">
+                                    {opt.label}
+                                    {opt.value === 'end' &&
+                                      sleepTimerOption === 'end' && (
+                                        <AlarmClockOff className="w-3 h-3" />
+                                      )}
+                                  </span>
+                                  {sleepTimerOption === opt.value && (
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  )}
+                                </button>
+                              ))}
+                              {sleepEndsAt !== null && sleepRemaining > 0 && (
+                                <p className="px-2.5 py-1 text-[10px] font-bold text-amber-300">
+                                  Còn lại: {formatSleepRemaining(sleepRemaining)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
                           {/* Cinematic Ambient Glow Section */}
                           <div className="px-3 pt-2 pb-2.5">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
@@ -4227,6 +5383,112 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                               <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
                                 Thêm ánh sáng bloom đổi màu động phía sau trình phát.
                               </p>
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
+                          {/* A-B Loop Repeat Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <Repeat className="w-3 h-3" />
+                              Vòng lặp A-B
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={handleSetLoopA}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  abLoop.a !== null
+                                    ? 'bg-cyan-500 text-black shadow-md font-extrabold'
+                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                }`}
+                                title="Đặt điểm A tại vị trí phát hiện tại"
+                              >
+                                <span>
+                                  Đặt điểm A{abLoop.a !== null ? `: ${formatTime(abLoop.a)}` : ''}
+                                </span>
+                                {abLoop.a !== null && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSetLoopB}
+                                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                  abLoop.b !== null
+                                    ? 'bg-cyan-500 text-black shadow-md font-extrabold'
+                                    : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                }`}
+                                title="Đặt điểm B & tự động phát lặp A↔B"
+                              >
+                                <span>
+                                  Đặt điểm B{abLoop.b !== null ? `: ${formatTime(abLoop.b)}` : ''}
+                                </span>
+                                {abLoop.b !== null && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </button>
+                              {abLoop.active && (
+                                <button
+                                  type="button"
+                                  onClick={handleClearLoop}
+                                  className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-left bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors cursor-pointer"
+                                >
+                                  Tắt vòng lặp A-B
+                                </button>
+                              )}
+                              <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
+                                Khi bật, video tự lặp lại giữa hai mốc thời gian A và B.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mx-3 border-t border-white/10" />
+
+                          {/* Scene Bookmarks Section */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8aa885] mb-1.5">
+                              <Bookmark className="w-3 h-3" />
+                              Đánh dấu cảnh
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={handleAddBookmark}
+                                className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center gap-2 text-[#cbe1c8] hover:bg-white/10 hover:text-white"
+                              >
+                                <Bookmark className="w-3.5 h-3.5 text-fuchsia-300" />
+                                <span>Đánh dấu khoảnh khắc hiện tại (Phím B)</span>
+                              </button>
+                              {bookmarks.length === 0 ? (
+                                <p className="px-2.5 py-1 text-[10px] text-[#8aa885]">
+                                  Chưa có mốc nào. Bookmark được lưu theo từng phim & tập.
+                                </p>
+                              ) : (
+                                bookmarks.map((b) => (
+                                  <div
+                                    key={b.t}
+                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => handleJumpToBookmark(b.t)}
+                                      className="flex items-center gap-1.5 text-xs font-bold text-[#cbe1c8] hover:text-fuchsia-300 cursor-pointer min-w-0"
+                                      title={`Nhảy đến ${formatTime(b.t)}`}
+                                    >
+                                      <Clock className="w-3 h-3 text-fuchsia-300 flex-shrink-0" />
+                                      <span className="truncate">
+                                        {b.label || 'Bookmark'} · {formatTime(b.t)}
+                                      </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveBookmark(b.t)}
+                                      className="text-[10px] font-bold text-red-400 hover:text-red-300 cursor-pointer flex-shrink-0"
+                                      title="Xóa mốc đánh dấu này"
+                                    >
+                                      Xóa
+                                    </button>
+                                  </div>
+                                ))
+                              )}
                             </div>
                           </div>
                         </div>

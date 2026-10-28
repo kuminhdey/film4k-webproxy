@@ -281,10 +281,10 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
               {/* Card Meta Content */}
               <div className="p-3 space-y-1.5 flex-1 flex flex-col justify-between">
                 <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-1 min-h-[1.25rem]">
+                  <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug h-[2.5rem] min-h-[2.5rem]">
                     {item.name}
                   </h3>
-                  <div className="flex items-center gap-1.5 text-[11px] text-[#8aa885] mt-1 min-h-[1.1rem]">
+                  <div className="flex items-center gap-1.5 text-[11px] text-[#8aa885] mt-1 h-[1.2rem] min-h-[1.2rem]">
                     <Clock className="w-3 h-3 text-lime-400/70 shrink-0" />
                     <span className="truncate">
                       {hasProgress ? (

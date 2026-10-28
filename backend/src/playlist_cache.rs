@@ -7,8 +7,10 @@ use axum::{
 use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, RwLock};
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -105,6 +107,7 @@ pub fn extract_expiration_timestamp(content: &str, stream_url: &str) -> Option<u
 #[derive(Clone, Debug)]
 pub struct PlaylistCache {
     base_dir: PathBuf,
+    cache: Arc<RwLock<HashMap<String, (String, Instant)>>>,
 }
 
 pub type PlaylistCacheService = PlaylistCache;
@@ -114,7 +117,10 @@ impl Default for PlaylistCache {
         let path = std::env::var("PLAYLISTS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/playlists"));
-        Self { base_dir: path }
+        Self {
+            base_dir: path,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
@@ -122,7 +128,47 @@ impl PlaylistCache {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            cache: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn get_memory(&self, key: &str) -> Option<String> {
+        let guard = self.cache.read().ok()?;
+        guard.get(key).map(|(v, _)| v.clone())
+    }
+
+    pub fn set_memory(&self, key: String, value: String) {
+        if let Ok(mut guard) = self.cache.write() {
+            guard.insert(key, (value, Instant::now()));
+        }
+    }
+
+    pub fn prune_memory_cache(&self, max_age: Duration) {
+        if let Ok(mut guard) = self.cache.write() {
+            let now = Instant::now();
+            guard.retain(|_, (_, time)| now.duration_since(*time) < max_age);
+        }
+    }
+
+    pub fn start_cleanup_task(&self, db: Database) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                match db.cleanup_expired_playlist_cache() {
+                    Ok(deleted) => {
+                        if deleted > 0 {
+                            info!("🧹 Purged {} expired playlist cache entries from SQLite", deleted);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to cleanup expired playlist cache from SQLite: {}", e);
+                    }
+                }
+                service.prune_memory_cache(Duration::from_secs(24 * 3600));
+            }
+        });
     }
 
     pub fn base_dir(&self) -> PathBuf {

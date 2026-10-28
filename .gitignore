@@ -21,3 +21,8 @@ storage/
 .env.*
 !.env.example
 !.env.sample
+
+.ecc/
+*.png
+custom_player_server.js
+

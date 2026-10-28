@@ -4,6 +4,8 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +20,51 @@ static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1000);
 
 /// Bounded session lifetime: 4 hours
 const SESSION_TTL: Duration = Duration::from_secs(4 * 3600);
+
+/// Maximum failed login attempts before lockout
+pub const MAX_FAILED_ATTEMPTS: u32 = 5;
+
+/// Lockout duration after exceeding MAX_FAILED_ATTEMPTS: 15 minutes
+pub const LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60);
+
+/// Constant-time string comparison using SHA-256 and subtle::ConstantTimeEq
+/// to prevent timing attacks across varied string lengths.
+pub fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    let hash_a = Sha256::digest(a.as_bytes());
+    let hash_b = Sha256::digest(b.as_bytes());
+    hash_a.as_slice().ct_eq(hash_b.as_slice()).into()
+}
+
+/// Extract client IP address from proxy headers (Cloudflare, reverse proxies)
+pub fn extract_client_ip(headers: &HeaderMap) -> String {
+    if let Some(val) = headers.get("cf-connecting-ip") {
+        if let Ok(s) = val.to_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    if let Some(val) = headers.get("x-real-ip") {
+        if let Ok(s) = val.to_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    if let Some(val) = headers.get("x-forwarded-for") {
+        if let Ok(s) = val.to_str() {
+            if let Some(first) = s.split(',').next() {
+                let trimmed = first.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    "unknown".to_string()
+}
 
 fn generate_secure_token() -> String {
     let mut bytes = [0u8; 32];
@@ -41,8 +88,9 @@ fn generate_secure_token() -> String {
 
 #[derive(Clone)]
 pub struct AdminService {
-    admin_password: String,
+    admin_password: Option<String>,
     sessions: Arc<RwLock<HashMap<String, Instant>>>,
+    failed_attempts: Arc<RwLock<HashMap<String, (u32, Instant)>>>,
 }
 
 impl Default for AdminService {
@@ -52,33 +100,104 @@ impl Default for AdminService {
 }
 
 impl AdminService {
+    /// Validates password strength: at least 8 characters, disallows trivial defaults.
+    pub fn is_strong_password(pass: &str) -> bool {
+        let trimmed = pass.trim();
+        if trimmed.len() < 8 {
+            return false;
+        }
+        let lower = trimmed.to_lowercase();
+        let weak_list = [
+            "password",
+            "12345678",
+            "123456789",
+            "admin123",
+            "administrator",
+            "root1234",
+        ];
+        if weak_list.contains(&lower.as_str()) {
+            return false;
+        }
+        true
+    }
+
     pub fn from_env() -> Result<Self, String> {
         let pass = std::env::var("ADMIN_PASSWORD")
-            .map_err(|_| "ADMIN_PASSWORD environment variable is required but not set".to_string())?;
+            .map_err(|_| "ADMIN_PASSWORD environment variable is not set".to_string())?;
         let trimmed = pass.trim();
-        if trimmed.is_empty() {
-            return Err("ADMIN_PASSWORD environment variable cannot be empty".to_string());
+        if !Self::is_strong_password(trimmed) {
+            return Err("ADMIN_PASSWORD is too weak (must be at least 8 characters and not a trivial dictionary word)".to_string());
         }
         Ok(Self::with_password(trimmed))
     }
 
     pub fn new() -> Self {
-        let admin_password = std::env::var("ADMIN_PASSWORD").unwrap_or_default();
-        Self::with_password(admin_password)
+        match Self::from_env() {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("⚠️ AdminService: {}. Failing securely: admin authentication is disabled.", e);
+                Self {
+                    admin_password: None,
+                    sessions: Arc::new(RwLock::new(HashMap::new())),
+                    failed_attempts: Arc::new(RwLock::new(HashMap::new())),
+                }
+            }
+        }
     }
 
     pub fn with_password(password: impl Into<String>) -> Self {
+        let pass = password.into();
+        let trimmed = pass.trim();
+        let admin_password = if Self::is_strong_password(trimmed) {
+            Some(trimmed.to_string())
+        } else {
+            warn!("⚠️ Weak password provided to AdminService::with_password; failing securely.");
+            None
+        };
         Self {
-            admin_password: password.into(),
+            admin_password,
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            failed_attempts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn verify_password(&self, password: &str) -> bool {
-        if self.admin_password.is_empty() {
-            return false;
+        match &self.admin_password {
+            Some(admin_pw) if !admin_pw.is_empty() && !password.is_empty() => {
+                constant_time_eq_str(admin_pw, password)
+            }
+            _ => false,
         }
-        self.admin_password == password
+    }
+
+    pub fn is_login_rate_limited(&self, client_id: &str) -> bool {
+        let attempts = self.failed_attempts.read().unwrap();
+        if let Some(&(count, last_attempt)) = attempts.get(client_id) {
+            if count >= MAX_FAILED_ATTEMPTS {
+                if last_attempt.elapsed() < LOCKOUT_DURATION {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn record_failed_attempt(&self, client_id: &str) -> u32 {
+        let mut attempts = self.failed_attempts.write().unwrap();
+        let now = Instant::now();
+        attempts.retain(|_, (_, time)| time.elapsed() < LOCKOUT_DURATION);
+        let entry = attempts.entry(client_id.to_string()).or_insert((0, now));
+        if entry.1.elapsed() >= LOCKOUT_DURATION {
+            entry.0 = 0;
+        }
+        entry.0 += 1;
+        entry.1 = now;
+        entry.0
+    }
+
+    pub fn reset_failed_attempts(&self, client_id: &str) {
+        let mut attempts = self.failed_attempts.write().unwrap();
+        attempts.remove(client_id);
     }
 
     pub fn create_session(&self) -> String {
@@ -94,15 +213,26 @@ impl AdminService {
 
     pub fn invalidate_session(&self, token: &str) -> bool {
         let mut sessions = self.sessions.write().unwrap();
-        sessions.remove(token.trim()).is_some()
+        let token = token.trim();
+        let key_to_remove = sessions
+            .keys()
+            .find(|k| constant_time_eq_str(k, token))
+            .cloned();
+        if let Some(k) = key_to_remove {
+            sessions.remove(&k).is_some()
+        } else {
+            false
+        }
     }
 
     pub fn is_authenticated(&self, headers: &HeaderMap) -> bool {
         // 1. Check X-Admin-Key
         if let Some(key_header) = headers.get("X-Admin-Key") {
             if let Ok(key) = key_header.to_str() {
-                if !self.admin_password.is_empty() && key == self.admin_password {
-                    return true;
+                if let Some(ref admin_pw) = self.admin_password {
+                    if !admin_pw.is_empty() && constant_time_eq_str(admin_pw, key) {
+                        return true;
+                    }
                 }
             }
         }
@@ -111,11 +241,15 @@ impl AdminService {
         if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    let token = token.trim();
                     let now = Instant::now();
                     let sessions = self.sessions.read().unwrap();
-                    if let Some(&expires_at) = sessions.get(token.trim()) {
-                        if expires_at > now {
-                            return true;
+                    for (valid_token, &expires_at) in sessions.iter() {
+                        if constant_time_eq_str(valid_token, token) {
+                            if expires_at > now {
+                                return true;
+                            }
+                            break;
                         }
                     }
                 }
@@ -141,9 +275,26 @@ pub struct LoginResponse {
 
 pub async fn admin_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Response {
+    let client_ip = extract_client_ip(&headers);
+    if state.admin.is_login_rate_limited(&client_ip) {
+        warn!("🚫 Admin login throttled: too many failed attempts for client {}", client_ip);
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(axum::http::header::RETRY_AFTER, "900")],
+            Json(LoginResponse {
+                success: false,
+                token: None,
+                message: "Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút.".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
     if state.admin.verify_password(&payload.password) {
+        state.admin.reset_failed_attempts(&client_ip);
         let token = state.admin.create_session();
         info!("🔑 Admin login successful. Token created.");
         (
@@ -156,7 +307,8 @@ pub async fn admin_login(
         )
             .into_response()
     } else {
-        warn!("🚫 Admin login failed: invalid password attempt");
+        let attempts = state.admin.record_failed_attempt(&client_ip);
+        warn!("🚫 Admin login failed: invalid password attempt ({}/{} attempts) from client {}", attempts, MAX_FAILED_ATTEMPTS, client_ip);
         (
             StatusCode::UNAUTHORIZED,
             Json(LoginResponse {
@@ -675,10 +827,41 @@ mod tests {
         std::env::set_var("ADMIN_PASSWORD", "   ");
         assert!(AdminService::from_env().is_err());
 
+        // Weak passwords must fail
+        std::env::set_var("ADMIN_PASSWORD", "admin123");
+        assert!(AdminService::from_env().is_err());
+        std::env::set_var("ADMIN_PASSWORD", "short");
+        assert!(AdminService::from_env().is_err());
+
         std::env::set_var("ADMIN_PASSWORD", "super_secret_env_password");
         let admin = AdminService::from_env().unwrap();
         assert!(admin.verify_password("super_secret_env_password"));
         std::env::remove_var("ADMIN_PASSWORD");
+    }
+
+    #[test]
+    fn test_admin_rate_limiting_and_strength() {
+        assert!(AdminService::is_strong_password("a_strong_password_123"));
+        assert!(!AdminService::is_strong_password("12345678"));
+        assert!(!AdminService::is_strong_password("password"));
+        assert!(!AdminService::is_strong_password("short"));
+
+        let admin = AdminService::with_password("my-secret-pw");
+        let client_ip = "192.168.1.100";
+        assert!(!admin.is_login_rate_limited(client_ip));
+
+        for i in 1..=4 {
+            assert_eq!(admin.record_failed_attempt(client_ip), i);
+            assert!(!admin.is_login_rate_limited(client_ip));
+        }
+
+        // 5th attempt triggers lockout
+        assert_eq!(admin.record_failed_attempt(client_ip), 5);
+        assert!(admin.is_login_rate_limited(client_ip));
+
+        // Reset clears lockout
+        admin.reset_failed_attempts(client_ip);
+        assert!(!admin.is_login_rate_limited(client_ip));
     }
 
     #[test]

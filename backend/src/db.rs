@@ -20,6 +20,7 @@ impl Database {
             }
         }
         let conn = Connection::open(p)?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -29,6 +30,7 @@ impl Database {
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -67,10 +69,11 @@ impl Database {
             rows.filter_map(Result::ok).collect()
         };
 
-        // Migration 1: Base schema (movies, episodes, home_cache, indexes)
+        // Migration 1: Base schema (movies, episodes, home_cache, playlist_cache, indexes)
         if !applied_versions.contains(&1) {
             conn.execute_batch(
                 r#"
+                PRAGMA busy_timeout = 5000;
                 PRAGMA journal_mode = WAL;
                 PRAGMA synchronous = NORMAL;
 
@@ -115,7 +118,6 @@ impl Database {
                     FOREIGN KEY (movie_slug) REFERENCES movies(slug) ON DELETE CASCADE
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_movies_slug ON movies(slug);
                 CREATE INDEX IF NOT EXISTS idx_movies_type ON movies(movie_type);
                 CREATE INDEX IF NOT EXISTS idx_episodes_movie ON episodes(movie_slug);
 
@@ -124,6 +126,15 @@ impl Database {
                     data_json TEXT NOT NULL,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS playlist_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    playlist_content TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_playlist_cache_expires ON playlist_cache(expires_at);
                 "#,
             )?;
             conn.execute(
@@ -188,7 +199,108 @@ impl Database {
             info!("Applied schema migration 2: extra_json_columns");
         }
 
+        // Migration 3: Add playlist_cache table and cleanup redundant index
+        if !applied_versions.contains(&3) {
+            conn.execute_batch(
+                r#"
+                DROP INDEX IF EXISTS idx_movies_slug;
+
+                CREATE TABLE IF NOT EXISTS playlist_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    playlist_content TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_playlist_cache_expires ON playlist_cache(expires_at);
+                "#,
+            )?;
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (3, 'playlist_cache_and_index_cleanup')",
+                [],
+            )?;
+            info!("Applied schema migration 3: playlist_cache_and_index_cleanup");
+        }
+
         Ok(())
+    }
+
+    pub fn get_playlist_cache(&self, cache_key: &str) -> anyhow::Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let mut stmt = conn.prepare(
+            "SELECT playlist_content FROM playlist_cache WHERE cache_key = ?1 AND expires_at > ?2",
+        )?;
+        let mut rows = stmt.query(params![cache_key, now])?;
+        if let Some(row) = rows.next()? {
+            let content: String = row.get(0)?;
+            return Ok(Some(content));
+        }
+        Ok(None)
+    }
+
+    pub fn save_playlist_cache(&self, cache_key: &str, content: &str, ttl_secs: u64) -> anyhow::Result<()> {
+        let ttl = if ttl_secs == 0 { 24 * 3600 } else { ttl_secs };
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let expires_at = (now + ttl) as i64;
+
+        conn.execute(
+            r#"
+            INSERT INTO playlist_cache (cache_key, playlist_content, expires_at, updated_at)
+            VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                playlist_content = excluded.playlist_content,
+                expires_at = excluded.expires_at,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            params![cache_key, content, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn cleanup_expired_playlist_cache(&self) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let count = conn.execute(
+            "DELETE FROM playlist_cache WHERE expires_at < ?1",
+            params![now],
+        )?;
+        Ok(count)
+    }
+
+    pub fn start_cleanup_task(&self, playlist_cache: Option<crate::playlist_cache::PlaylistCacheService>) {
+        let db = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                match db.cleanup_expired_playlist_cache() {
+                    Ok(deleted) => {
+                        if deleted > 0 {
+                            info!("🧹 Purged {} expired playlist cache entries from SQLite", deleted);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to cleanup expired playlist cache from SQLite: {}", e);
+                    }
+                }
+                if let Some(ref cache) = playlist_cache {
+                    cache.prune_memory_cache(std::time::Duration::from_secs(24 * 3600));
+                }
+            }
+        });
     }
 
     pub fn seed_from_file<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<usize> {
@@ -1320,11 +1432,13 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
 
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].0, 1);
         assert_eq!(rows[0].1, "base_schema");
         assert_eq!(rows[1].0, 2);
         assert_eq!(rows[1].1, "extra_json_columns");
+        assert_eq!(rows[2].0, 3);
+        assert_eq!(rows[2].1, "playlist_cache_and_index_cleanup");
 
         // 2. Verify all expected columns exist in movies
         let movie_cols = Database::get_column_names(&conn, "movies").unwrap();
@@ -1338,5 +1452,34 @@ mod tests {
         assert!(ep_cols.contains(&"servers_json".to_string()));
         assert!(ep_cols.contains(&"subtitles_json".to_string()));
         assert!(ep_cols.contains(&"audio_tracks_json".to_string()));
+    }
+
+    #[test]
+    fn test_playlist_cache_cleanup_and_expiry() {
+        let db = Database::new_in_memory().unwrap();
+
+        // 1. Save an active playlist and an expired playlist
+        db.save_playlist_cache("active_key", "playlist content active", 3600).unwrap();
+        db.save_playlist_cache("expired_key", "playlist content expired", 0).unwrap();
+
+        // Manually adjust expired_key timestamp to be in the past
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE playlist_cache SET expires_at = 1 WHERE cache_key = 'expired_key'",
+                [],
+            ).unwrap();
+        }
+
+        // 2. Active should be retrieved, expired should not be retrieved
+        assert!(db.get_playlist_cache("active_key").unwrap().is_some());
+        assert!(db.get_playlist_cache("expired_key").unwrap().is_none());
+
+        // 3. Cleanup should delete the expired entry
+        let deleted = db.cleanup_expired_playlist_cache().unwrap();
+        assert_eq!(deleted, 1);
+
+        // 4. Active should still be in the database
+        assert!(db.get_playlist_cache("active_key").unwrap().is_some());
     }
 }
