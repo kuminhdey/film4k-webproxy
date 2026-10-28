@@ -200,6 +200,9 @@ export interface AudioTrackOption {
   id: number;
   name: string;
   lang?: string;
+  channels?: string | number;
+  codec?: string;
+  isSupported?: boolean;
 }
 
 export interface HlsSubtitleTrackOption {
@@ -228,6 +231,107 @@ const isVietnameseAudio = (name: string, lang?: string) => {
     n.includes('thuyet minh') ||
     n.includes('long tieng')
   );
+};
+
+export const isAudioTrackBrowserSupported = (
+  trackName: string,
+  channels?: string | number,
+  codec?: string
+): boolean => {
+  if (typeof window === 'undefined' || !window.MediaSource) {
+    return true;
+  }
+
+  const nameLower = (trackName || '').toLowerCase();
+  const codecLower = (codec || '').toLowerCase();
+  const channelsStr = String(channels || '').trim();
+
+  // 1. Dolby AC-3 / E-AC-3 check:
+  // Browsers without Dolby Audio license (Chrome/Firefox MSE on Windows/Linux/Mac) fail on AC3/EAC3
+  const isAc3 =
+    nameLower.includes('ac3') ||
+    nameLower.includes('ac-3') ||
+    nameLower.includes('eac3') ||
+    nameLower.includes('ec-3') ||
+    codecLower.includes('ac-3') ||
+    codecLower.includes('ec-3');
+
+  if (isAc3) {
+    try {
+      const canAc3 =
+        MediaSource.isTypeSupported('audio/mp4; codecs="ac-3"') ||
+        MediaSource.isTypeSupported('audio/mp4; codecs="ec-3"');
+      if (!canAc3) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  // 2. 8-channel (7.1) AAC check:
+  // In Chrome/Edge/Firefox MSE, appending 8ch AAC init segments / buffers triggers audio SourceBuffer error
+  const is8ch =
+    channelsStr === '8' ||
+    channelsStr === '7.1' ||
+    nameLower.includes('8ch') ||
+    nameLower.includes('7.1');
+
+  if (is8ch) {
+    return false;
+  }
+
+  return true;
+};
+
+export const selectBestAudioTrack = (
+  rawTracks: any[],
+  savedAudioPref?: string | null
+): number => {
+  if (!rawTracks || rawTracks.length === 0) return 0;
+
+  const scored = rawTracks.map((tr, index) => {
+    const id = typeof tr.id === 'number' ? tr.id : index;
+    const name = tr.name || tr.lang || `Audio ${index + 1}`;
+    const lang = tr.lang || '';
+    const channels = tr.attrs?.CHANNELS || tr.channels;
+    const codec = tr.codec || tr.attrs?.CODECS;
+    const isSupported = isAudioTrackBrowserSupported(name, channels, codec);
+    const isVi = isVietnameseAudio(name, lang);
+    const isStereo =
+      String(channels) === '2' ||
+      name.toLowerCase().includes('stereo') ||
+      name.toLowerCase().includes('2ch') ||
+      (!name.toLowerCase().includes('8ch') &&
+        !name.toLowerCase().includes('6ch') &&
+        !name.toLowerCase().includes('5.1') &&
+        !name.toLowerCase().includes('7.1'));
+
+    let score = 0;
+    if (isSupported) {
+      score += 1000;
+    } else {
+      score -= 5000;
+    }
+
+    // Match saved user preference if supported
+    if (savedAudioPref && isSupported) {
+      if (name === savedAudioPref || String(id) === savedAudioPref) {
+        score += 500;
+      }
+    }
+
+    // Prefer Vietnamese audio
+    if (isVi) {
+      score += 200;
+      if (isStereo) score += 100;
+    } else {
+      if (isStereo) score += 50;
+    }
+
+    return { id, score, isSupported, name };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.id ?? 0;
 };
 
 const isVietnameseSubtitle = (name: string, lang?: string) => {
@@ -1934,29 +2038,28 @@ function parseEpisodeNum(slug?: string, name?: string): number {
             setCurrentLevel(-1);
           }
 
-          // 2. Expose audio tracks from the master manifest & restore / default to Vietnamese
+          // 2. Expose audio tracks from the master manifest & restore / default to compatible Vietnamese
           const rawAudios = (hls.audioTracks && hls.audioTracks.length > 0) ? hls.audioTracks : [];
-          const parsedAudios: AudioTrackOption[] = rawAudios.map((tr, idx) => ({
-            id: typeof tr.id === 'number' ? tr.id : idx,
-            name: tr.name || tr.lang || `Audio ${idx + 1}`,
-            lang: tr.lang,
-          }));
+          const parsedAudios: AudioTrackOption[] = rawAudios.map((tr: any, idx: number) => {
+            const id = typeof tr.id === 'number' ? tr.id : idx;
+            const name = tr.name || tr.lang || `Audio ${idx + 1}`;
+            const channels = tr.attrs?.CHANNELS || tr.channels;
+            const codec = tr.codec || tr.attrs?.CODECS;
+            const isSupported = isAudioTrackBrowserSupported(name, channels, codec);
+            return {
+              id,
+              name,
+              lang: tr.lang,
+              channels,
+              codec,
+              isSupported,
+            };
+          });
           setAudioTracks(parsedAudios);
 
           if (parsedAudios.length > 0) {
             const savedAudio = localStorage.getItem('bofilm_player_audio');
-            let chosenId = -1;
-            if (savedAudio) {
-              const match = parsedAudios.find(
-                (a) => a.name === savedAudio || String(a.id) === savedAudio
-              );
-              if (match) chosenId = match.id;
-            }
-            if (chosenId === -1) {
-              // Default to Vietnamese audio if present
-              const viTrack = parsedAudios.find((a) => isVietnameseAudio(a.name, a.lang));
-              chosenId = viTrack ? viTrack.id : parsedAudios[0].id;
-            }
+            const chosenId = selectBestAudioTrack(rawAudios, savedAudio);
             hls.audioTrack = chosenId;
             setCurrentAudioTrack(chosenId);
           } else {
@@ -2019,13 +2122,38 @@ function parseEpisodeNum(slug?: string, name?: string): number {
 
         hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event: any, data: any) => {
           if (data.audioTracks && data.audioTracks.length > 0) {
-            const parsedAudios: AudioTrackOption[] = data.audioTracks.map((tr: any, idx: number) => ({
-              id: typeof tr.id === 'number' ? tr.id : idx,
-              name: tr.name || tr.lang || `Audio ${idx + 1}`,
-              lang: tr.lang,
-            }));
+            const parsedAudios: AudioTrackOption[] = data.audioTracks.map((tr: any, idx: number) => {
+              const id = typeof tr.id === 'number' ? tr.id : idx;
+              const name = tr.name || tr.lang || `Audio ${idx + 1}`;
+              const channels = tr.attrs?.CHANNELS || tr.channels;
+              const codec = tr.codec || tr.attrs?.CODECS;
+              const isSupported = isAudioTrackBrowserSupported(name, channels, codec);
+              return {
+                id,
+                name,
+                lang: tr.lang,
+                channels,
+                codec,
+                isSupported,
+              };
+            });
             setAudioTracks(parsedAudios);
-            if (hls.audioTrack >= 0) {
+
+            // Check if current selected track is supported
+            const currentTrackObj = data.audioTracks[hls.audioTrack];
+            const isCurrentSupported = currentTrackObj
+              ? isAudioTrackBrowserSupported(
+                  currentTrackObj.name || '',
+                  currentTrackObj.attrs?.CHANNELS || currentTrackObj.channels,
+                  currentTrackObj.codec || currentTrackObj.attrs?.CODECS
+                )
+              : true;
+
+            if (!isCurrentSupported || hls.audioTrack < 0) {
+              const bestId = selectBestAudioTrack(data.audioTracks, localStorage.getItem('bofilm_player_audio'));
+              hls.audioTrack = bestId;
+              setCurrentAudioTrack(bestId);
+            } else if (hls.audioTrack >= 0) {
               setCurrentAudioTrack(hls.audioTrack);
             }
           }
@@ -2078,6 +2206,18 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                 }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
+                if (data.details === 'bufferAppendError' && hls.audioTracks && hls.audioTracks.length > 1) {
+                  const bestFallback = selectBestAudioTrack(hls.audioTracks, null);
+                  if (bestFallback !== hls.audioTrack) {
+                    console.warn(
+                      `[VideoPlayer] bufferAppendError on audio track ${hls.audioTrack}, recovering with track ${bestFallback}`
+                    );
+                    hls.audioTrack = bestFallback;
+                    setCurrentAudioTrack(bestFallback);
+                    hls.recoverMediaError();
+                    break;
+                  }
+                }
                 if (mediaRecoveryCountRef.current < 2) {
                   mediaRecoveryCountRef.current += 1;
                   hls.recoverMediaError();
@@ -3909,16 +4049,26 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                                     <button
                                       key={tr.id}
                                       type="button"
-                                      onClick={() => handleAudioSelect(tr.id)}
-                                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
-                                        currentAudioTrack === tr.id
-                                          ? 'bg-lime-500 text-black shadow-md font-extrabold'
-                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
+                                      disabled={tr.isSupported === false}
+                                      onClick={() => tr.isSupported !== false && handleAudioSelect(tr.id)}
+                                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all flex items-center justify-between gap-2 ${
+                                        tr.isSupported === false
+                                          ? 'opacity-40 cursor-not-allowed text-[#8aa885]'
+                                          : currentAudioTrack === tr.id
+                                          ? 'bg-lime-500 text-black shadow-md font-extrabold cursor-pointer'
+                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white cursor-pointer'
                                       }`}
                                     >
-                                      <span>{tr.name}</span>
+                                      <div className="flex items-center gap-1.5 truncate min-w-0">
+                                        <span className="truncate">{tr.name}</span>
+                                        {tr.isSupported === false && (
+                                          <span className="text-[9px] px-1 py-0.5 rounded bg-red-500/20 text-red-400 font-normal flex-shrink-0">
+                                            Không hỗ trợ
+                                          </span>
+                                        )}
+                                      </div>
                                       {currentAudioTrack === tr.id && (
-                                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                        <Check className="w-3.5 h-3.5 stroke-[3] flex-shrink-0" />
                                       )}
                                     </button>
                                   ))}

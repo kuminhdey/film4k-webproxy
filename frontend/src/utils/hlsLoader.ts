@@ -46,23 +46,33 @@ export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
       bytes[offset + 7] === 68
     ) {
       // Clean video media payload starts right after IEND chunk.
-      // Check if MPEG-TS sync byte 0x47 is at or near chunkEnd.
+      // chunkEnd is the exact end of the PNG stream (IEND chunk + 4-byte CRC).
+      // Both fMP4 (ftyp, styp, moof, moov) and MPEG-TS (0x47) payloads begin immediately at chunkEnd.
       if (chunkEnd < bytes.length) {
-        if (bytes[chunkEnd] === 0x47) {
-          return buffer.slice(chunkEnd);
-        }
-        for (let j = chunkEnd; j < Math.min(chunkEnd + 64, bytes.length); j++) {
-          if (bytes[j] === 0x47) {
-            return buffer.slice(j);
-          }
-        }
         return buffer.slice(chunkEnd);
       }
     }
     offset = chunkEnd;
   }
 
-  // Second method: Search for MPEG-TS sync byte 0x47 (71)
+  // Second method: Search for fMP4 box header (ftyp, styp, moof, moov) in first 512 bytes
+  // if the fake PNG header lacks a standard IEND chunk structure.
+  for (let i = PNG_SIG.length; i + 8 <= Math.min(bytes.length, 512); i++) {
+    const t0 = bytes[i + 4];
+    const t1 = bytes[i + 5];
+    const t2 = bytes[i + 6];
+    const t3 = bytes[i + 7];
+    if (
+      (t0 === 102 && t1 === 116 && t2 === 121 && t3 === 112) || // ftyp
+      (t0 === 115 && t1 === 116 && t2 === 121 && t3 === 112) || // styp
+      (t0 === 109 && t1 === 111 && t2 === 111 && t3 === 102) || // moof
+      (t0 === 109 && t1 === 111 && t2 === 111 && t3 === 118)    // moov
+    ) {
+      return buffer.slice(i);
+    }
+  }
+
+  // Third method: Search for MPEG-TS sync byte 0x47 (71)
   // If the stream server injects a fake PNG header without clean IEND chunk structure,
   // scan after the PNG signature for the first 0x47 sync byte that repeats with 188-byte TS packet spacing.
   for (let i = PNG_SIG.length; i < bytes.length; i++) {
