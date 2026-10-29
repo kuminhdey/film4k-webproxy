@@ -242,21 +242,32 @@ export const isAudioTrackBrowserSupported = (
     return true;
   }
 
-  const nameLower = (trackName || '').toLowerCase();
   const codecLower = (codec || '').toLowerCase();
   const channelsStr = String(channels || '').trim();
 
-  // 1. Dolby AC-3 / E-AC-3 check:
-  // Browsers without Dolby Audio license (Chrome/Firefox MSE on Windows/Linux/Mac) fail on AC3/EAC3
-  const isAc3 =
-    nameLower.includes('ac3') ||
-    nameLower.includes('ac-3') ||
-    nameLower.includes('eac3') ||
-    nameLower.includes('ec-3') ||
-    codecLower.includes('ac-3') ||
-    codecLower.includes('ec-3');
+  // 1. If channels attribute is 1 or 2 (stereo/mono) or codec is AAC (mp4a),
+  // it is universally supported by all modern browsers (Chrome, Firefox, Safari, Edge).
+  // Note: Stream titles often preserve original Blu-ray disc rip names (e.g. "Dolby Atmos 7.1", "AC3 2.0")
+  // even though the packager transcoded them into standard 2-channel AAC for web streaming.
+  if (
+    channelsStr === '1' ||
+    channelsStr === '2' ||
+    codecLower.startsWith('mp4a') ||
+    codecLower.includes('mp4a.40.2') ||
+    codecLower.includes('mp4a.40.5')
+  ) {
+    return true;
+  }
 
-  if (isAc3) {
+  // 2. Dolby AC-3 / E-AC-3 stream check:
+  // Only trigger when the actual manifest codec explicitly specifies ac-3 or ec-3
+  const isAc3Codec =
+    codecLower.includes('ac-3') ||
+    codecLower.includes('ec-3') ||
+    codecLower.includes('ac3') ||
+    codecLower.includes('eac3');
+
+  if (isAc3Codec) {
     try {
       const canAc3 =
         MediaSource.isTypeSupported('audio/mp4; codecs="ac-3"') ||
@@ -267,16 +278,15 @@ export const isAudioTrackBrowserSupported = (
     }
   }
 
-  // 2. 8-channel (7.1) AAC check:
-  // In Chrome/Edge/Firefox MSE, appending 8ch AAC init segments / buffers triggers audio SourceBuffer error
-  const is8ch =
-    channelsStr === '8' ||
-    channelsStr === '7.1' ||
-    nameLower.includes('8ch') ||
-    nameLower.includes('7.1');
-
-  if (is8ch) {
-    return false;
+  // 3. True 8-channel (7.1) audio check (only when the manifest channels attribute is actually '8'):
+  if (channelsStr === '8') {
+    try {
+      if (!MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"')) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
   }
 
   return true;
@@ -4049,21 +4059,18 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                                     <button
                                       key={tr.id}
                                       type="button"
-                                      disabled={tr.isSupported === false}
-                                      onClick={() => tr.isSupported !== false && handleAudioSelect(tr.id)}
-                                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all flex items-center justify-between gap-2 ${
-                                        tr.isSupported === false
-                                          ? 'opacity-40 cursor-not-allowed text-[#8aa885]'
-                                          : currentAudioTrack === tr.id
-                                          ? 'bg-lime-500 text-black shadow-md font-extrabold cursor-pointer'
-                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white cursor-pointer'
+                                      onClick={() => handleAudioSelect(tr.id)}
+                                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                        currentAudioTrack === tr.id
+                                          ? 'bg-lime-500 text-black shadow-md font-extrabold'
+                                          : 'text-[#cbe1c8] hover:bg-white/10 hover:text-white'
                                       }`}
                                     >
                                       <div className="flex items-center gap-1.5 truncate min-w-0">
                                         <span className="truncate">{tr.name}</span>
                                         {tr.isSupported === false && (
-                                          <span className="text-[9px] px-1 py-0.5 rounded bg-red-500/20 text-red-400 font-normal flex-shrink-0">
-                                            Không hỗ trợ
+                                          <span className="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-normal flex-shrink-0">
+                                            Có thể không hỗ trợ
                                           </span>
                                         )}
                                       </div>
