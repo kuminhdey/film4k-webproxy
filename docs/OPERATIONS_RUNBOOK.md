@@ -286,8 +286,13 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) enforces the following 
 ### 6.2 In-Repo Alerts vs External Alert Limits
 - **Repo-Configurable:**
   - GitHub Actions Step Summary table.
-  - Optional webhook dispatch to Slack/Discord/PagerDuty via repository secret `ALERT_WEBHOOK_URL`.
+  - Optional webhook dispatch using a Slack-compatible JSON `{ "text": "..." }` endpoint via repository secret `ALERT_WEBHOOK_URL`.
+- **Host runtime alerts:** `ops/systemd/webproxy-runtime-alerts.timer` runs a local readiness and crawler-freshness check every five minutes. It alerts when `/health/ready` is not ready, the crawler has not completed a run for 26 hours, or no completed crawler run appears within the initial two-hour grace period. It sends one alert per issue and retries failed or unconfigured deliveries.
+  1. Create `/etc/webproxy-runtime-alerts.env` on `oci-sg-2` with `ALERT_WEBHOOK_URL=<Slack-compatible webhook URL>` using a secure editor; set mode `0600` and do not put the URL in shell history, command arguments, or logs.
+  2. Copy the checked-out release's `scripts/runtime_alert_monitor.py`, `scripts/install_runtime_alerts.sh`, and `ops/systemd/` files to the host, then run `sudo bash scripts/install_runtime_alerts.sh` from the release checkout.
+  3. Verify with `systemctl list-timers webproxy-runtime-alerts.timer`, `systemctl status webproxy-runtime-alerts.service`, and `journalctl -u webproxy-runtime-alerts.service`. A healthy check confirms local monitoring only; verify actual webhook receipt before declaring alert delivery operational.
+  4. To update the webhook endpoint later, edit the root-only environment file and run `sudo systemctl start webproxy-runtime-alerts.service` to test delivery.
 - **Remaining External Monitoring Limits:**
   1. **Blackbox / Synthetic Uptime Probes:** If the host machine loses network connectivity, the Docker daemon crashes, or the server loses power, internal container healthchecks and GitHub Actions cannot fire alerts. An external monitoring probe (e.g. UptimeRobot, Datadog Synthetic, BetterStack, or Prometheus Blackbox Exporter) must ping `http://<your-host>:8090/health/live` every 60 seconds.
-  2. **Crawler Lag & Scheduler Heartbeats:** If upstream API structures change and the crawler fails to ingest new titles, the service remains healthy while data goes stale. SREs should monitor the newest `created_at` timestamp in `movies` or configure an external dead-man's switch / heartbeat webhook for the crawler job.
+  2. **Crawler Lag & Scheduler Heartbeats:** The host timer monitors the crawler's last completed run, but it does not confirm that newly crawled data is semantically correct. If upstream API structures change, also monitor ingestion results and data freshness.
   3. **Repository Secret Ingestion:** The CI notification step degrades gracefully to native GitHub notifications if `ALERT_WEBHOOK_URL` is omitted. SREs must configure this secret in GitHub repo settings (`Settings -> Secrets and variables -> Actions`) to enable real-time chat alerts.

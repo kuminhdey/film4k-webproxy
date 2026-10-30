@@ -232,8 +232,7 @@ jobs:
           }
           EOF
             )
-            curl -s -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$ALERT_WEBHOOK_URL" || true
-            echo "Alert payload dispatched."
+            ./scripts/send_ci_failure_alert.sh "$ALERT_WEBHOOK_URL" "$PAYLOAD"
           else
             echo "No ALERT_WEBHOOK_URL secret configured in repository settings."
             echo "Alerting defaults to GitHub native notifications (email / web UI / PR annotations)."

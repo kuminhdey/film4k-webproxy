@@ -192,6 +192,16 @@ if [[ "$HTTP_ERROR_OUTPUT" == *"HTTP 503"* && "$HTTP_ERROR_OUTPUT" != *"accepted
 NETWORK_ERROR_OUTPUT=$(PATH="$MOCK_BIN:$PATH" MOCK_CURL_HTTP_STATUS=000 MOCK_CURL_EXIT=7 bash "${SCRIPT_DIR}/send_ci_failure_alert.sh" https://webhook.invalid payload)
 if [[ "$NETWORK_ERROR_OUTPUT" == *"request failed"* && "$NETWORK_ERROR_OUTPUT" != *"accepted the payload"* ]]; then pass "Network failure is reported as unconfirmed delivery."; else fail "Network failure was incorrectly reported as accepted."; fi
 
+# ------------------------------------------------------------------------------
+# Test 7: Runtime readiness and crawler freshness alert logic.
+# ------------------------------------------------------------------------------
+log_test "Test 7: Runtime alert monitor state and delivery behavior"
+if python3 "${SCRIPT_DIR}/test_runtime_alert_monitor.py"; then
+    pass "Runtime readiness, crawler lag, webhook, and state tests passed."
+else
+    fail "Runtime alert monitor tests failed."
+fi
+
 # Final Test Summary
 # ------------------------------------------------------------------------------
 printf "\n========================================\n"

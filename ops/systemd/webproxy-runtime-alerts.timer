@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Film4K Webproxy runtime health every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=webproxy-runtime-alerts.service
+
+[Install]
+WantedBy=timers.target
