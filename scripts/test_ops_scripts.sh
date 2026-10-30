@@ -175,6 +175,23 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# Test 6: CI webhook status messages follow real HTTP/network results.
+log_test "Test 6: CI webhook only claims confirmed 2xx delivery"
+MOCK_BIN="${TEST_DATA_DIR}/mock-bin"
+mkdir -p "$MOCK_BIN"
+cat > "$MOCK_BIN/curl" <<'MOCK_CURL'
+#!/usr/bin/env bash
+printf '%s' "${MOCK_CURL_HTTP_STATUS:-000}"
+exit "${MOCK_CURL_EXIT:-0}"
+MOCK_CURL
+chmod +x "$MOCK_BIN/curl"
+SUCCESS_OUTPUT=$(PATH="$MOCK_BIN:$PATH" MOCK_CURL_HTTP_STATUS=204 bash "${SCRIPT_DIR}/send_ci_failure_alert.sh" https://webhook.invalid payload)
+if [[ "$SUCCESS_OUTPUT" == *"accepted the payload (HTTP 204)"* ]]; then pass "2xx response is reported as accepted."; else fail "2xx response did not report acceptance."; fi
+HTTP_ERROR_OUTPUT=$(PATH="$MOCK_BIN:$PATH" MOCK_CURL_HTTP_STATUS=503 bash "${SCRIPT_DIR}/send_ci_failure_alert.sh" https://webhook.invalid payload)
+if [[ "$HTTP_ERROR_OUTPUT" == *"HTTP 503"* && "$HTTP_ERROR_OUTPUT" != *"accepted the payload"* ]]; then pass "HTTP 503 is reported as unconfirmed delivery."; else fail "HTTP 503 was incorrectly reported as accepted."; fi
+NETWORK_ERROR_OUTPUT=$(PATH="$MOCK_BIN:$PATH" MOCK_CURL_HTTP_STATUS=000 MOCK_CURL_EXIT=7 bash "${SCRIPT_DIR}/send_ci_failure_alert.sh" https://webhook.invalid payload)
+if [[ "$NETWORK_ERROR_OUTPUT" == *"request failed"* && "$NETWORK_ERROR_OUTPUT" != *"accepted the payload"* ]]; then pass "Network failure is reported as unconfirmed delivery."; else fail "Network failure was incorrectly reported as accepted."; fi
+
 # Final Test Summary
 # ------------------------------------------------------------------------------
 printf "\n========================================\n"

@@ -102,6 +102,8 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => query.trim() && setIsOpen(true)}
           onKeyDown={handleKeyDown}
+          role="combobox"
+          aria-autocomplete="list"
           placeholder="Tìm phim, diễn viên..."
           aria-label="Tìm kiếm phim hoặc diễn viên"
           aria-expanded={isOpen}
@@ -126,16 +128,19 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
 
       {/* Instant Suggestions Dropdown */}
       {isOpen && (
-        <div id="live-search-suggestions" className="absolute top-full right-0 mt-2 w-[340px] sm:w-[400px] md:w-[440px] max-w-[92vw] bg-[#081509] border border-lime-500/30 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.9)] overflow-hidden z-50 backdrop-blur-2xl max-h-[520px] overflow-y-auto">
+        <div className="absolute top-full right-0 mt-2 w-[340px] sm:w-[400px] md:w-[440px] max-w-[92vw] bg-[#081509] border border-lime-500/30 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.9)] overflow-hidden z-50 backdrop-blur-2xl max-h-[520px] overflow-y-auto">
           {suggestions.length > 0 ? (
             <div>
-              <div className="py-2 divide-y divide-lime-500/10">
+              <div id="live-search-suggestions" role="listbox" aria-label="Gợi ý tìm kiếm" className="py-2 divide-y divide-lime-500/10">
                 {suggestions.map((item, index) => (
-                  <button type="button"
+                  <div
+                    role="option"
+                    aria-selected={index === activeSuggestionIndex}
                     id={`live-search-option-${index}`}
                     key={item.slug}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => handleSelect(item.slug)}
-                    className={`flex w-full text-left items-center gap-3 px-3.5 py-2.5 hover:bg-lime-950/40 cursor-pointer transition-colors group focus-visible:ring-2 focus-visible:ring-lime-400 ${index === activeSuggestionIndex ? 'bg-lime-950/40' : ''}`}
+                    className={`flex w-full text-left items-center gap-3 px-3.5 py-2.5 hover:bg-lime-950/40 cursor-pointer transition-colors group ${index === activeSuggestionIndex ? 'bg-lime-950/40' : ''}`}
                   >
                     <div className="w-12 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-black/50 border border-lime-500/20">
                       {item.thumb_url ? (
@@ -180,7 +185,7 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
                         )}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
               <button type="button"
@@ -196,8 +201,8 @@ export default function LiveSearch({ onSelectMovie }: LiveSearchProps) {
               </button>
             </div>
           ) : !isLoading ? (
-            <div className="p-4 text-center text-xs text-[#8aa885]">
-              Không tìm thấy phim phù hợp với từ khóa
+            <div id="live-search-suggestions" role="listbox" aria-label="Gợi ý tìm kiếm" className="p-4 text-center text-xs text-[#8aa885]">
+              <div role="option" aria-disabled="true">Không tìm thấy phim phù hợp với từ khóa</div>
             </div>
           ) : null}
         </div>

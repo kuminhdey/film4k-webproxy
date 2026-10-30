@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     db::Database,
     proxy::{
-        add_security_headers, fetch_upstream_title_hls, is_cdn_segment, is_valid_remote_url,
+        add_security_headers, fetch_upstream_title_hls, fetch_upstream_title_hls_for_episode, is_cdn_segment, is_valid_remote_url,
         fetch_stream_with_referer, read_body_with_cap, resolve_relative_url,
         MAX_PLAYLIST_BYTES,
     },
@@ -153,7 +153,8 @@ impl PlaylistCache {
             let mut interval = tokio::time::interval(Duration::from_secs(3600));
             loop {
                 interval.tick().await;
-                match db.cleanup_expired_playlist_cache() {
+                let cleanup_db = db.clone();
+                match db.run_blocking(move || cleanup_db.cleanup_expired_playlist_cache()).await {
                     Ok(deleted) => {
                         if deleted > 0 {
                             info!("🧹 Purged {} expired playlist cache entries from SQLite", deleted);
@@ -640,9 +641,20 @@ impl PlaylistCache {
             )
         })?;
 
-        let (master_resp, final_master_url) = fetch_stream_with_referer(&master_url_parsed, None, 3, Some("https://fiml4k.fun/"))
+        let (mut master_resp, mut final_master_url) = fetch_stream_with_referer(&master_url_parsed, None, 3, Some("https://fiml4k.fun/"))
             .await
             .map_err(|(code, message)| (code, message.to_string()))?;
+
+        if master_resp.status() == StatusCode::FORBIDDEN {
+            if let Some(episode) = ep_num.filter(|number| *number > 0) {
+                let fresh_url = fetch_upstream_title_hls_for_episode(slug, episode).await
+                    .ok_or_else(|| (StatusCode::BAD_GATEWAY, format!("Could not refresh episode {} for slug '{}'", episode, slug)))?;
+                let fresh_parsed = is_valid_remote_url(&fresh_url)
+                    .map_err(|e| (StatusCode::FORBIDDEN, format!("Refreshed episode URL rejected by SSRF policy: {}", e)))?;
+                (master_resp, final_master_url) = fetch_stream_with_referer(&fresh_parsed, None, 3, Some("https://fiml4k.fun/"))
+                    .await.map_err(|(code, message)| (code, message.to_string()))?;
+            }
+        }
 
         if !master_resp.status().is_success() {
             return Err((

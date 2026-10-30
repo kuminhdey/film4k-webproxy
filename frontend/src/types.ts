@@ -172,8 +172,8 @@ export interface AdminStats {
   total_single: number;
   catalog_rows?: number;
   detail_rows?: number;
-  total_source_movies?: number;
-  remaining_movies?: number;
+  total_source_movies?: number | null;
+  remaining_movies?: number | null;
   cached_m3u8_count: number;
   crawler_is_running: boolean;
   crawler_auto_enabled?: boolean;

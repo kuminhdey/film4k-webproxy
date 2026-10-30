@@ -247,6 +247,14 @@ async fn spawn_test_server() -> (String, Database) {
     (format!("http://{}", addr), db)
 }
 
+async fn login_admin(client: &Client, base_url: &str) -> String {
+    let response = client.post(format!("{}/api/admin/login", base_url))
+        .json(&serde_json::json!({"password":"test-admin-secret-key-42"}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json::<serde_json::Value>().await.unwrap()["token"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
 async fn test_api_health() {
     let (base_url, _) = spawn_test_server().await;
@@ -483,7 +491,7 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
     let client = Client::new();
 
     // 1. SSRF rejection: localhost
-    let resp = client
+    let _resp = client
         .get(format!("{}/api/proxy/stream", base_url))
         .query(&[("url", "http://localhost:8090/api/health")])
         .send()
@@ -807,8 +815,31 @@ async fn test_admin_login_and_auth_middleware() {
     assert_eq!(stats_val["success"], true);
     assert!(stats_val["total_movies"].as_i64().unwrap() >= 2);
     assert!(stats_val["total_series"].as_i64().unwrap() >= 1);
+    assert_eq!(stats_val["catalog_rows"], stats_val["total_movies"]);
+    assert!(stats_val["total_source_movies"].is_null());
+    assert!(stats_val["remaining_movies"].is_null());
     assert!(stats_val["crawler_status"]["is_running"].is_boolean());
     assert!(stats_val["disk_usage"]["human_readable"].is_string());
+
+    let admin_movies = client.get(format!("{}/api/admin/movies?limit=5", base_url))
+        .bearer_auth(&token).send().await.unwrap();
+    assert_eq!(admin_movies.status(), StatusCode::OK);
+
+    let unauth_logs = client.get(format!("{}/api/admin/logs", base_url)).send().await.unwrap();
+    assert_eq!(unauth_logs.status(), StatusCode::UNAUTHORIZED);
+    let write_log = client.post(format!("{}/api/admin/logs", base_url))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token))
+        .json(&serde_json::json!({"level":"info","message":"contract test entry"})).send().await.unwrap();
+    assert_eq!(write_log.status(), StatusCode::NO_CONTENT);
+    let logs = client.get(format!("{}/api/admin/logs?limit=10", base_url))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token)).send().await.unwrap();
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_json: serde_json::Value = logs.json().await.unwrap();
+    assert_eq!(logs_json["logs"][0]["message"], "contract test entry");
+    let export = client.get(format!("{}/api/admin/logs/export", base_url))
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token)).send().await.unwrap();
+    assert_eq!(export.status(), StatusCode::OK);
+    assert!(export.text().await.unwrap().contains("contract test entry"));
 
     // 5. Test Server-Side Logout: Invalidate session
     let logout_resp = client
@@ -828,14 +859,14 @@ async fn test_admin_login_and_auth_middleware() {
         .unwrap();
     assert_eq!(post_logout_stats.status(), StatusCode::UNAUTHORIZED);
 
-    // 6. GET /api/admin/stats with X-Admin-Key header -> 200 OK
+    // Static raw passwords must not authenticate protected endpoints.
     let key_stats = client
         .get(format!("{}/api/admin/stats", base_url))
         .header("X-Admin-Key", "test-admin-secret-key-42")
         .send()
         .await
         .unwrap();
-    assert_eq!(key_stats.status(), StatusCode::OK);
+    assert_eq!(key_stats.status(), StatusCode::UNAUTHORIZED);
 
     // Old X-Admin-Key must fail
     let bad_key_stats = client
@@ -845,12 +876,23 @@ async fn test_admin_login_and_auth_middleware() {
         .await
         .unwrap();
     assert_eq!(bad_key_stats.status(), StatusCode::UNAUTHORIZED);
+
+    let no_session = client.get(format!("{}/api/admin/movies?search=Interstellar", base_url)).send().await.unwrap();
+    assert_eq!(no_session.status(), StatusCode::UNAUTHORIZED);
+    let admin_token = login_admin(&client, &base_url).await;
+    let movies = client.get(format!("{}/api/admin/movies?search=Interstellar&page=1&limit=5", base_url))
+        .bearer_auth(admin_token).send().await.unwrap();
+    assert_eq!(movies.status(), StatusCode::OK);
+    let movie_data: serde_json::Value = movies.json().await.unwrap();
+    assert_eq!(movie_data["total"], 1);
+    assert_eq!(movie_data["movies"][0]["slug"], "interstellar");
 }
 
 #[tokio::test]
 async fn test_admin_crawler_control_and_stop() {
     let (base_url, _) = spawn_test_server().await;
     let client = Client::new();
+    let token = login_admin(&client, &base_url).await;
 
     // 0. Verify unauthenticated /api/crawler/trigger is removed
     let removed_route_resp = client
@@ -872,7 +914,7 @@ async fn test_admin_crawler_control_and_stop() {
     // 2. Trigger crawler via X-Admin-Key
     let trigger_resp = client
         .post(format!("{}/api/admin/crawler/trigger", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "mode": "latest" }))
         .send()
         .await
@@ -884,7 +926,7 @@ async fn test_admin_crawler_control_and_stop() {
     // 3. Stop crawler via X-Admin-Key
     let stop_resp = client
         .post(format!("{}/api/admin/crawler/stop", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -895,7 +937,7 @@ async fn test_admin_crawler_control_and_stop() {
     // 4. Test frontend crawler start, update, warmup endpoints
     let start_resp = client
         .post(format!("{}/api/admin/crawler/start", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -905,13 +947,13 @@ async fn test_admin_crawler_control_and_stop() {
 
     let _ = client
         .post(format!("{}/api/admin/crawler/stop", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await;
 
     let update_resp = client
         .post(format!("{}/api/admin/crawler/update", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -919,13 +961,13 @@ async fn test_admin_crawler_control_and_stop() {
 
     let _ = client
         .post(format!("{}/api/admin/crawler/stop", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await;
 
     let warmup_resp = client
         .post(format!("{}/api/admin/crawler/warmup", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -936,11 +978,12 @@ async fn test_admin_crawler_control_and_stop() {
 async fn test_admin_cache_clear() {
     let (base_url, _) = spawn_test_server().await;
     let client = Client::new();
+    let token = login_admin(&client, &base_url).await;
 
     // Directory traversal rejection
     let traversal_resp = client
         .post(format!("{}/api/admin/cache/clear", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "slug": "../traversal_attack" }))
         .send()
         .await
@@ -956,7 +999,7 @@ async fn test_admin_cache_clear() {
     // 1. Clear specific slug cache
     let clear_slug_resp = client
         .post(format!("{}/api/admin/cache/clear", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "slug": "test-admin-clear" }))
         .send()
         .await
@@ -976,7 +1019,7 @@ async fn test_admin_cache_clear() {
 
     let clear_path_resp = client
         .post(format!("{}/api/admin/cache/clear/test-admin-path-clear", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap();
@@ -994,7 +1037,7 @@ async fn test_admin_cache_clear() {
 
     let clear_all_resp = client
         .post(format!("{}/api/admin/cache/clear", base_url))
-        .header("X-Admin-Key", "test-admin-secret-key-42")
+        .bearer_auth(&token)
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -1196,6 +1239,29 @@ async fn test_api_movies_multi_criteria_filtering() {
         .unwrap();
     let data_pd: MoviesResponse = resp_pd.json().await.unwrap();
     assert!(!data_pd.movies.is_empty());
+}
+
+#[tokio::test]
+async fn test_api_movies_localized_genre_and_catalog_slugs() {
+    let (base_url, db) = spawn_test_server().await;
+    let mut movie = db.get_movie_by_slug("breaking-bad").unwrap().unwrap();
+    movie.slug = "han-quoc-action-series".to_string();
+    movie.title_vi = Some("Phim Hành Động Hàn Quốc".to_string());
+    movie.genres = vec!["Hành Động".to_string()];
+    movie.country = Some("Hàn Quốc".to_string());
+    movie.movie_type = "tv".to_string();
+    db.upsert_movie(&movie).unwrap();
+
+    let client = Client::new();
+    let response = client.get(format!("{}/api/movies?genre=hanh-dong&country=han-quoc&category=phim-bo", base_url))
+        .send().await.unwrap();
+    let data: MoviesResponse = response.json().await.unwrap();
+    assert_eq!(data.total, 1);
+    assert_eq!(data.movies[0].slug, "han-quoc-action-series");
+
+    let single = client.get(format!("{}/api/movies?category=phim-le", base_url)).send().await.unwrap();
+    let singles: MoviesResponse = single.json().await.unwrap();
+    assert!(singles.movies.iter().all(|item| item.movie_type == "movie"));
 }
 
 #[tokio::test]

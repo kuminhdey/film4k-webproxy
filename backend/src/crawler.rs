@@ -36,6 +36,7 @@ pub struct CrawlerService {
     logs: Arc<Mutex<VecDeque<String>>>,
     stop_requested: Arc<AtomicBool>,
     home_cache: Arc<RwLock<Option<HomeResponse>>>,
+    scheduler_healthy: Arc<AtomicBool>,
 }
 
 struct CrawlerLeaseGuard {
@@ -46,7 +47,17 @@ struct CrawlerLeaseGuard {
 
 impl Drop for CrawlerLeaseGuard {
     fn drop(&mut self) {
-        if let Err(error) = self.db.release_crawler_lease("crawler_main", &self.owner_id, self.token) {
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        let token = self.token;
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::spawn(async move {
+                let worker_db = db.clone();
+                if let Err(error) = db.run_blocking(move || worker_db.release_crawler_lease("crawler_main", &owner, token)).await {
+                    warn!("Failed to release crawler lease: {}", error);
+                }
+            });
+        } else if let Err(error) = self.db.release_crawler_lease("crawler_main", &self.owner_id, self.token) {
             warn!("Failed to release crawler lease: {}", error);
         }
     }
@@ -63,6 +74,14 @@ impl CrawlerService {
             owner_id: self.owner_id.clone(),
             token,
         })
+    }
+
+    async fn acquire_lease_async(&self) -> anyhow::Result<CrawlerLeaseGuard> {
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        let token = self.db.run_blocking(move || db.acquire_crawler_lease("crawler_main", &owner, 120)).await?
+            .ok_or_else(|| anyhow::anyhow!("Another crawler owns the active lease"))?;
+        Ok(CrawlerLeaseGuard { db: self.db.clone(), owner_id: self.owner_id.clone(), token })
     }
     pub fn new(db: Database) -> Self {
         let total = db
@@ -104,6 +123,7 @@ impl CrawlerService {
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(60))),
             stop_requested: Arc::new(AtomicBool::new(false)),
             home_cache: Arc::new(RwLock::new(cached_home)),
+            scheduler_healthy: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -188,7 +208,10 @@ impl CrawlerService {
 
     pub fn start_background_schedule(&self, interval_hours: u64) {
         let service = self.clone();
+        let health = self.scheduler_healthy.clone();
         tokio::spawn(async move {
+            health.store(true, Ordering::SeqCst);
+            let _health_guard = SchedulerHealthGuard(health);
             let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
             // First tick finishes immediately, wait for next cycle
             interval.tick().await;
@@ -208,6 +231,10 @@ impl CrawlerService {
                 service.run_crawl_mode("latest").await;
             }
         });
+    }
+
+    pub fn scheduler_is_healthy(&self) -> bool {
+        self.scheduler_healthy.load(Ordering::SeqCst)
     }
 
     pub fn get_home(&self) -> HomeResponse {
@@ -339,48 +366,38 @@ impl CrawlerService {
         }
 
         let val: serde_json::Value = resp.json().await?;
-        self.fetch_and_update_home_from_value(&val)
+        self.fetch_and_update_home_from_value(&val).await
     }
 
-    pub fn fetch_and_update_home_from_value(&self, val: &serde_json::Value) -> anyhow::Result<HomeResponse> {
-        let lease = self.acquire_lease()?;
-        let parse_section = |section_arr: Option<&Vec<serde_json::Value>>| -> anyhow::Result<Vec<MovieSummary>> {
+    async fn parse_home_section(&self, items: Option<&Vec<serde_json::Value>>, fence_token: i64) -> anyhow::Result<Vec<MovieSummary>> {
+        let items = items.cloned().unwrap_or_default();
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        self.db.run_blocking(move || {
             let mut summaries = Vec::new();
-            if let Some(items) = section_arr {
-                for item in items {
-                    if let Some(movie) = parse_home_movie_item(item) {
-                        self.db.upsert_movie_with_fence(&movie, &self.owner_id, lease.token)?;
-                        let summary = self
-                            .db
-                            .get_movie_summary_by_slug(&movie.slug)
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| MovieSummary {
-                                id: 0,
-                                slug: movie.slug.clone(),
-                                movie_type: movie.movie_type.clone(),
-                                title_vi: movie.title_vi.clone(),
-                                title_en: movie.title_en.clone(),
-                                year: movie.year,
-                                quality: movie.quality.clone(),
-                                score: movie.score,
-                                genres: movie.genres.clone(),
-                                poster: movie.poster.clone(),
-                                backdrop: movie.backdrop.clone(),
-                                total_episodes: movie.total_episodes,
-                            });
-                        summaries.push(summary);
-                    }
+            for item in &items {
+                if let Some(movie) = parse_home_movie_item(item) {
+                    db.upsert_movie_with_fence(&movie, &owner, fence_token)?;
+                    let summary = db.get_movie_summary_by_slug(&movie.slug).ok().flatten().unwrap_or_else(|| MovieSummary {
+                        id: 0, slug: movie.slug.clone(), movie_type: movie.movie_type.clone(),
+                        title_vi: movie.title_vi.clone(), title_en: movie.title_en.clone(), year: movie.year,
+                        quality: movie.quality.clone(), score: movie.score, genres: movie.genres.clone(),
+                        poster: movie.poster.clone(), backdrop: movie.backdrop.clone(), total_episodes: movie.total_episodes,
+                    });
+                    summaries.push(summary);
                 }
             }
             Ok(summaries)
-        };
+        }).await
+    }
 
-        let hero = parse_section(val.get("hero").and_then(|v| v.as_array()))?;
-        let top = parse_section(val.get("top").and_then(|v| v.as_array()))?;
-        let new_series = parse_section(val.get("newSeries").and_then(|v| v.as_array()))?;
-        let new_movies = parse_section(val.get("newMovies").and_then(|v| v.as_array()))?;
-        let list = parse_section(val.get("list").and_then(|v| v.as_array()))?;
+    pub async fn fetch_and_update_home_from_value(&self, val: &serde_json::Value) -> anyhow::Result<HomeResponse> {
+        let lease = self.acquire_lease_async().await?;
+        let hero = self.parse_home_section(val.get("hero").and_then(|v| v.as_array()), lease.token).await?;
+        let top = self.parse_home_section(val.get("top").and_then(|v| v.as_array()), lease.token).await?;
+        let new_series = self.parse_home_section(val.get("newSeries").and_then(|v| v.as_array()), lease.token).await?;
+        let new_movies = self.parse_home_section(val.get("newMovies").and_then(|v| v.as_array()), lease.token).await?;
+        let list = self.parse_home_section(val.get("list").and_then(|v| v.as_array()), lease.token).await?;
 
         let genres: Vec<String> = val
             .get("genres")
@@ -415,7 +432,10 @@ impl CrawlerService {
         };
 
         // 1. Cache snapshot into SQLite Database
-        self.db.save_home_cache_with_fence(&home_response, &self.owner_id, lease.token)?;
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        let cache_value = home_response.clone();
+        self.db.run_blocking(move || db.save_home_cache_with_fence(&cache_value, &owner, lease.token)).await?;
 
         // 2. Cache snapshot into memory for immediate GET /api/home returns
         if let Ok(mut guard) = self.home_cache.write() {
@@ -488,7 +508,9 @@ impl CrawlerService {
 
         // Persistent lease acquisition across processes
         let lease_ttl = 120u64;
-        let fence_token = match self.db.acquire_crawler_lease("crawler_main", &self.owner_id, lease_ttl) {
+        let lease_db = self.db.clone();
+        let lease_owner = self.owner_id.clone();
+        let fence_token = match self.db.run_blocking(move || lease_db.acquire_crawler_lease("crawler_main", &lease_owner, lease_ttl)).await {
             Ok(Some(token)) => token,
             Ok(None) => {
                 let msg = "⚠️ Crawler lease 'crawler_main' currently held by another active process. Aborting crawl.";
@@ -507,11 +529,10 @@ impl CrawlerService {
                 let mut st = self.status.lock().unwrap();
                 st.is_running = false;
                 st.mode = "idle".to_string();
-                st.last_status = format!("Error: {}", e);
+                st.last_status = "Failed to acquire crawler lease".to_string();
                 return;
             }
         };
-
         self.add_log(format!("🔒 Acquired crawler lease 'crawler_main' with fence token {}", fence_token));
         self.add_log(format!("📑 Fetching sitemap for mode '{}'...", mode));
 
@@ -530,7 +551,9 @@ impl CrawlerService {
                 self.add_log(format!("⚠️ Failed to fetch sitemap: {}. Checking local database files...", e));
                 // Fallback to local master database if sitemap is unreachable
                 self.run_fallback_json_import(fence_token).await;
-                let _ = self.db.release_crawler_lease("crawler_main", &self.owner_id, fence_token);
+                let release_db = self.db.clone();
+                let release_owner = self.owner_id.clone();
+                let _ = self.db.run_blocking(move || release_db.release_crawler_lease("crawler_main", &release_owner, fence_token)).await;
                 let mut st = self.status.lock().unwrap();
                 st.is_running = false;
                 st.mode = "idle".to_string();
@@ -563,15 +586,12 @@ impl CrawlerService {
 
             // Renew lease and verify fencing token periodically
             if idx > 0 && idx % 10 == 0 {
-                match self.db.renew_crawler_lease("crawler_main", &self.owner_id, fence_token, lease_ttl) {
-                    Ok(true) => {
-                        // Successfully renewed lease
-                    }
+                let renew_db = self.db.clone();
+                let renew_owner = self.owner_id.clone();
+                match self.db.run_blocking(move || renew_db.renew_crawler_lease("crawler_main", &renew_owner, fence_token, lease_ttl)).await {
+                    Ok(true) => {}
                     Ok(false) | Err(_) => {
-                        self.add_log(format!(
-                            "🛑 Lost crawler lease or fenced out (token: {}). Halting crawl loop.",
-                            fence_token
-                        ));
+                        self.add_log(format!("🛑 Lost crawler lease or fenced out (token: {}). Halting crawl loop.", fence_token));
                         warn!("Crawler {} lost lease/fence token {}", self.owner_id, fence_token);
                         break;
                     }
@@ -625,7 +645,9 @@ impl CrawlerService {
         let now_str = chrono_simple_now();
 
         // Release crawler lease on completion
-        let _ = self.db.release_crawler_lease("crawler_main", &self.owner_id, fence_token);
+        let release_db = self.db.clone();
+        let release_owner = self.owner_id.clone();
+        let _ = self.db.run_blocking(move || release_db.release_crawler_lease("crawler_main", &release_owner, fence_token)).await;
         self.add_log("🔓 Released crawler lease 'crawler_main'".to_string());
 
         let mut st = self.status.lock().unwrap();
@@ -688,7 +710,9 @@ impl CrawlerService {
 
         let val: serde_json::Value = resp.json().await?;
         if let Some(movie) = parse_title_json_to_movie(slug, &val) {
-            self.db.upsert_movie_with_fence(&movie, &self.owner_id, fence_token)?;
+            let db = self.db.clone();
+            let owner = self.owner_id.clone();
+            self.db.run_blocking(move || db.upsert_movie_with_fence(&movie, &owner, fence_token)).await?;
 
             // If mode is prewarm, also cache m3u8 playlists to disk
             if mode == "prewarm" {
@@ -718,7 +742,9 @@ impl CrawlerService {
                 if let Ok(content) = tokio::fs::read_to_string(path).await {
                     if let Ok(movies) = serde_json::from_str::<Vec<Movie>>(&content) {
                         for m in movies {
-                            if self.db.upsert_movie_with_fence(&m, &self.owner_id, fence_token).is_ok() {
+                            let db = self.db.clone();
+                            let owner = self.owner_id.clone();
+                            if self.db.run_blocking(move || db.upsert_movie_with_fence(&m, &owner, fence_token)).await.is_ok() {
                                 imported += 1;
                             }
                         }
@@ -727,6 +753,14 @@ impl CrawlerService {
             }
         }
         self.add_log(format!("📦 Seeded/Imported {} movies from local JSON", imported));
+    }
+}
+
+struct SchedulerHealthGuard(Arc<AtomicBool>);
+
+impl Drop for SchedulerHealthGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1206,7 +1240,7 @@ mod tests {
         }"#;
 
         let val: serde_json::Value = serde_json::from_str(home_json).unwrap();
-        let res = crawler.fetch_and_update_home_from_value(&val).expect("Should update home");
+        let res = crawler.fetch_and_update_home_from_value(&val).await.expect("Should update home");
 
         assert_eq!(res.hero.len(), 1);
         assert_eq!(res.hero[0].slug, "hero-movie");

@@ -201,9 +201,14 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
           return (
             <div
               key={`${item.slug}-${item.episodeSlug || 'default'}`}
-              onClick={() => onWatch(item.slug, item.episodeSlug, item.time)}
-              className="w-56 sm:w-64 flex-shrink-0 group relative rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-[#0a1b0a] transition-all duration-300 hover:shadow-[0_8px_30px_rgba(132,204,22,0.22)] overflow-hidden cursor-pointer flex flex-col justify-between"
+              className="w-56 sm:w-64 flex-shrink-0 group relative"
             >
+              <button
+                type="button"
+                onClick={() => onWatch(item.slug, item.episodeSlug, item.time)}
+                aria-label={`Tiếp tục xem ${item.name}${item.episodeName ? `, ${item.episodeName}` : ''}`}
+                className="w-full h-full text-left rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-[#0a1b0a] transition-all duration-300 hover:shadow-[0_8px_30px_rgba(132,204,22,0.22)] overflow-hidden cursor-pointer flex flex-col justify-between focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-400"
+              >
               {/* Media Thumbnail Container with 16:9 widescreen ratio */}
               <div className="relative aspect-video w-full bg-black/60 overflow-hidden">
                 <img
@@ -230,15 +235,6 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
                 </div>
 
                 {/* Quick Remove Dismiss Button */}
-                <button
-                  type="button"
-                  onClick={(e) => handleRemove(e, item.slug)}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/70 hover:bg-red-950/80 text-white/70 hover:text-red-300 border border-white/10 hover:border-red-500/40 opacity-0 group-hover:opacity-100 transition-all cursor-pointer z-10"
-                  title="Xóa khỏi danh sách tiếp tục xem"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-
                 {/* Center Hover Play Button */}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="w-11 h-11 rounded-full bg-lime-500/90 group-hover:bg-lime-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(132,204,22,0.7)] transform scale-90 group-hover:scale-100 transition-all duration-300">
@@ -307,6 +303,16 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
                   </span>
                 </div>
               </div>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => handleRemove(e, item.slug)}
+                aria-label={`Xóa ${item.name} khỏi danh sách tiếp tục xem`}
+                className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/70 hover:bg-red-950/80 text-white/70 hover:text-red-300 border border-white/10 hover:border-red-500/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer z-10"
+                title="Xóa khỏi danh sách tiếp tục xem"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           );
         })}

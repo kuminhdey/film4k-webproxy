@@ -84,8 +84,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     total_movies: 0,
     total_series: 0,
     total_single: 0,
-    total_source_movies: 0,
-    remaining_movies: 0,
+    total_source_movies: null,
+    remaining_movies: null,
     cached_m3u8_count: 0,
     crawler_is_running: false,
     crawler_auto_enabled: false,
@@ -112,6 +112,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   // Logs state
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [logWriteError, setLogWriteError] = useState<string | null>(null);
   const [logsConnected, setLogsConnected] = useState(false);
   const [hasOlderLogs, setHasOlderLogs] = useState(false);
   const [olderLogsLoading, setOlderLogsLoading] = useState(false);
@@ -156,10 +157,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       level,
       message,
     };
-    setLogs((prev) => {
-      const next = [...prev, newEntry];
-      return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
-    });
+    if (token) {
+      void adminFetch('/api/admin/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, message }),
+      }).then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setLogWriteError(null);
+      }).catch((error) => {
+        setLogWriteError(error instanceof Error ? error.message : 'Không thể lưu log trên máy chủ');
+      });
+    } else {
+      setLogs((prev) => {
+        const next = [...prev, newEntry];
+        return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
+      });
+    }
   };
 
   const mergeServerLogs = (incoming: AdminLogEntry[]) => {
@@ -394,11 +408,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             data.crawler_auto_enabled !== undefined
               ? data.crawler_auto_enabled
               : prev.crawler_auto_enabled ?? false,
-          total_source_movies: data.total_source_movies ?? prev.total_source_movies ?? 0,
-          remaining_movies:
-            data.remaining_movies !== undefined
-              ? data.remaining_movies
-              : Math.max(0, (data.total_source_movies ?? prev.total_source_movies ?? 0) - (data.catalog_rows ?? data.total_movies ?? 0)),
+          total_source_movies: data.total_source_movies,
+          remaining_movies: data.remaining_movies,
         }));
       }
     } catch {
@@ -561,12 +572,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const handleStartFullCrawl = async () => {
     setConfirmModalOpen(false);
     setActionLoading('start_full');
-    const remainingCount =
-      stats.remaining_movies !== undefined
-        ? stats.remaining_movies
-        : Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies));
-    const countText = remainingCount > 0 ? `${remainingCount.toLocaleString()} phim còn lại ` : '';
-    addLog('info', `Lệnh: Bắt đầu Crawl Mở Rộng ${countText}(tổng kho phim ${(stats.total_source_movies ?? 0).toLocaleString()} phim)...`);
+    const remainingCount = stats.remaining_movies ?? null;
+    const countText = remainingCount === null ? 'số lượng chưa đối chiếu ' : `${remainingCount.toLocaleString()} phim còn lại `;
+    addLog('info', `Lệnh: Bắt đầu Crawl Mở Rộng ${countText}...`);
 
     try {
       const res = await adminFetch('/api/admin/crawler/start', {
@@ -800,6 +808,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           <form onSubmit={handleLogin}>
             <div style={{ marginBottom: '20px' }}>
               <label
+                htmlFor="admin-password"
                 style={{
                   display: 'block',
                   fontSize: '12px',
@@ -828,6 +837,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   }}
                 />
                 <input
+                  id="admin-password"
                   type={showPassword ? 'text' : 'password'}
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
@@ -851,6 +861,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiển thị mật khẩu'}
+                  aria-pressed={showPassword}
+                  aria-controls="admin-password"
                   style={{
                     position: 'absolute',
                     right: '12px',
@@ -1230,7 +1243,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {stats.total_source_movies ? Math.min(100, (((stats.catalog_rows ?? stats.total_movies) / stats.total_source_movies) * 100)).toFixed(1) : '0.0'}% tổng kho phim
+                  Nguồn ngoài chưa đồng bộ
                 </span>
                 <div
                   style={{
@@ -1248,18 +1261,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               </div>
             </div>
             <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff', lineHeight: 1.2 }}>
-              Catalog: {(stats.catalog_rows ?? stats.total_movies).toLocaleString()} / {(stats.total_source_movies ?? 0).toLocaleString()} phim
+              Catalog nội bộ: {(stats.catalog_rows ?? stats.total_movies).toLocaleString()} phim
             </div>
             <div style={{ marginTop: '6px', fontSize: '13px', fontWeight: 700, color: '#38bdf8' }}>
-              Đủ chi tiết / tập: {(stats.detail_rows ?? 0).toLocaleString()} phim ({stats.total_source_movies ? Math.min(100, ((stats.detail_rows ?? 0) / stats.total_source_movies) * 100).toFixed(1) : '0.0'}% bao phủ)
+              Có ít nhất một tập: {(stats.detail_rows ?? 0).toLocaleString()} phim
             </div>
             <div style={{ marginTop: '8px', fontSize: '12px', color: '#94a3b8' }}>
               Phim lẻ: {stats.total_single.toLocaleString()} • Phim bộ: {stats.total_series.toLocaleString()}
             </div>
             <div style={{ marginTop: '6px', fontSize: '13px', fontWeight: 700, color: '#a3e635' }}>
-              {(stats.remaining_movies ?? Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies))) === 0
-                ? 'Còn lại chưa có catalog: 0 phim (Đã bao phủ 100% tổng kho phim)'
-                : `Còn lại chưa có catalog: ${(stats.remaining_movies ?? Math.max(0, (stats.total_source_movies ?? 0) - (stats.catalog_rows ?? stats.total_movies))).toLocaleString()} phim`}
+              {stats.remaining_movies == null ? 'Chưa có dữ liệu đối chiếu với kho nguồn' : `Chưa có catalog: ${stats.remaining_movies.toLocaleString()} phim`}
             </div>
           </div>
 
@@ -1633,7 +1644,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   ? 'Crawler đang chạy, vui lòng đợi...'
                   : stats.crawler_auto_enabled
                   ? 'Đã bật tự động, chờ đợt tiếp theo'
-                  : `Cào tự động phim còn lại (${(stats.remaining_movies ?? 0).toLocaleString()} phim)`}
+                  : stats.remaining_movies == null ? 'Cào phim còn thiếu theo sitemap (chưa đối chiếu số lượng)' : `Cào tự động phim còn lại (${stats.remaining_movies.toLocaleString()} phim)`}
               </span>
             </button>
 
@@ -1902,7 +1913,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <button
                 type="button"
                 onClick={() => { void exportLogs(); }}
-                title="Xuất toàn bộ lịch sử logs từ máy chủ"
+                title="Xuất toàn bộ lịch sử đã lưu (tối đa 10.000 bản ghi)"
                 style={{
                   background: 'none',
                   border: 'none',
@@ -1932,8 +1943,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               color: '#cbd5e1',
             }}
           >
-            <div style={{ color: logsError ? '#f87171' : logsConnected ? '#10b981' : '#94a3b8', marginBottom: '8px' }}>
-              {logsError ? `Mất kết nối logs: ${logsError}` : logsConnected ? '● Logs đã kết nối' : 'Đang kết nối logs...'}
+            <div style={{ color: logsError || logWriteError ? '#f87171' : logsConnected ? '#10b981' : '#94a3b8', marginBottom: '8px' }}>
+              {logWriteError ? `Không lưu được log mới: ${logWriteError}` : logsError ? `Mất kết nối logs: ${logsError}` : logsConnected ? '● Logs đã kết nối' : 'Đang kết nối logs...'}
             </div>
             {hasOlderLogs && (
               <button type="button" onClick={() => { void loadOlderLogs(); }} disabled={olderLogsLoading}
@@ -2609,7 +2620,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   Xác Nhận Cào Tự Động Phim Còn Lại
                 </h3>
                 <p style={{ fontSize: '13px', color: '#8b95ad', margin: 0 }}>
-                  Tổng kho hệ thống: {(stats.total_source_movies ?? 0).toLocaleString()} phim • Còn lại: {(stats.remaining_movies ?? 0).toLocaleString()} phim
+                  {stats.total_source_movies == null ? 'Tổng kho nguồn: chưa đồng bộ' : `Tổng kho nguồn: ${stats.total_source_movies.toLocaleString()} phim`} • {stats.remaining_movies == null ? 'Còn lại: chưa đối chiếu' : `Còn lại: ${stats.remaining_movies.toLocaleString()} phim`}
                 </p>
               </div>
             </div>

@@ -94,6 +94,9 @@ pub fn create_app(state: AppState) -> Router {
         .route("/admin/login", post(admin::admin_login))
         .route("/admin/logout", post(admin::admin_logout))
         .route("/admin/stats", get(admin::admin_stats))
+        .route("/admin/movies", get(admin::admin_movies))
+        .route("/admin/logs", get(admin::admin_logs).post(admin::admin_log_write))
+        .route("/admin/logs/export", get(admin::admin_logs_export))
         .route("/admin/crawler/start", post(admin::admin_crawler_start))
         .route("/admin/crawler/update", post(admin::admin_crawler_update))
         .route("/admin/crawler/warmup", post(admin::admin_crawler_warmup))
@@ -187,20 +190,26 @@ pub async fn health_live_handler() -> (StatusCode, axum::Json<serde_json::Value>
     )
 }
 
+fn readiness_gate(build_commit: &str, db_healthy: bool, assets_ready: bool, scheduler_healthy: bool) -> bool {
+    !build_commit.trim().is_empty() && !build_commit.trim().eq_ignore_ascii_case("unknown") && db_healthy && assets_ready && scheduler_healthy
+}
+
 pub async fn health_ready_handler(
     State(state): State<AppState>,
 ) -> (StatusCode, axum::Json<serde_json::Value>) {
     let build_commit = option_env!("BUILD_COMMIT").unwrap_or("unknown");
-    let assets_ready = build_commit == "unknown"
-        || std::path::Path::new("frontend/dist/index.html").is_file();
+    let build_identity_ready = !build_commit.trim().is_empty() && !build_commit.trim().eq_ignore_ascii_case("unknown");
+    let assets_ready = build_identity_ready && std::path::Path::new("frontend/dist/index.html").is_file();
+    let scheduler_healthy = state.crawler.scheduler_is_healthy();
     match state.db.check_health() {
-        Ok((migration_count, is_healthy)) if is_healthy && assets_ready => (
+        Ok((migration_count, is_healthy)) if readiness_gate(build_commit, is_healthy, assets_ready, scheduler_healthy) => (
             StatusCode::OK,
             axum::Json(serde_json::json!({
                 "status": "ready",
                 "ready": true,
                 "migrations_applied": migration_count,
-                "commit": build_commit
+                "commit": build_commit,
+                "background_scheduler": "healthy"
             })),
         ),
         Ok((migration_count, _)) => (
@@ -208,7 +217,8 @@ pub async fn health_ready_handler(
             axum::Json(serde_json::json!({
                 "status": "unhealthy",
                 "ready": false,
-                "reason": "Database schema or static assets unavailable",
+                "reason": if !build_identity_ready { "Build identity unavailable" } else if !assets_ready { "Static assets unavailable" } else if !scheduler_healthy { "Required background scheduler unavailable" } else { "Database schema unavailable" },
+                "background_scheduler": if scheduler_healthy { "healthy" } else { "unavailable" },
                 "migrations_applied": migration_count
             })),
         ),
@@ -388,4 +398,18 @@ pub async fn trigger_crawler(State(state): State<AppState>) -> Json<serde_json::
         "success": triggered,
         "message": if triggered { "Crawler sync triggered in background" } else { "Crawler is already running" }
     }))
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::readiness_gate;
+
+    #[test]
+    fn readiness_fails_closed_without_identity_or_background_scheduler() {
+        assert!(!readiness_gate("unknown", true, true, true));
+        assert!(!readiness_gate(" UNKNOWN ", true, true, true));
+        assert!(!readiness_gate("abc123", true, true, false));
+        assert!(!readiness_gate("abc123", true, false, true));
+        assert!(readiness_gate("abc123", true, true, true));
+    }
 }

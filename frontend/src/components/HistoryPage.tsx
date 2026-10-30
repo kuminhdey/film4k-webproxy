@@ -91,9 +91,14 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             return (
               <div
                 key={item.slug}
-                onClick={() => onWatch(item.slug, item.episodeSlug)}
-                className="flex items-center gap-3 p-3 rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-lime-950/20 transition-all cursor-pointer group shadow-lg"
+                className="flex items-center gap-3 rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-lime-950/20 transition-all group shadow-lg"
               >
+                <button
+                  type="button"
+                  onClick={() => onWatch(item.slug, item.episodeSlug)}
+                  aria-label={`Xem tiếp ${item.name}${item.episodeName ? `, ${item.episodeName}` : ''}`}
+                  className="flex flex-1 min-w-0 items-center gap-3 p-3 text-left rounded-l-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-400"
+                >
                 <div className="w-14 h-20 rounded-xl overflow-hidden bg-black/60 flex-shrink-0 border border-lime-500/20 relative">
                   <img
                     src={getImageUrl(item.posterUrl)}
@@ -123,9 +128,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   </div>
                 </div>
 
+                </button>
                 <button
                   type="button"
                   onClick={(e) => handleRemove(e, item.slug)}
+                  aria-label={`Xóa ${item.name} khỏi lịch sử xem`}
                   className="p-1.5 rounded-lg text-[#8aa885] hover:text-red-400 hover:bg-red-950/40 transition-colors"
                   title="Xóa khỏi lịch sử"
                 >

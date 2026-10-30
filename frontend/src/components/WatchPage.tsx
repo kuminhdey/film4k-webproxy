@@ -8,6 +8,7 @@ import { FilmSynopsis } from './FilmSynopsis';
 import { RelatedMoviesRow } from './RelatedMoviesRow';
 import { ErrorBoundary } from './ErrorBoundary';
 import { getImageUrl } from '../utils';
+import { formatEpisodeLabel } from '../episodeLabel.mjs';
 
 /**
  * Helper to parse numeric episode number from slug (tap-1, tap-02) or title (Tập 1, Tập 2, Full)
@@ -303,7 +304,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
                 <>
                   {' '}—{' '}
                   <span className="text-lime-400 font-bold">
-                    Tập {currentEpisode.name}
+                    {formatEpisodeLabel(currentEpisode.name)}
                   </span>
                 </>
               ) : null}
@@ -347,7 +348,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             <>
               {' '}—{' '}
               <span className="text-lime-400 font-bold">
-                Tập {currentEpisode.name}
+                {formatEpisodeLabel(currentEpisode.name)}
               </span>
             </>
           ) : null}

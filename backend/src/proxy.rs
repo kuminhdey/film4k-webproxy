@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::LazyLock;
 use std::time::Duration;
+use bytes::Bytes;
+use futures_util::StreamExt;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -548,6 +550,16 @@ pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
 
 /// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug with provided HTTP client
 pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -> Option<String> {
+    fetch_upstream_title_hls_with_episode(client, slug, None).await
+}
+
+pub async fn fetch_upstream_title_hls_for_episode(slug: &str, episode: i32) -> Option<String> {
+    let client = Client::builder().timeout(Duration::from_secs(10)).no_proxy()
+        .redirect(reqwest::redirect::Policy::none()).build().ok()?;
+    fetch_upstream_title_hls_with_episode(&client, slug, Some(episode)).await
+}
+
+async fn fetch_upstream_title_hls_with_episode(client: &Client, slug: &str, episode: Option<i32>) -> Option<String> {
     let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
     let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
 
@@ -582,29 +594,7 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
         }
     };
     let json_val: serde_json::Value = serde_json::from_slice(&json_bytes).ok()?;
-    let hls_path = json_val
-        .get("movie")
-        .and_then(|m| m.get("hlsUrl"))
-        .and_then(|h| h.as_str())
-        .or_else(|| {
-            json_val
-                .get("episodes")
-                .and_then(|e| e.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|ep| ep.get("sources"))
-                .and_then(|s| s.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|src| src.get("url"))
-                .and_then(|u| u.as_str())
-        })
-        .or_else(|| {
-            json_val
-                .get("sources")
-                .and_then(|s| s.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|src| src.get("url"))
-                .and_then(|u| u.as_str())
-        })?;
+    let hls_path = title_hls_url(&json_val, episode)?;
 
     let full_hls = if hls_path.starts_with('/') {
         format!("https://fiml4k.fun{}", hls_path)
@@ -619,6 +609,22 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
     }
 
     Some(full_hls)
+}
+
+fn title_hls_url(value: &serde_json::Value, episode: Option<i32>) -> Option<&str> {
+    if let Some(wanted) = episode {
+        return value.get("episodes")?.as_array()?.iter().find_map(|ep| {
+            let number = ep.get("episode").or_else(|| ep.get("episodeNumber"))?.as_i64()?;
+            if number != wanted as i64 { return None; }
+            ep.get("sources")?.as_array()?.iter().find_map(|source| source.get("url").and_then(|url| url.as_str()))
+                .or_else(|| ep.get("servers")?.as_array()?.iter().find_map(|source| {
+                    source.get("hlsUrl").or_else(|| source.get("hls_url")).or_else(|| source.get("url")).and_then(|url| url.as_str())
+                }))
+        });
+    }
+    value.get("movie").and_then(|m| m.get("hlsUrl")).and_then(|h| h.as_str())
+        .or_else(|| value.get("episodes")?.as_array()?.first()?.get("sources")?.as_array()?.first()?.get("url")?.as_str())
+        .or_else(|| value.get("sources")?.as_array()?.first()?.get("url")?.as_str())
 }
 
 /// Perform an HTTP GET request with DNS validation and manual fail-closed redirect following using the provided HTTP client
@@ -926,7 +932,7 @@ pub async fn handle_stream_proxy(
             .header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
             .header("X-Frame-Options", "DENY");
 
-        let stream = upstream_resp.bytes_stream();
+        let stream = capped_stream(upstream_resp.bytes_stream(), MAX_STREAM_BYTES);
         resp_builder
             .body(Body::from_stream(stream))
             .unwrap_or_else(|_| {
@@ -935,6 +941,26 @@ pub async fn handle_stream_proxy(
                 err_resp
             })
     }
+}
+
+fn capped_stream<S, E>(stream: S, max_bytes: u64) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    futures_util::stream::try_unfold((stream, 0u64), move |(mut stream, mut total)| async move {
+        match stream.next().await {
+            Some(Ok(chunk)) => {
+                if chunk.len() as u64 > max_bytes.saturating_sub(total) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "upstream stream exceeds configured byte limit"));
+                }
+                total += chunk.len() as u64;
+                Ok(Some((chunk, (stream, total))))
+            }
+            Some(Err(error)) => Err(std::io::Error::new(std::io::ErrorKind::Other, error.to_string())),
+            None => Ok(None),
+        }
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1274,5 +1300,30 @@ https://v16m-default.akamaicdn.net/chunk01.image
         assert!(!is_allowed_image_mime("image/svg+xml"));
         assert!(!is_allowed_image_mime("text/html"));
         assert!(!is_allowed_image_mime("application/javascript"));
+    }
+
+    #[test]
+    fn title_refresh_selects_requested_episode_and_fails_closed_if_missing() {
+        let title = serde_json::json!({
+            "episodes": [
+                {"episode": 1, "sources": [{"url": "/api/hls/ep1/master.m3u8"}]},
+                {"episode": 2, "sources": [{"url": "/api/hls/ep2/master.m3u8"}]}
+            ]
+        });
+        assert_eq!(title_hls_url(&title, Some(2)), Some("/api/hls/ep2/master.m3u8"));
+        assert_eq!(title_hls_url(&title, Some(3)), None);
+        assert_eq!(title_hls_url(&title, None), Some("/api/hls/ep1/master.m3u8"));
+    }
+
+    #[tokio::test]
+    async fn capped_stream_rejects_unknown_length_over_limit_without_buffering() {
+        let chunks = futures_util::stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from_static(b"1234")),
+            Ok::<_, std::io::Error>(Bytes::from_static(b"5678")),
+        ]);
+        let collected = capped_stream(chunks, 6).collect::<Vec<_>>().await;
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].as_ref().unwrap(), &Bytes::from_static(b"1234"));
+        assert_eq!(collected[1].as_ref().unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 }

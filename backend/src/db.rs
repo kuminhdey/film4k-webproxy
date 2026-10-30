@@ -3,8 +3,36 @@ use std::sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}};
 use rusqlite::{params, Connection};
 use anyhow::Context;
 use tracing::{info, warn};
+use tokio::sync::Semaphore;
 
 use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, MoviesQuery, ServerSource, Source, SubtitleTrack};
+
+fn genre_name_for_slug(value: &str) -> Option<&'static str> {
+    match value {
+        "hanh-dong" => Some("Hành Động"), "tinh-cam" => Some("Tình Cảm"),
+        "co-trang" => Some("Cổ Trang"), "tam-ly" => Some("Tâm Lý"),
+        "phim-hai" => Some("Hài Hước"), "hoat-hinh" | "anime" => Some("Hoạt Hình"),
+        "phieu-luu" => Some("Phiêu Lưu"), "khoa-hoc-vien-tuong" => Some("Khoa Học Viễn Tưởng"),
+        "kinh-di" => Some("Kinh Dị"), "hinh-su" => Some("Hình Sự"), "bi-an" => Some("Bí Ẩn"),
+        "chien-tranh" => Some("Chiến Tranh"), "tai-lieu" => Some("Tài Liệu"),
+        "gia-dinh" => Some("Gia Đình"), "gia-tuong" => Some("Giả Tưởng"),
+        "lich-su" => Some("Lịch Sử"), "gay-can" => Some("Gay Cấn"),
+        "lang-man" => Some("Lãng Mạn"), "chinh-kich" => Some("Chính Kịch"), _ => None,
+    }
+}
+
+fn country_names_for_slug(value: &str) -> &'static [&'static str] {
+    match value {
+        "han-quoc" => &["Hàn Quốc", "South Korea", "Korea"],
+        "trung-quoc" => &["Trung Quốc", "China"],
+        "my" | "au-my" => &["Âu Mỹ", "Mỹ", "United States", "US", "USA"],
+        "nhat-ban" => &["Nhật Bản", "Japan"], "viet-nam" => &["Việt Nam", "Vietnam"],
+        "thai-lan" => &["Thái Lan", "Thailand"], "hong-kong" => &["Hồng Kông", "Hong Kong"],
+        "dai-loan" => &["Đài Loan", "Taiwan"], "anh" => &["Anh", "United Kingdom", "UK"],
+        "phap" => &["Pháp", "France"], "duc" => &["Đức", "Germany"],
+        "an-do" => &["Ấn Độ", "India"], _ => &[],
+    }
+}
 
 #[derive(Clone)]
 pub struct Database {
@@ -14,6 +42,21 @@ pub struct Database {
 }
 
 impl Database {
+    /// Run synchronous SQLite work on the blocking pool with bounded concurrency.
+    pub async fn run_blocking<T, F>(&self, operation: F) -> anyhow::Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    {
+        static DB_WRITE_SLOTS: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
+        let slots = DB_WRITE_SLOTS.get_or_init(|| Arc::new(Semaphore::new(4))).clone();
+        let permit = slots.acquire_owned().await.context("database blocking queue closed")?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            operation()
+        }).await.context("database blocking task failed")?
+    }
+
     pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let p = path.as_ref();
         if let Some(parent) = p.parent() {
@@ -268,6 +311,15 @@ impl Database {
             info!("Applied schema migration 4: crawler_leases atomically");
         }
 
+        // Migration 5: durable admin task log stream.
+        if !applied_versions.contains(&5) {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS admin_task_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, level TEXT NOT NULL CHECK(level IN ('info','warn','error','success')), message TEXT NOT NULL);")?;
+            tx.execute("INSERT INTO schema_migrations (version, name) VALUES (5, 'admin_task_logs')", [])?;
+            tx.commit()?;
+            info!("Applied schema migration 5: admin_task_logs");
+        }
+
         Ok(())
     }
 
@@ -330,15 +382,48 @@ impl Database {
     pub fn check_health(&self) -> anyhow::Result<(i64, bool)> {
         let conn = self.read_conn();
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2, 3, 4)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2, 3, 4, 5)",
             [],
             |r| r.get(0),
         )?;
         let ping: i32 = conn.query_row("SELECT 1", [], |r| r.get(0))?;
-        for table in ["movies", "episodes", "home_cache", "playlist_cache", "crawler_leases"] {
+        for table in ["movies", "episodes", "home_cache", "playlist_cache", "crawler_leases", "admin_task_logs"] {
             conn.prepare(&format!("SELECT 1 FROM {table} LIMIT 0"))?;
         }
-        Ok((count, ping == 1 && count == 4))
+        Ok((count, ping == 1 && count == 5))
+    }
+
+    pub fn insert_admin_log(&self, level: &str, message: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT INTO admin_task_logs(level, message) VALUES (?1, ?2)", params![level, message])?;
+        conn.execute("DELETE FROM admin_task_logs WHERE id <= COALESCE((SELECT MAX(id) FROM admin_task_logs) - 10000, 0)", [])?;
+        Ok(())
+    }
+
+    pub fn get_admin_logs(&self, after_id: Option<i64>, before_id: Option<i64>, limit: i64) -> anyhow::Result<(Vec<(i64, String, String, String)>, bool)> {
+        let conn = self.read_conn();
+        let limit = limit.clamp(1, 500);
+        let (sql, args): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(id) = after_id {
+            ("SELECT id,timestamp,level,message FROM admin_task_logs WHERE id > ? ORDER BY id ASC LIMIT ?", vec![Box::new(id), Box::new(limit + 1)])
+        } else if let Some(id) = before_id {
+            ("SELECT id,timestamp,level,message FROM admin_task_logs WHERE id < ? ORDER BY id DESC LIMIT ?", vec![Box::new(id), Box::new(limit + 1)])
+        } else {
+            ("SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id DESC LIMIT ?", vec![Box::new(limit + 1)])
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows: Vec<_> = stmt.query_map(rusqlite::params_from_iter(args.iter()), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+        let has_more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        rows.reverse();
+        Ok((rows, has_more))
+    }
+
+    pub fn get_all_admin_logs(&self) -> anyhow::Result<Vec<(i64, String, String, String)>> {
+        let conn = self.read_conn();
+        let mut stmt = conn.prepare("SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id ASC LIMIT 10001")?;
+        let rows: Vec<_> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+        anyhow::ensure!(rows.len() <= 10000, "admin log retention bound exceeded");
+        Ok(rows)
     }
 
     /// Acquire or take over crawler lease atomically with monotonic fencing token.
@@ -526,7 +611,8 @@ impl Database {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             loop {
                 interval.tick().await;
-                match db.cleanup_expired_playlist_cache() {
+                let cleanup_db = db.clone();
+                match db.run_blocking(move || cleanup_db.cleanup_expired_playlist_cache()).await {
                     Ok(deleted) => {
                         if deleted > 0 {
                             info!("🧹 Purged {} expired playlist cache entries from SQLite", deleted);
@@ -714,7 +800,8 @@ impl Database {
 
         if let Some(ref g) = query.genre {
             if !g.trim().is_empty() && g != "all" {
-                let pattern = format!("%\"{}\"%", g.trim());
+                let genre_name = genre_name_for_slug(g.trim()).unwrap_or(g.trim());
+                let pattern = format!("%\"{}\"%", genre_name);
                 where_clauses.push("genres_json LIKE ?");
                 query_params.push(Box::new(pattern));
             }
@@ -725,25 +812,33 @@ impl Database {
             let mt_trimmed = mt.trim();
             if !mt_trimmed.is_empty() && mt_trimmed != "all" {
                 let mapped = match mt_trimmed {
-                    "phim-bo" | "series" | "tv" => "tv",
+                    "phim-bo" | "tv-shows" | "series" | "tv" => "tv",
                     "phim-le" | "single" | "movie" => "movie",
                     other => other,
                 };
                 if mapped == "tv" || mapped == "movie" {
                     where_clauses.push("movie_type = ?");
                     query_params.push(Box::new(mapped.to_string()));
-                } else if mapped == "hoat-hinh" || mapped == "anime" {
+                } else if let Some(genre_name) = genre_name_for_slug(mapped) {
                     where_clauses.push("genres_json LIKE ?");
-                    query_params.push(Box::new("%Hoạt Hình%".to_string()));
+                    query_params.push(Box::new(format!("%{}%", genre_name)));
                 }
             }
         }
 
         if let Some(ref c) = query.country {
             if !c.trim().is_empty() && c != "all" {
-                let pattern = format!("%{}%", c.trim());
-                where_clauses.push("country LIKE ?");
-                query_params.push(Box::new(pattern));
+                let aliases = country_names_for_slug(c.trim());
+                if aliases.is_empty() {
+                    where_clauses.push("country LIKE ?");
+                    query_params.push(Box::new(format!("%{}%", c.trim())));
+                } else {
+                    where_clauses.push("(country LIKE ? OR country LIKE ? OR country LIKE ? OR country LIKE ? OR country LIKE ?)" );
+                    for index in 0..5 {
+                        let alias = aliases.get(index).copied().unwrap_or(aliases[0]);
+                        query_params.push(Box::new(format!("%{}%", alias)));
+                    }
+                }
             }
         }
 
@@ -1327,6 +1422,11 @@ impl Database {
         Ok((total, movies, series))
     }
 
+    pub fn get_detail_movie_count(&self) -> anyhow::Result<i64> {
+        let conn = self.read_conn();
+        Ok(conn.query_row("SELECT COUNT(DISTINCT movie_slug) FROM episodes", [], |row| row.get(0))?)
+    }
+
     pub fn save_home_cache(&self, home: &HomeResponse) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let json_str = serde_json::to_string(home)?;
@@ -1715,7 +1815,7 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
 
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 5);
         assert_eq!(rows[0].0, 1);
         assert_eq!(rows[0].1, "base_schema");
         assert_eq!(rows[1].0, 2);
@@ -1724,6 +1824,8 @@ mod tests {
         assert_eq!(rows[2].1, "playlist_cache_and_index_cleanup");
         assert_eq!(rows[3].0, 4);
         assert_eq!(rows[3].1, "crawler_leases");
+        assert_eq!(rows[4].0, 5);
+        assert_eq!(rows[4].1, "admin_task_logs");
 
         // 2. Verify all expected columns exist in movies
         let movie_cols = Database::get_column_names(&conn, "movies").unwrap();
@@ -1737,6 +1839,36 @@ mod tests {
         assert!(ep_cols.contains(&"servers_json".to_string()));
         assert!(ep_cols.contains(&"subtitles_json".to_string()));
         assert!(ep_cols.contains(&"audio_tracks_json".to_string()));
+    }
+
+    #[test]
+    fn admin_logs_are_durable_and_paginated_without_fake_empty_success() {
+        let db = Database::new_in_memory().unwrap();
+        db.insert_admin_log("info", "one").unwrap();
+        db.insert_admin_log("warn", "two").unwrap();
+        db.insert_admin_log("error", "three").unwrap();
+        let (latest, has_more) = db.get_admin_logs(None, None, 2).unwrap();
+        assert!(has_more);
+        assert_eq!(latest.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(), vec!["two", "three"]);
+        let (older, has_more) = db.get_admin_logs(None, Some(latest[0].0), 2).unwrap();
+        assert!(!has_more);
+        assert_eq!(older.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(), vec!["one"]);
+        assert_eq!(db.get_all_admin_logs().unwrap().len(), 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_database_work_does_not_block_tokio_executor() {
+        let db = Database::new_in_memory().unwrap();
+        let task = tokio::spawn(async move {
+            db.run_blocking(|| {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                Ok(())
+            }).await
+        });
+        tokio::time::timeout(std::time::Duration::from_millis(30), tokio::time::sleep(std::time::Duration::from_millis(5)))
+            .await.expect("Tokio timer must progress while SQLite work is in the blocking pool");
+        assert!(!task.is_finished(), "blocking closure should still be running in the blocking pool");
+        task.await.unwrap().unwrap();
     }
 
     #[test]

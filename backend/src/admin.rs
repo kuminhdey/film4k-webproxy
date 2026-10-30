@@ -1,5 +1,6 @@
 use axum::{
-    extract::{ConnectInfo, State},
+    body::Body,
+    extract::{ConnectInfo, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
@@ -12,9 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::crawler::CrawlerStatus;
+use crate::models::{MoviesQuery, MoviesResponse};
 use crate::AppState;
 
 static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1000);
@@ -27,6 +29,7 @@ pub const MAX_FAILED_ATTEMPTS: u32 = 5;
 
 /// Lockout duration after exceeding MAX_FAILED_ATTEMPTS: 15 minutes
 pub const LOCKOUT_DURATION: Duration = Duration::from_secs(15 * 60);
+pub const MAX_FAILED_ATTEMPT_CLIENTS: usize = 4096;
 
 /// Trust only explicitly configured reverse proxy peers.
 pub fn is_trusted_peer(ip: &IpAddr) -> bool {
@@ -196,6 +199,11 @@ impl AdminService {
         let now = Instant::now();
         let mut attempts = self.failed_attempts.write().unwrap();
         attempts.retain(|_, (_, time)| time.elapsed() < LOCKOUT_DURATION);
+        if !attempts.contains_key(client_id) && attempts.len() >= MAX_FAILED_ATTEMPT_CLIENTS {
+            if let Some(oldest) = attempts.iter().min_by_key(|(_, (_, time))| *time).map(|(id, _)| id.clone()) {
+                attempts.remove(&oldest);
+            }
+        }
         let entry = attempts.entry(client_id.to_string()).or_insert((0, now));
         if entry.1.elapsed() >= LOCKOUT_DURATION {
             entry.0 = 0;
@@ -236,18 +244,8 @@ impl AdminService {
     }
 
     pub fn is_authenticated(&self, headers: &HeaderMap) -> bool {
-        // 1. Check X-Admin-Key
-        if let Some(key_header) = headers.get("X-Admin-Key") {
-            if let Ok(key) = key_header.to_str() {
-                if let Some(ref admin_pw) = self.admin_password {
-                    if !admin_pw.is_empty() && constant_time_eq_str(admin_pw, key) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // 2. Check Authorization: Bearer <token>
+        // Only short-lived login sessions may access protected endpoints. The raw
+        // password cannot be reused as a static API key to bypass login throttling.
         if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -361,7 +359,7 @@ fn require_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
                 "success": false,
-                "error": "Unauthorized: invalid or missing admin token or X-Admin-Key"
+                "error": "Unauthorized: invalid or missing admin session token"
             })),
         )
             .into_response())
@@ -383,6 +381,10 @@ pub struct AdminStatsResponse {
     pub total_series: i64,
     pub total_single: i64,
     pub total_items: i64,
+    pub catalog_rows: i64,
+    pub detail_rows: i64,
+    pub total_source_movies: Option<i64>,
+    pub remaining_movies: Option<i64>,
     pub cached_playlists_count: usize,
     pub cached_m3u8_count: usize,
     pub crawler_is_running: bool,
@@ -410,6 +412,7 @@ pub async fn admin_stats(
         .db
         .get_stats()
         .unwrap_or((0, 0, 0));
+    let detail_rows = state.db.get_detail_movie_count().unwrap_or(0);
 
     let base_dir = state.playlist_cache.base_dir();
     let playlists_bytes = dir_size(&base_dir);
@@ -426,6 +429,10 @@ pub async fn admin_stats(
         total_series,
         total_single: total_movies,
         total_items,
+        catalog_rows: total_items,
+        detail_rows,
+        total_source_movies: None,
+        remaining_movies: None,
         cached_playlists_count,
         cached_m3u8_count: cached_playlists_count,
         crawler_is_running: crawler_status.is_running,
@@ -449,6 +456,74 @@ pub async fn admin_stats(
     };
 
     (StatusCode::OK, Json(stats)).into_response()
+}
+
+pub async fn admin_movies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<MoviesQuery>,
+) -> Response {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    let limit = query.limit.unwrap_or(24).clamp(1, 100);
+    let offset = query.offset.unwrap_or_else(|| {
+        query.page.map(|page| page.max(1).saturating_sub(1).saturating_mul(limit)).unwrap_or(0)
+    });
+    match state.db.get_movies_filtered(&query) {
+        Ok((movies, total)) => (
+            StatusCode::OK,
+            Json(MoviesResponse { movies, total, limit: limit as i64, offset: offset as i64 }),
+        ).into_response(),
+        Err(err) => {
+            error!("Database error in admin_movies: {}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"Failed to query movies"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AdminLogInput { level: String, message: String }
+
+#[derive(Deserialize)]
+pub struct AdminLogsQuery { after_id: Option<i64>, before_id: Option<i64>, limit: Option<i64> }
+
+pub async fn admin_log_write(State(state): State<AppState>, headers: HeaderMap, Json(input): Json<AdminLogInput>) -> Response {
+    if let Err(resp) = require_auth(&state, &headers) { return resp; }
+    let level = input.level;
+    if !matches!(level.as_str(), "info" | "warn" | "error" | "success") || input.message.trim().is_empty() || input.message.chars().count() > 2000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Invalid log entry"}))).into_response();
+    }
+    let db = state.db.clone();
+    let message = input.message.trim().to_string();
+    match state.db.run_blocking(move || db.insert_admin_log(&level, &message)).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"Failed to persist log entry"}))).into_response(),
+    }
+}
+
+pub async fn admin_logs(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<AdminLogsQuery>) -> Response {
+    if let Err(resp) = require_auth(&state, &headers) { return resp; }
+    let db = state.db.clone();
+    match state.db.run_blocking(move || db.get_admin_logs(query.after_id, query.before_id, query.limit.unwrap_or(100))).await {
+        Ok((rows, has_more)) => {
+            let logs: Vec<_> = rows.into_iter().map(|(id,timestamp,level,message)| serde_json::json!({"id":id,"timestamp":timestamp,"level":level,"message":message})).collect();
+            (StatusCode::OK, Json(serde_json::json!({"logs":logs,"has_more":has_more}))).into_response()
+        },
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"Failed to read admin logs"}))).into_response(),
+    }
+}
+
+pub async fn admin_logs_export(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_auth(&state, &headers) { return resp; }
+    let db = state.db.clone();
+    match state.db.run_blocking(move || db.get_all_admin_logs()).await {
+        Ok(rows) => {
+            let text = rows.into_iter().map(|(id,timestamp,level,message)| serde_json::json!({"id":id,"timestamp":timestamp,"level":level,"message":message}).to_string()).collect::<Vec<_>>().join("\n");
+            Response::builder().status(StatusCode::OK).header("content-type", "application/x-ndjson; charset=utf-8").header("content-disposition", "attachment; filename=admin-task-logs.jsonl").body(Body::from(text)).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        },
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":"Failed to export admin logs"}))).into_response(),
+    }
 }
 
 pub async fn admin_crawler_start(
@@ -820,10 +895,10 @@ mod tests {
         );
         assert!(!admin.is_authenticated(&bad_headers));
 
-        // Test X-Admin-Key header auth
+        // Static passwords cannot bypass a session created by the throttled login path.
         let mut key_headers = HeaderMap::new();
         key_headers.insert("X-Admin-Key", HeaderValue::from_static("my-secret-pw"));
-        assert!(admin.is_authenticated(&key_headers));
+        assert!(!admin.is_authenticated(&key_headers));
 
         let mut bad_key_headers = HeaderMap::new();
         bad_key_headers.insert("X-Admin-Key", HeaderValue::from_static("wrong-key"));
@@ -873,6 +948,20 @@ mod tests {
         // Reset clears lockout
         admin.reset_failed_attempts(client_ip);
         assert!(!admin.is_login_rate_limited(client_ip));
+    }
+
+    #[test]
+    fn failed_attempt_tracking_is_bounded_and_evicts_oldest_client() {
+        let admin = AdminService::with_password("my-secret-pw");
+        for index in 0..MAX_FAILED_ATTEMPT_CLIENTS {
+            admin.record_failed_attempt(&format!("client-{index}"));
+        }
+        assert_eq!(admin.failed_attempts.read().unwrap().len(), MAX_FAILED_ATTEMPT_CLIENTS);
+        admin.record_failed_attempt("new-client");
+        let attempts = admin.failed_attempts.read().unwrap();
+        assert_eq!(attempts.len(), MAX_FAILED_ATTEMPT_CLIENTS);
+        assert!(!attempts.contains_key("client-0"));
+        assert!(attempts.contains_key("new-client"));
     }
 
     #[test]
