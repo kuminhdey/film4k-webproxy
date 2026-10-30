@@ -10,7 +10,7 @@ Environment=WEBPROXY_BASE_URL=http://127.0.0.1:8090
 Environment=CRAWLER_MAX_LAG_SECONDS=93600
 Environment=CRAWLER_STARTUP_GRACE_SECONDS=7200
 Environment=STATE_FILE=/var/lib/webproxy-runtime-alerts/state.json
-EnvironmentFile=/etc/webproxy-runtime-alerts.env
+EnvironmentFile=-/etc/webproxy-runtime-alerts.env
 StateDirectory=webproxy-runtime-alerts
 StateDirectoryMode=0750
 ExecStart=/usr/bin/python3 /usr/local/libexec/webproxy-runtime-alerts.py

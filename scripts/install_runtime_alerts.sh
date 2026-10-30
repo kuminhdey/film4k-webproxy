@@ -9,15 +9,14 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ ! -f "$ENV_FILE" ]] || ! grep -qE '^ALERT_WEBHOOK_URL=https?://' "$ENV_FILE"; then
-  echo "Configure ALERT_WEBHOOK_URL in $ENV_FILE before enabling runtime alert delivery." >&2
-  exit 1
-fi
-
 install -D -m 0755 "$ROOT_DIR/scripts/runtime_alert_monitor.py" /usr/local/libexec/webproxy-runtime-alerts.py
 install -D -m 0644 "$ROOT_DIR/ops/systemd/webproxy-runtime-alerts.service" /etc/systemd/system/webproxy-runtime-alerts.service
 install -D -m 0644 "$ROOT_DIR/ops/systemd/webproxy-runtime-alerts.timer" /etc/systemd/system/webproxy-runtime-alerts.timer
-chmod 0600 "$ENV_FILE"
+if [[ -f "$ENV_FILE" ]]; then
+  chmod 0600 "$ENV_FILE"
+else
+  echo "No webhook configured; runtime alerts will be recorded in the systemd journal."
+fi
 systemctl daemon-reload
 systemctl enable --now webproxy-runtime-alerts.timer
 systemctl start webproxy-runtime-alerts.service
