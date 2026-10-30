@@ -491,7 +491,7 @@ async fn test_api_proxy_stream_ssrf_and_valid_url() {
     let client = Client::new();
 
     // 1. SSRF rejection: localhost
-    let _resp = client
+    let resp = client
         .get(format!("{}/api/proxy/stream", base_url))
         .query(&[("url", "http://localhost:8090/api/health")])
         .send()
@@ -606,7 +606,7 @@ async fn test_api_proxy_stream_expired_token_auto_refresh() {
     };
     db.upsert_movie(&movie).unwrap();
 
-    let resp = client
+    let _resp = client
         .get(format!("{}/api/proxy/stream", base_url))
         .query(&[("url", expired_url), ("slug", "spider-man-brand-new-day")])
         .send()
