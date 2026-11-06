@@ -43,10 +43,25 @@ struct CrawlerLeaseGuard {
     db: Database,
     owner_id: String,
     token: i64,
+    released: bool,
+}
+
+impl CrawlerLeaseGuard {
+    async fn release(mut self) -> anyhow::Result<()> {
+        let db = self.db.clone();
+        let owner = self.owner_id.clone();
+        let token = self.token;
+        self.db.run_blocking(move || db.release_crawler_lease("crawler_main", &owner, token)).await?;
+        self.released = true;
+        Ok(())
+    }
 }
 
 impl Drop for CrawlerLeaseGuard {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         let db = self.db.clone();
         let owner = self.owner_id.clone();
         let token = self.token;
@@ -73,6 +88,7 @@ impl CrawlerService {
             db: self.db.clone(),
             owner_id: self.owner_id.clone(),
             token,
+            released: false,
         })
     }
 
@@ -81,7 +97,7 @@ impl CrawlerService {
         let owner = self.owner_id.clone();
         let token = self.db.run_blocking(move || db.acquire_crawler_lease("crawler_main", &owner, 120)).await?
             .ok_or_else(|| anyhow::anyhow!("Another crawler owns the active lease"))?;
-        Ok(CrawlerLeaseGuard { db: self.db.clone(), owner_id: self.owner_id.clone(), token })
+        Ok(CrawlerLeaseGuard { db: self.db.clone(), owner_id: self.owner_id.clone(), token, released: false })
     }
     pub fn new(db: Database) -> Self {
         let total = db
@@ -212,6 +228,9 @@ impl CrawlerService {
         tokio::spawn(async move {
             health.store(true, Ordering::SeqCst);
             let _health_guard = SchedulerHealthGuard(health);
+            let interval_hours = interval_hours.max(1);
+            let full_every = (24 / interval_hours).max(1);
+            let mut scheduled_runs = 0u64;
             let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
             // First tick finishes immediately, wait for next cycle
             interval.tick().await;
@@ -227,8 +246,12 @@ impl CrawlerService {
                     service.add_log(format!("⚠️ Scheduled home sync error: {}", e));
                 }
 
-                // 2. Scheduled crawl for latest movies
-                service.run_crawl_mode("latest").await;
+                // Refresh the entire catalog on the first cycle and about once per day.
+                // The other cycles keep recently changed titles fresh.
+                let mode = if scheduled_runs % full_every == 0 { "full" } else { "latest" };
+                if service.trigger_mode(mode) {
+                    scheduled_runs = scheduled_runs.wrapping_add(1);
+                }
             }
         });
     }
@@ -436,6 +459,9 @@ impl CrawlerService {
         let owner = self.owner_id.clone();
         let cache_value = home_response.clone();
         self.db.run_blocking(move || db.save_home_cache_with_fence(&cache_value, &owner, lease.token)).await?;
+        // The scheduled crawler starts immediately after this call. Wait for the
+        // home sync lease to be released before returning.
+        lease.release().await?;
 
         // 2. Cache snapshot into memory for immediate GET /api/home returns
         if let Ok(mut guard) = self.home_cache.write() {
@@ -662,25 +688,12 @@ impl CrawlerService {
     }
 
     pub async fn process_single_slug(&self, slug: &str, mode: &str, fence_token: i64) -> (bool, bool) {
-        // Skip if movie already exists with full details and not in prewarm or force mode
-        if mode != "prewarm" && mode != "force" {
-            if let Ok(Some(existing)) = self.db.get_movie_by_slug(slug) {
-                let is_full = if existing.movie_type == "tv" {
-                    !existing.episodes.is_empty()
-                } else {
-                    existing.stream.is_some() || (!existing.episodes.is_empty() && !existing.episodes[0].sources.is_empty())
-                };
-
-                if is_full {
-                    return (false, false);
-                }
-            }
-        }
-
+        // A title can gain episodes or refreshed stream URLs after its first crawl.
         match self.fetch_and_upsert_movie(slug, mode, fence_token).await {
             Ok(updated) => (updated, false),
             Err(e) => {
                 warn!("Error crawling slug '{}': {}", slug, e);
+                self.add_log(format!("⚠️ Failed to sync title: {}", slug));
                 (false, true)
             }
         }
@@ -1143,6 +1156,34 @@ mod tests {
     }
 
     #[test]
+    fn test_title_refresh_adds_new_episodes_and_updates_streams() {
+        let db = Database::new_in_memory().unwrap();
+        let crawler = CrawlerService::new(db.clone());
+        let lease = crawler.acquire_lease().unwrap();
+        let initial = serde_json::json!({
+            "movie": {"slug": "growing-series", "mediaType": "tv", "title": {"vi": "Growing Series"}, "epTotal": 3},
+            "episodes": [{"season": 1, "episode": 1, "sources": [{"url": "/api/hls/old/master.m3u8"}]}]
+        });
+        let refreshed = serde_json::json!({
+            "movie": {"slug": "growing-series", "mediaType": "tv", "title": {"vi": "Growing Series"}, "epTotal": 3},
+            "episodes": [
+                {"season": 1, "episode": 1, "sources": [{"url": "/api/hls/new-one/master.m3u8"}]},
+                {"season": 1, "episode": 2, "sources": [{"url": "/api/hls/new-two/master.m3u8"}]}
+            ]
+        });
+
+        for value in [&initial, &refreshed] {
+            let movie = parse_title_json_to_movie("growing-series", value).unwrap();
+            db.upsert_movie_with_fence(&movie, &crawler.owner_id, lease.token).unwrap();
+        }
+
+        let movie = db.get_movie_by_slug("growing-series").unwrap().unwrap();
+        assert_eq!(movie.episodes.len(), 2);
+        assert!(movie.episodes[0].sources[0].hls_url.contains("/new-one/"));
+        assert!(movie.episodes[1].sources[0].hls_url.contains("/new-two/"));
+    }
+
+    #[test]
     fn test_parse_home_movie_item() {
         let item_json = r#"{
             "_id": "6adbca73dd087d43ae0fd928",
@@ -1267,6 +1308,11 @@ mod tests {
 
         // Cache should not be stale now
         assert!(!crawler.is_home_cache_stale_or_empty());
+
+        // The next scheduled crawl must be able to acquire the lease as soon
+        // as the home sync returns.
+        let lease = crawler.acquire_lease_async().await.expect("Home sync released its lease");
+        lease.release().await.unwrap();
     }
 
     #[tokio::test]

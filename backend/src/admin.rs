@@ -542,7 +542,7 @@ pub async fn admin_crawler_start(
             "success": triggered,
             "mode": "full",
             "message": if triggered {
-                "Đã kích hoạt quét toàn bộ 3,211 phim thành công"
+                "Đã kích hoạt quét toàn bộ danh sách phim"
             } else {
                 "Crawler đang chạy"
             }
