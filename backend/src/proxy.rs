@@ -553,13 +553,21 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
     fetch_upstream_title_hls_with_episode(client, slug, None).await
 }
 
-pub async fn fetch_upstream_title_hls_for_episode(slug: &str, episode: i32) -> Option<String> {
+pub async fn fetch_upstream_title_hls_for_season_episode(slug: &str, episode: i32, season: Option<i32>) -> Option<String> {
     let client = Client::builder().timeout(Duration::from_secs(10)).no_proxy()
         .redirect(reqwest::redirect::Policy::none()).build().ok()?;
-    fetch_upstream_title_hls_with_episode(&client, slug, Some(episode)).await
+    fetch_upstream_title_hls_with_season_episode(&client, slug, Some(episode), season).await
+}
+
+pub async fn fetch_upstream_title_hls_for_episode(slug: &str, episode: i32) -> Option<String> {
+    fetch_upstream_title_hls_for_season_episode(slug, episode, None).await
 }
 
 async fn fetch_upstream_title_hls_with_episode(client: &Client, slug: &str, episode: Option<i32>) -> Option<String> {
+    fetch_upstream_title_hls_with_season_episode(client, slug, episode, None).await
+}
+
+async fn fetch_upstream_title_hls_with_season_episode(client: &Client, slug: &str, episode: Option<i32>, season: Option<i32>) -> Option<String> {
     let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
     let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
 
@@ -594,7 +602,7 @@ async fn fetch_upstream_title_hls_with_episode(client: &Client, slug: &str, epis
         }
     };
     let json_val: serde_json::Value = serde_json::from_slice(&json_bytes).ok()?;
-    let hls_path = title_hls_url(&json_val, episode)?;
+    let hls_path = title_hls_url_with_season(&json_val, episode, season)?;
 
     let full_hls = if hls_path.starts_with('/') {
         format!("https://fiml4k.fun{}", hls_path)
@@ -611,16 +619,56 @@ async fn fetch_upstream_title_hls_with_episode(client: &Client, slug: &str, epis
     Some(full_hls)
 }
 
+#[allow(dead_code)]
 fn title_hls_url(value: &serde_json::Value, episode: Option<i32>) -> Option<&str> {
+    title_hls_url_with_season(value, episode, None)
+}
+
+fn title_hls_url_with_season(value: &serde_json::Value, episode: Option<i32>, season: Option<i32>) -> Option<&str> {
     if let Some(wanted) = episode {
-        return value.get("episodes")?.as_array()?.iter().find_map(|ep| {
-            let number = ep.get("episode").or_else(|| ep.get("episodeNumber"))?.as_i64()?;
-            if number != wanted as i64 { return None; }
-            ep.get("sources")?.as_array()?.iter().find_map(|source| source.get("url").and_then(|url| url.as_str()))
+        let ep_array = value.get("episodes")?.as_array()?;
+        let matched_ep = if let Some(s) = season {
+            ep_array.iter().find(|ep| {
+                let ep_season = ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                let number = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                ep_season == s && number == wanted
+            }).or_else(|| {
+                if (1..=ep_array.len()).contains(&(wanted as usize)) {
+                    let candidate = &ep_array[wanted as usize - 1];
+                    let ep_season = candidate.get("season").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                    if ep_season == s { Some(candidate) } else { None }
+                } else {
+                    None
+                }
+            })
+        } else {
+            let has_multi = ep_array.iter().any(|ep| ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) > 1);
+            if has_multi && (1..=ep_array.len()).contains(&(wanted as usize)) {
+                let candidate = &ep_array[wanted as usize - 1];
+                let number = candidate.get("episode").or_else(|| candidate.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                if number != wanted {
+                    Some(candidate)
+                } else {
+                    ep_array.iter().find(|ep| {
+                        let num = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                        num == wanted
+                    })
+                }
+            } else {
+                ep_array.iter().find(|ep| {
+                    let num = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                    num == wanted
+                })
+            }
+        };
+
+        if let Some(ep) = matched_ep {
+            return ep.get("sources")?.as_array()?.iter().find_map(|source| source.get("url").and_then(|url| url.as_str()))
                 .or_else(|| ep.get("servers")?.as_array()?.iter().find_map(|source| {
                     source.get("hlsUrl").or_else(|| source.get("hls_url")).or_else(|| source.get("url")).and_then(|url| url.as_str())
-                }))
-        });
+                }));
+        }
+        return None;
     }
     value.get("movie").and_then(|m| m.get("hlsUrl")).and_then(|h| h.as_str())
         .or_else(|| value.get("episodes")?.as_array()?.first()?.get("sources")?.as_array()?.first()?.get("url")?.as_str())
@@ -1313,6 +1361,25 @@ https://v16m-default.akamaicdn.net/chunk01.image
         assert_eq!(title_hls_url(&title, Some(2)), Some("/api/hls/ep2/master.m3u8"));
         assert_eq!(title_hls_url(&title, Some(3)), None);
         assert_eq!(title_hls_url(&title, None), Some("/api/hls/ep1/master.m3u8"));
+    }
+
+    #[test]
+    fn test_title_hls_url_with_season_resolution() {
+        let title = serde_json::json!({
+            "episodes": [
+                {"season": 1, "episode": 5, "sources": [{"url": "/api/hls/s1e5/master.m3u8"}]},
+                {"season": 2, "episode": 1, "sources": [{"url": "/api/hls/s2e1/master.m3u8"}]},
+                {"season": 2, "episode": 5, "sources": [{"url": "/api/hls/s2e5/master.m3u8"}]}
+            ]
+        });
+        // 1. Season + episode exact match
+        assert_eq!(title_hls_url_with_season(&title, Some(1), Some(2)), Some("/api/hls/s2e1/master.m3u8"));
+        assert_eq!(title_hls_url_with_season(&title, Some(5), Some(1)), Some("/api/hls/s1e5/master.m3u8"));
+        assert_eq!(title_hls_url_with_season(&title, Some(5), Some(2)), Some("/api/hls/s2e5/master.m3u8"));
+        // 2. Global index fallback when season provided: ep=2, season=2 -> index 2 is S2E1
+        assert_eq!(title_hls_url_with_season(&title, Some(2), Some(2)), Some("/api/hls/s2e1/master.m3u8"));
+        // 3. Fallback when season=None but multi-season array present: ep=2 -> index 2
+        assert_eq!(title_hls_url_with_season(&title, Some(2), None), Some("/api/hls/s2e1/master.m3u8"));
     }
 
     #[tokio::test]

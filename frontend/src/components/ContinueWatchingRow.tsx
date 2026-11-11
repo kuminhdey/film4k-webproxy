@@ -227,7 +227,7 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
                 <div className="absolute top-2 left-2 flex items-center gap-1 z-10">
                   <span className="px-2 py-0.5 rounded-lg bg-black/75 backdrop-blur-md text-lime-300 border border-lime-500/30 text-[11px] font-extrabold shadow-md">
                     {item.episodeName
-                      ? item.episodeName.startsWith('Tập')
+                      ? item.episodeName.startsWith('Tập') || isNaN(Number(item.episodeName.trim()))
                         ? item.episodeName
                         : `Tập ${item.episodeName}`
                       : 'Đang xem'}

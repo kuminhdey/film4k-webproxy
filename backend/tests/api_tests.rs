@@ -1661,3 +1661,183 @@ async fn test_api_stream_sub_endpoint_and_caching() {
     let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie").await;
     let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie_ep2").await;
 }
+
+#[tokio::test]
+async fn test_multi_season_friends_stream_endpoints() {
+    let (base_url, db) = spawn_test_server().await;
+    let client = Client::new();
+
+    // 1. Seed friends with Season 1 and Season 2 episodes in SQLite
+    let mut episodes = Vec::new();
+    // Season 1: 24 episodes
+    for ep in 1..=24 {
+        episodes.push(Episode {
+            id: None,
+            movie_slug: "friends".to_string(),
+            season: 1,
+            episode: ep,
+            title: if ep == 5 { Some("Bột giặt Đông Đức".to_string()) } else { Some(format!("Tập {}", ep)) },
+            runtime: Some(22),
+            still: None,
+            sources: vec![Source {
+                label: "Server 1".to_string(),
+                hls_url: format!("https://film4k.net/api/hls/friends_s1e{}.m3u8", ep),
+                proxy_stream_url: None,
+            }],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
+        });
+    }
+    // Season 2: 24 episodes (S2E1 is globalIndex 25, S2E5 is globalIndex 29)
+    for ep in 1..=24 {
+        episodes.push(Episode {
+            id: None,
+            movie_slug: "friends".to_string(),
+            season: 2,
+            episode: ep,
+            title: match ep {
+                1 => Some("Bạn gái mới của Ross".to_string()),
+                5 => Some("Năm miếng thịt nướng và một quả cà tím".to_string()),
+                _ => Some(format!("Tập {}", ep)),
+            },
+            runtime: Some(22),
+            still: None,
+            sources: vec![Source {
+                label: "Server 1".to_string(),
+                hls_url: format!("https://film4k.net/api/hls/friends_s2e{}.m3u8", ep),
+                proxy_stream_url: None,
+            }],
+            servers: vec![],
+            subtitles: vec![],
+            audio_tracks: vec![],
+        });
+    }
+
+    let friends_movie = Movie {
+        id: None,
+        slug: "friends".to_string(),
+        movie_type: "tv".to_string(),
+        title_vi: Some("Những Người Bạn".to_string()),
+        title_en: Some("Friends".to_string()),
+        year: Some(1994),
+        quality: Some("1080p".to_string()),
+        score: Some(8.9),
+        genres: vec!["Comedy".to_string(), "Romance".to_string()],
+        country: Some("US".to_string()),
+        poster: None,
+        backdrop: None,
+        overview: Some("The lives, loves, and laughs of six friends in Manhattan.".to_string()),
+        total_episodes: Some(48),
+        stream: None,
+        episodes,
+        servers: vec![],
+        subtitles: vec![],
+        audio_tracks: vec![],
+    };
+    db.upsert_movie(&friends_movie).expect("Failed to upsert friends movie");
+
+    // 2. Pre-populate mock cache for S1E5, S2E1 (ep 25, season 2), and S2E5 (ep 29, season 2)
+    let base_playlists_dir = std::path::PathBuf::from("data/playlists");
+    let s1e5_dir = base_playlists_dir.join("friends_ep5");
+    let s2e1_dir = base_playlists_dir.join("friends_s2_ep25");
+    let s2e5_dir = base_playlists_dir.join("friends_s2_ep29");
+
+    tokio::fs::create_dir_all(&s1e5_dir).await.unwrap();
+    tokio::fs::create_dir_all(&s2e1_dir).await.unwrap();
+    tokio::fs::create_dir_all(&s2e5_dir).await.unwrap();
+
+    let s1e5_master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=3000000\nv0.m3u8\n";
+    let s2e1_master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=3000000\nv0.m3u8?season=2\n";
+    let s2e5_master = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=3000000\nv0.m3u8?season=2\n";
+
+    tokio::fs::write(s1e5_dir.join("master.m3u8"), s1e5_master).await.unwrap();
+    tokio::fs::write(s2e1_dir.join("master.m3u8"), s2e1_master).await.unwrap();
+    tokio::fs::write(s2e5_dir.join("master.m3u8"), s2e5_master).await.unwrap();
+
+    let s2e1_v0 = "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nhttps://cdn.example.com/s2e1_chunk.ts\n";
+    tokio::fs::write(s2e1_dir.join("v0.m3u8"), s2e1_v0).await.unwrap();
+
+    let s2e1_sub_dir = s2e1_dir.join("sub");
+    tokio::fs::create_dir_all(&s2e1_sub_dir).await.unwrap();
+    let s2e1_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nS2E1 Ross's New Girlfriend Sub\n";
+    tokio::fs::write(s2e1_sub_dir.join("vietnamese.vtt"), s2e1_vtt).await.unwrap();
+
+    // 3. Test GET /api/movies/friends to verify all 48 episodes exist
+    let movie_resp = client
+        .get(format!("{}/api/movies/friends", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(movie_resp.status(), StatusCode::OK);
+    let movie_json: serde_json::Value = movie_resp.json().await.unwrap();
+    let ep_list = movie_json["episodes"].as_array().unwrap();
+    assert_eq!(ep_list.len(), 48);
+    // S1E5 (index 4)
+    assert_eq!(ep_list[4]["season"], 1);
+    assert_eq!(ep_list[4]["episode"], 5);
+    assert_eq!(ep_list[4]["title"], "Bột giặt Đông Đức");
+    // S2E1 (index 24)
+    assert_eq!(ep_list[24]["season"], 2);
+    assert_eq!(ep_list[24]["episode"], 1);
+    assert_eq!(ep_list[24]["title"], "Bạn gái mới của Ross");
+    // S2E5 (index 28)
+    assert_eq!(ep_list[28]["season"], 2);
+    assert_eq!(ep_list[28]["episode"], 5);
+    assert_eq!(ep_list[28]["title"], "Năm miếng thịt nướng và một quả cà tím");
+
+    // 4. Test S1E5 stream: /api/stream/friends/ep/5/master.m3u8
+    let resp_s1e5 = client
+        .get(format!("{}/api/stream/friends/ep/5/master.m3u8", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_s1e5.status(), StatusCode::OK);
+    let body_s1e5 = resp_s1e5.text().await.unwrap();
+    assert_eq!(body_s1e5, s1e5_master);
+
+    // 5. Test S2E1 stream: /api/stream/friends/ep/25/master.m3u8?season=2
+    let resp_s2e1 = client
+        .get(format!("{}/api/stream/friends/ep/25/master.m3u8?season=2", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_s2e1.status(), StatusCode::OK);
+    let body_s2e1 = resp_s2e1.text().await.unwrap();
+    assert_eq!(body_s2e1, s2e1_master);
+
+    // 6. Test S2E5 stream: /api/stream/friends/ep/29/master.m3u8?season=2
+    let resp_s2e5 = client
+        .get(format!("{}/api/stream/friends/ep/29/master.m3u8?season=2", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_s2e5.status(), StatusCode::OK);
+    let body_s2e5 = resp_s2e5.text().await.unwrap();
+    assert_eq!(body_s2e5, s2e5_master);
+
+    // 7. Test S2E1 sub-playlist: /api/stream/friends/ep/25/v0.m3u8?season=2
+    let resp_v0 = client
+        .get(format!("{}/api/stream/friends/ep/25/v0.m3u8?season=2", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_v0.status(), StatusCode::OK);
+    let body_v0 = resp_v0.text().await.unwrap();
+    assert_eq!(body_v0, s2e1_v0);
+
+    // 8. Test S2E1 subtitle: /api/stream/friends/ep/25/sub/vietnamese.vtt?season=2
+    let resp_s2e1_sub = client
+        .get(format!("{}/api/stream/friends/ep/25/sub/vietnamese.vtt?season=2", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp_s2e1_sub.status(), StatusCode::OK);
+    let body_sub = resp_s2e1_sub.text().await.unwrap();
+    assert!(body_sub.contains("Ross's New Girlfriend Sub"));
+
+    // Clean up
+    let _ = tokio::fs::remove_dir_all(&s1e5_dir).await;
+    let _ = tokio::fs::remove_dir_all(&s2e1_dir).await;
+    let _ = tokio::fs::remove_dir_all(&s2e5_dir).await;
+}

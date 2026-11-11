@@ -1664,7 +1664,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setCurrentSubtitleTrack(-1);
     const saved = typeof window !== 'undefined' ? localStorage.getItem('bofilm_player_quality') : null;
     setCurrentLevel(saved !== null ? parseInt(saved, 10) : -1);
-  }, [movieSlug, episodeSlug, serverIndex, m3u8Url]);
+  }, [movieSlug, episodeSlug, currentEpisodeSlug, serverIndex, m3u8Url]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1850,7 +1850,8 @@ function parseEpisodeNum(slug?: string, name?: string): number {
     if (hlsFallbackErrorRef.current) return;
 
     let isDisposed = false;
-    const epNum = parseEpisodeNum(episodeSlug, episodeName);
+    const activeEpSlug = currentEpisodeSlug || episodeSlug;
+    const epNum = parseEpisodeNum(activeEpSlug, episodeName);
 
     let checkStreamTimer: ReturnType<typeof setTimeout> | null = null;
     if (!isManualModeRef.current && playerModeProp !== 'embed') {
@@ -1879,7 +1880,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         clearTimeout(checkStreamTimer);
       }
     };
-  }, [playerMode, movieSlug, episodeName, episodeSlug, playerModeProp, m3u8Url, serverIndex]);
+  }, [playerMode, movieSlug, episodeName, episodeSlug, currentEpisodeSlug, playerModeProp, m3u8Url, serverIndex]);
 
   // Handle HLS stream initialization when playerMode === 'hls'
   useEffect(() => {
@@ -1894,8 +1895,9 @@ function parseEpisodeNum(slug?: string, name?: string): number {
 
     let isDisposed = false;
     const video = videoRef.current;
-    const epNum = parseEpisodeNum(episodeSlug, episodeName);
-    const currentEpKey = `${movieSlug || ''}:${epNum}`;
+    const activeEpSlug = currentEpisodeSlug || episodeSlug;
+    const epNum = parseEpisodeNum(activeEpSlug, episodeName);
+    const currentEpKey = m3u8Url || `${movieSlug || ''}:${activeEpSlug || epNum}`;
 
     let streamUrl: string;
     if (m3u8Url) {
@@ -2322,7 +2324,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
         video.load();
       }
     };
-  }, [m3u8Url, serverIndex, movieSlug, episodeName, episodeSlug, playerMode, key, deepLinkTime]);
+  }, [m3u8Url, serverIndex, movieSlug, episodeName, episodeSlug, currentEpisodeSlug, playerMode, key, deepLinkTime]);
 
   const handleReload = () => {
     retryCountRef.current = 0;
@@ -2972,7 +2974,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
               Đang phát:{' '}
               <span className="text-[#fef08a] font-bold">
                 {episodeName
-                  ? episodeName.startsWith('Tập')
+                  ? episodeName.startsWith('Tập') || isNaN(Number(episodeName.trim()))
                     ? episodeName
                     : `Tập ${episodeName}`
                   : 'Tập 1'}
@@ -3573,7 +3575,7 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                     Tập tiếp theo sẽ tự động phát sau
                   </p>
                   <h3 className="text-lg sm:text-xl font-black text-[#f4fbf0] mt-1 drop-shadow">
-                    {nextEpisode.name.startsWith('Tập')
+                    {nextEpisode.name.startsWith('Tập') || isNaN(Number(nextEpisode.name.trim()))
                       ? nextEpisode.name
                       : `Tập ${nextEpisode.name}`}
                   </h3>
@@ -3712,13 +3714,13 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                   </div>
                   <div className="flex-1 overflow-y-auto p-4">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-                      {allEpisodes.map((ep) => {
+                      {allEpisodes.map((ep, idx) => {
                         const isCurrent =
                           (currentEpisodeSlug && ep.slug === currentEpisodeSlug) ||
                           (!currentEpisodeSlug && ep.slug === episodeSlug);
                         return (
                           <button
-                            key={ep.slug}
+                            key={`${ep.slug}-${idx}`}
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3732,7 +3734,9 @@ function parseEpisodeNum(slug?: string, name?: string): number {
                             }`}
                           >
                             <span className="truncate">
-                              {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
+                              {ep.name.startsWith('Tập') || isNaN(Number(ep.name.trim()))
+                                ? ep.name
+                                : `Tập ${ep.name}`}
                             </span>
                             {isCurrent && <Check className="w-3.5 h-3.5 stroke-[3] flex-shrink-0" />}
                           </button>

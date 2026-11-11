@@ -210,16 +210,32 @@ export function movieDetailAdapter(raw: any): MovieDetail {
       episodeServers = [raw.episodes[0]];
     } else {
       const defaultServerItems: EpisodeItem[] = [];
+      const seenEpisodeNums = new Set<number>();
+      let hasDuplicateEpNums = false;
+      for (const ep of raw.episodes) {
+        const num = Number(ep.episode || 1);
+        if (seenEpisodeNums.has(num)) {
+          hasDuplicateEpNums = true;
+          break;
+        }
+        seenEpisodeNums.add(num);
+      }
+      const hasMultipleSeasons =
+        raw.episodes.some((ep: any) => (ep.season ?? 1) > 1) ||
+        hasDuplicateEpNums;
 
-      raw.episodes.forEach((ep: any) => {
+      raw.episodes.forEach((ep: any, idx: number) => {
         const epNum = ep.episode || 1;
+        const seasonNum = ep.season || 1;
+        const globalIndex = idx + 1;
         const epTitle = ep.title || `Tập ${epNum}`;
-        const epSlug = `tap-${epNum}`;
+        const epSlug = hasMultipleSeasons ? `tap-${globalIndex}` : `tap-${epNum}`;
         const primaryServer = ep.servers?.[0] || ep.sources?.[0];
-        const m3u8Url =
-          epNum > 1
-            ? `/api/stream/${encodeURIComponent(slug)}/ep/${epNum}/master.m3u8`
-            : `/api/stream/${encodeURIComponent(slug)}/master.m3u8`;
+        const m3u8Url = hasMultipleSeasons
+          ? `/api/stream/${encodeURIComponent(slug)}/ep/${globalIndex}/master.m3u8?season=${seasonNum}`
+          : epNum > 1
+          ? `/api/stream/${encodeURIComponent(slug)}/ep/${epNum}/master.m3u8`
+          : `/api/stream/${encodeURIComponent(slug)}/master.m3u8`;
         const embedUrl =
           primaryServer?.embed ||
           (ep.embed && !ep.embed.includes('.m3u8') ? ep.embed : '');
@@ -229,6 +245,9 @@ export function movieDetailAdapter(raw: any): MovieDetail {
           slug: epSlug,
           embed: embedUrl,
           m3u8: m3u8Url,
+          season: seasonNum,
+          episode: epNum,
+          globalIndex,
           subtitles: ep.subtitles || raw.subtitles || [],
           audio_tracks:
             ep.audio_tracks ||

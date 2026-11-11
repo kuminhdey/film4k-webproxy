@@ -328,13 +328,22 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
           )}
 
           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2 max-h-96 overflow-y-auto pr-1">
-            {currentServer.items.map((ep) => (
+            {currentServer.items.map((ep, idx) => (
               <button
-                key={ep.slug}
+                key={`${ep.slug}-${idx}`}
                 onClick={() => onWatch(slug, ep.slug, activeServerIndex)}
-                className="flex items-center justify-center p-2 rounded-xl text-xs font-bold bg-[#0a180b] hover:bg-lime-500 hover:text-black text-[#d8ebd5] border border-lime-500/20 hover:border-lime-400 transition-all min-h-[44px] cursor-pointer"
+                title={
+                  ep.season && ep.season > 1
+                    ? `Tập ${ep.globalIndex || ep.name} (Mùa ${ep.season})`
+                    : `Tập ${ep.name}`
+                }
+                className="flex items-center justify-center overflow-hidden p-2 rounded-xl text-xs font-bold bg-[#0a180b] hover:bg-lime-500 hover:text-black text-[#d8ebd5] border border-lime-500/20 hover:border-lime-400 transition-all min-h-[44px] cursor-pointer"
               >
-                <span>Tập {ep.name}</span>
+                <span className="truncate">
+                  {ep.name.startsWith('Tập') || isNaN(Number(ep.name.trim()))
+                    ? ep.name
+                    : `Tập ${ep.name}`}
+                </span>
               </button>
             ))}
           </div>

@@ -72,12 +72,26 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         const history = getHistory();
         const histItem = history.find((h) => h.slug === movieSlug);
         if (histItem?.episodeSlug) {
-          const lastKey = normalizeEpKey(histItem.episodeSlug);
-          const lastIndex = allEpisodes.findIndex(
-            (item) =>
-              normalizeEpKey(item.slug) === lastKey ||
-              normalizeEpKey(item.name) === lastKey
-          );
+          const histEpSlug = histItem.episodeSlug;
+          const sMatch = histEpSlug.match(/^s(\d+)[-_\s]*(?:e|tap|ep)[-_\s]*(\d+)$/i);
+          let lastIndex = -1;
+          if (sMatch) {
+            const s = parseInt(sMatch[1], 10);
+            const e = parseInt(sMatch[2], 10);
+            lastIndex = allEpisodes.findIndex(
+              (item) => (item.season ?? 1) === s && (item.episode ?? 1) === e
+            );
+          }
+          if (lastIndex === -1) {
+            const lastKey = normalizeEpKey(histEpSlug);
+            lastIndex = allEpisodes.findIndex(
+              (item) =>
+                item.slug === histEpSlug ||
+                normalizeEpKey(item.slug) === lastKey ||
+                (item.globalIndex !== undefined && String(item.globalIndex) === lastKey) ||
+                normalizeEpKey(item.name) === lastKey
+            );
+          }
           if (lastIndex !== -1) {
             allEpisodes.forEach((item, idx) => {
               if (idx < lastIndex) watched.add(item.slug);
@@ -121,7 +135,10 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
       (item) =>
         item.name.toLowerCase().includes(q) ||
         item.slug.toLowerCase().includes(q) ||
-        item.name.replace(/^Tập\s*/i, '').toLowerCase().includes(q)
+        item.name.replace(/^Tập\s*/i, '').toLowerCase().includes(q) ||
+        (item.globalIndex !== undefined && String(item.globalIndex).includes(q)) ||
+        (item.season !== undefined && `s${item.season}e${item.episode ?? ''}`.includes(q)) ||
+        (item.season !== undefined && `mùa ${item.season}`.includes(q))
     );
   }, [allEpisodes, searchQuery]);
 
@@ -132,11 +149,44 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   const episodesPerRange = shouldSplitRanges ? RANGE_SIZE : Math.max(1, allEpisodes.length);
   const totalRanges = Math.max(1, Math.ceil(allEpisodes.length / episodesPerRange));
 
-  // Current active episode index
+  // Current active episode index: robustly match multi-season slugs, globalIndex, or season/episode patterns
   const activeEpisodeIndex = useMemo(() => {
-    return allEpisodes.findIndex(
+    if (!activeEpisodeSlug) return -1;
+
+    // 1. Check s{S}-tap-{E} or s{S}e{E}
+    const sMatch = activeEpisodeSlug.match(/^s(\d+)[-_\s]*(?:e|tap|ep)[-_\s]*(\d+)$/i);
+    if (sMatch) {
+      const s = parseInt(sMatch[1], 10);
+      const e = parseInt(sMatch[2], 10);
+      const idx = allEpisodes.findIndex(
+        (item) => (item.season ?? 1) === s && (item.episode ?? 1) === e
+      );
+      if (idx !== -1) return idx;
+    }
+
+    // 2. Direct slug or name match
+    let idx = allEpisodes.findIndex(
       (item) => item.slug === activeEpisodeSlug || item.name === activeEpisodeSlug
     );
+    if (idx !== -1) return idx;
+
+    // 3. Clean number match: prioritize slug / globalIndex, then clean name / episode number
+    const cleanNumMatch = activeEpisodeSlug.match(/\d+/);
+    if (cleanNumMatch) {
+      const num = parseInt(cleanNumMatch[0], 10);
+      idx = allEpisodes.findIndex(
+        (item) => item.slug === `tap-${num}` || item.globalIndex === num
+      );
+      if (idx !== -1) return idx;
+
+      idx = allEpisodes.findIndex((item) => {
+        const cleanName = item.name.replace(/^Tập\s*/i, '').trim();
+        return cleanName === String(num) || item.episode === num;
+      });
+      if (idx !== -1) return idx;
+    }
+
+    return -1;
   }, [allEpisodes, activeEpisodeSlug]);
 
   // Auto-follow the active episode's range on first load / episode change
@@ -313,11 +363,16 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                 const start = idx * episodesPerRange + 1;
                 const end = Math.min(allEpisodes.length, (idx + 1) * episodesPerRange);
                 const isActive = idx === pageRangeIndex;
-                const containsActive = allEpisodes
-                  .slice(idx * episodesPerRange, (idx + 1) * episodesPerRange)
-                  .some(
-                    (item) => item.slug === activeEpisodeSlug || item.name === activeEpisodeSlug
-                  );
+                const containsActive =
+                  activeEpisodeIndex !== -1
+                    ? activeEpisodeIndex >= idx * episodesPerRange &&
+                      activeEpisodeIndex < (idx + 1) * episodesPerRange
+                    : allEpisodes
+                        .slice(idx * episodesPerRange, (idx + 1) * episodesPerRange)
+                        .some(
+                          (item) =>
+                            item.slug === activeEpisodeSlug || item.name === activeEpisodeSlug
+                        );
 
                 return (
                   <button
@@ -371,10 +426,11 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         ) : (
           /* Episodes Grid with 44px min touch target */
           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2 sm:gap-2.5 max-h-96 overflow-y-auto pr-1">
-            {visibleEpisodes.map((item) => {
+            {visibleEpisodes.map((item, idx) => {
               const isActive =
-                item.slug === activeEpisodeSlug ||
-                item.name === activeEpisodeSlug;
+                activeEpisodeIndex !== -1
+                  ? allEpisodes[activeEpisodeIndex] === item
+                  : item.slug === activeEpisodeSlug || item.name === activeEpisodeSlug;
 
               const isWatched = watchedEpisodes.has(item.slug);
               const epProgress = watchProgress[item.slug];
@@ -382,10 +438,14 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                 epProgress && epProgress.duration > 0
                   ? Math.min(100, Math.max(0, (epProgress.time / epProgress.duration) * 100))
                   : 0;
+              const hasSeasonLabel = Boolean(item.season && item.season > 1);
+              const tooltipText = hasSeasonLabel
+                ? `Tập ${item.globalIndex || item.name} (Mùa ${item.season})`
+                : `Tập ${item.name}`;
 
               return (
                 <button
-                  key={item.slug}
+                  key={`${item.slug}-${idx}`}
                   type="button"
                   onClick={() => onSelectEpisode(item.slug)}
                   className={`relative flex items-center justify-center overflow-hidden p-2 rounded-xl text-xs font-bold transition-all min-h-[44px] min-w-[44px] touch-manipulation cursor-pointer active:scale-95 ${
@@ -397,10 +457,14 @@ export const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                   }`}
                   title={
                     isWatched
-                      ? `Tập ${item.name} — Đã xem${progressPercent > 0 ? ` (${Math.round(progressPercent)}%)` : ''}`
-                      : `Tập ${item.name}`
+                      ? `${tooltipText} — Đã xem${progressPercent > 0 ? ` (${Math.round(progressPercent)}%)` : ''}`
+                      : tooltipText
                   }
-                  aria-label={`Chọn xem tập ${item.name}`}
+                  aria-label={
+                    hasSeasonLabel
+                      ? `Chọn xem tập ${item.globalIndex || item.name} Mùa ${item.season}`
+                      : `Chọn xem tập ${item.name}`
+                  }
                   aria-current={isActive ? 'true' : undefined}
                 >
                   {!isActive && isWatched && (

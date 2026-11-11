@@ -64,6 +64,9 @@ export interface EpisodeItem {
   slug: string;
   embed: string;
   m3u8?: string;
+  season?: number;
+  episode?: number;
+  globalIndex?: number;
   subtitles?: SubtitleTrack[];
   audio_tracks?: AudioTrack[];
 }

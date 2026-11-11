@@ -40,16 +40,80 @@ export function getEpisodeHlsUrl(
   slug: string,
   epNum: number = 1,
   isSeries: boolean = false,
-  serverIndex?: number
+  serverIndex?: number,
+  season?: number
 ): string {
-  const isMultiEp = isSeries && epNum > 1;
+  const hasSeasonParam = season !== undefined && season > 1;
+  const isMultiEp = (isSeries && epNum > 1) || hasSeasonParam;
   const basePath = isMultiEp
     ? `/api/stream/${encodeURIComponent(slug)}/ep/${epNum}/master.m3u8`
     : `/api/stream/${encodeURIComponent(slug)}/master.m3u8`;
-  if (serverIndex !== undefined && serverIndex > 0) {
-    return `${basePath}?server=${serverIndex}`;
+  const params = new URLSearchParams();
+  if (hasSeasonParam) {
+    params.set('season', String(season));
   }
-  return basePath;
+  if (serverIndex !== undefined && serverIndex > 0) {
+    params.set('server', String(serverIndex));
+  }
+  const queryString = params.toString();
+  return queryString ? `${basePath}?${queryString}` : basePath;
+}
+
+export function findEpisodeIndex(items: EpisodeItem[], episodeSlug?: string): number {
+  if (!items || items.length === 0) return -1;
+  if (!episodeSlug) return 0;
+
+  let currentEpisodeIndex = -1;
+
+  // 1. Support s{S}-tap-{E} or s{S}e{E} (e.g., s2-tap-5, s2e5, s02e01)
+  const sMatch = episodeSlug.match(/^s(\d+)[-_\s]*(?:e|tap|ep)[-_\s]*(\d+)$/i);
+  if (sMatch) {
+    const seasonTarget = parseInt(sMatch[1], 10);
+    const episodeTarget = parseInt(sMatch[2], 10);
+    currentEpisodeIndex = items.findIndex(
+      (ep) => (ep.season ?? 1) === seasonTarget && (ep.episode ?? 1) === episodeTarget
+    );
+  }
+
+  // 2. Direct slug or name match
+  if (currentEpisodeIndex === -1) {
+    currentEpisodeIndex = items.findIndex(
+      (ep) => ep.slug === episodeSlug || ep.name === episodeSlug
+    );
+  }
+
+  // 3. Clean number match: if episodeSlug is tap-25, cleanTarget = 25, match ep.slug, globalIndex === 25, or ep.episode === 25
+  if (currentEpisodeIndex === -1) {
+    const cleanTargetStr = episodeSlug.replace(/^(?:tap|ep)[-_]?/i, '').trim();
+    const numMatch = episodeSlug.match(/\d+/);
+    const cleanTarget = numMatch ? parseInt(numMatch[0], 10) : NaN;
+
+    // 3a. Prioritize slug, cleanSlug, or globalIndex match
+    currentEpisodeIndex = items.findIndex((ep) => {
+      const cleanSlug = ep.slug.replace(/^tap-/i, '').trim();
+      if (cleanSlug === cleanTargetStr) return true;
+      if (!isNaN(cleanTarget)) {
+        if (ep.slug === `tap-${cleanTarget}`) return true;
+        if (ep.globalIndex === cleanTarget) return true;
+      }
+      return false;
+    });
+
+    // 3b. Next match ep.episode or cleanName
+    if (currentEpisodeIndex === -1) {
+      currentEpisodeIndex = items.findIndex((ep) => {
+        const cleanName = ep.name.replace(/^Tập\s*/i, '').trim();
+        if (cleanName === cleanTargetStr || cleanName === episodeSlug) return true;
+        if (!isNaN(cleanTarget)) {
+          if (ep.episode === cleanTarget) return true;
+        }
+        return false;
+      });
+    }
+  }
+
+  // Fallback if not found: keep index 0
+  return currentEpisodeIndex !== -1 ? currentEpisodeIndex : 0;
 }
 
 interface WatchPageProps {
@@ -183,31 +247,12 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const currentServer = servers[activeServerIndex] || servers[0];
   const items: EpisodeItem[] = currentServer?.items || [];
 
-  // Match episode item
-  let currentEpisode: EpisodeItem | undefined;
-  let currentEpisodeIndex = -1;
-  if (episodeSlug) {
-    const cleanTarget = episodeSlug.replace(/^tap-/i, '').trim();
-    currentEpisodeIndex = items.findIndex((ep) => {
-      const cleanName = ep.name.replace(/^Tập\s*/i, '').trim();
-      const cleanSlug = ep.slug.replace(/^tap-/i, '').trim();
-      return (
-        ep.slug === episodeSlug ||
-        ep.name === episodeSlug ||
-        cleanName === cleanTarget ||
-        cleanSlug === cleanTarget ||
-        cleanName === episodeSlug ||
-        cleanSlug === episodeSlug
-      );
-    });
-    if (currentEpisodeIndex !== -1) {
-      currentEpisode = items[currentEpisodeIndex];
-    }
-  }
-  if (!currentEpisode && items.length > 0) {
-    currentEpisode = items[0];
-    currentEpisodeIndex = 0;
-  }
+  // Match episode item using findEpisodeIndex
+  const currentEpisodeIndex = findEpisodeIndex(items, episodeSlug);
+  const currentEpisode: EpisodeItem | undefined =
+    currentEpisodeIndex >= 0 && currentEpisodeIndex < items.length
+      ? items[currentEpisodeIndex]
+      : items[0];
 
   const nextEpisode =
     currentEpisodeIndex >= 0 && currentEpisodeIndex < items.length - 1
@@ -244,7 +289,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   // Determine whether this movie has multiple episodes (TV Series) vs Single Movie (phim lẻ)
   const isSeries = (movie.total_episodes !== undefined && Number(movie.total_episodes) > 1) || items.length > 1;
   const isSingleMovie = !isSeries;
-  const epNum = parseEpisodeNumber(currentEpisode?.slug, currentEpisode?.name);
+  const epNum =
+    currentEpisode?.globalIndex ||
+    parseEpisodeNumber(currentEpisode?.slug, currentEpisode?.name);
 
   // Extract categories/genres for related movies
   const genresList: string[] = [];
@@ -258,8 +305,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     });
   }
 
-  // Authentic HLS URL generation: /api/stream/:slug/master.m3u8 (or ep/N for series N > 1)
-  const hlsStreamUrl = getEpisodeHlsUrl(movie.slug, epNum, isSeries, activeServerIndex);
+  // Authentic HLS URL generation: /api/stream/:slug/master.m3u8 (or ep/N for series N > 1, with season query param if season > 1)
+  const hlsStreamUrl = getEpisodeHlsUrl(
+    movie.slug,
+    epNum,
+    isSeries,
+    activeServerIndex,
+    currentEpisode?.season
+  );
 
   // Only pass embedUrl if it is a real webpage embed, not an m3u8 playlist file
   const rawEmbed = currentEpisode?.embed || '';
@@ -304,7 +357,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
                 <>
                   {' '}—{' '}
                   <span className="text-lime-400 font-bold">
-                    {formatEpisodeLabel(currentEpisode.name)}
+                    {currentEpisode.season && currentEpisode.season > 1
+                      ? `${currentEpisode.name} (Mùa ${currentEpisode.season})`
+                      : formatEpisodeLabel(currentEpisode.name)}
                   </span>
                 </>
               ) : null}
@@ -348,7 +403,9 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             <>
               {' '}—{' '}
               <span className="text-lime-400 font-bold">
-                {formatEpisodeLabel(currentEpisode.name)}
+                {currentEpisode.season && currentEpisode.season > 1
+                  ? `${currentEpisode.name} (Mùa ${currentEpisode.season})`
+                  : formatEpisodeLabel(currentEpisode.name)}
               </span>
             </>
           ) : null}

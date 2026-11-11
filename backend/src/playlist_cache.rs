@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     db::Database,
     proxy::{
-        add_security_headers, fetch_upstream_title_hls, fetch_upstream_title_hls_for_episode, is_cdn_segment, is_valid_remote_url,
+        add_security_headers, fetch_upstream_title_hls_for_season_episode, is_cdn_segment, is_valid_remote_url,
         fetch_stream_with_referer, read_body_with_cap, resolve_relative_url,
         MAX_PLAYLIST_BYTES,
     },
@@ -173,13 +173,27 @@ impl PlaylistCache {
         self.base_dir.clone()
     }
 
-    pub fn cache_slug_dir_with_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>) -> PathBuf {
+    pub fn cache_slug_dir_with_season_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+    ) -> PathBuf {
         let srv_suffix = match server {
             Some(s) if s > 0 => format!("_srv{}", s),
             _ => String::new(),
         };
-        match ep {
-            Some(e) if e > 1 => self.base_dir.join(format!("{}_ep{}{}", slug, e, srv_suffix)),
+        match (season, ep) {
+            (Some(s), Some(e)) if s > 1 => {
+                self.base_dir.join(format!("{}_s{}_ep{}{}", slug, s, e, srv_suffix))
+            }
+            (Some(s), None) if s > 1 => {
+                self.base_dir.join(format!("{}_s{}_ep1{}", slug, s, srv_suffix))
+            }
+            (_, Some(e)) if e > 1 => {
+                self.base_dir.join(format!("{}_ep{}{}", slug, e, srv_suffix))
+            }
             _ => {
                 if srv_suffix.is_empty() {
                     self.base_dir.join(slug)
@@ -188,6 +202,10 @@ impl PlaylistCache {
                 }
             }
         }
+    }
+
+    pub fn cache_slug_dir_with_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>) -> PathBuf {
+        self.cache_slug_dir_with_season_server(slug, ep, None, server)
     }
 
     pub fn cache_slug_dir(&self, slug: &str, ep: Option<i32>) -> PathBuf {
@@ -210,6 +228,16 @@ impl PlaylistCache {
         self.cache_slug_dir_with_server(slug, ep, server).join("master.m3u8")
     }
 
+    pub fn master_path_for_season_ep_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+    ) -> PathBuf {
+        self.cache_slug_dir_with_season_server(slug, ep, season, server).join("master.m3u8")
+    }
+
     pub fn file_path(&self, slug: &str, file: &str) -> PathBuf {
         self.file_path_for_ep_server(slug, None, None, file)
     }
@@ -220,6 +248,17 @@ impl PlaylistCache {
 
     pub fn file_path_for_ep_server(&self, slug: &str, ep: Option<i32>, server: Option<usize>, file: &str) -> PathBuf {
         self.cache_slug_dir_with_server(slug, ep, server).join(file)
+    }
+
+    pub fn file_path_for_season_ep_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+        file: &str,
+    ) -> PathBuf {
+        self.cache_slug_dir_with_season_server(slug, ep, season, server).join(file)
     }
 
     pub fn cache_count(&self) -> usize {
@@ -292,8 +331,20 @@ impl PlaylistCache {
         refresh: bool,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let master_file = self.master_path_for_ep_server(slug, ep, server);
-        let slug_dir = self.cache_slug_dir_with_server(slug, ep, server);
+        self.get_master_for_season_episode_server(slug, ep, None, server, refresh, db).await
+    }
+
+    pub async fn get_master_for_season_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+        refresh: bool,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let master_file = self.master_path_for_season_ep_server(slug, ep, season, server);
+        let slug_dir = self.cache_slug_dir_with_season_server(slug, ep, season, server);
 
         if !refresh && master_file.exists() {
             // Check signed URL expiration via metadata or file inspection
@@ -415,12 +466,12 @@ impl PlaylistCache {
                 }
             }
             warn!(
-                "Cached master.m3u8 for slug '{}' (ep: {:?}, server: {:?}) is stale or corrupt. Re-crawling...",
-                slug, ep, server
+                "Cached master.m3u8 for slug '{}' (ep: {:?}, season: {:?}, server: {:?}) is stale or corrupt. Re-crawling...",
+                slug, ep, season, server
             );
         }
 
-        self.crawl_and_cache_for_episode_server(slug, ep, server, db).await
+        self.crawl_and_cache_for_season_episode_server(slug, ep, season, server, db).await
     }
 
     pub async fn get_file(
@@ -450,7 +501,19 @@ impl PlaylistCache {
         file: &str,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        let file_path = self.file_path_for_ep_server(slug, ep, server, file);
+        self.get_file_for_season_episode_server(slug, ep, None, server, file, db).await
+    }
+
+    pub async fn get_file_for_season_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+        file: &str,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        let file_path = self.file_path_for_season_ep_server(slug, ep, season, server, file);
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -461,7 +524,7 @@ impl PlaylistCache {
         }
 
         // Also check if cached in sub/ directory
-        let sub_file = self.cache_slug_dir_with_server(slug, ep, server).join("sub").join(file);
+        let sub_file = self.cache_slug_dir_with_season_server(slug, ep, season, server).join("sub").join(file);
         if sub_file.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&sub_file).await {
                 if !content.trim().is_empty() {
@@ -472,15 +535,15 @@ impl PlaylistCache {
 
         // If file is a .vtt subtitle, fetch upstream via subtitle proxy
         if file.ends_with(".vtt") {
-            return self.get_sub_for_episode_server(slug, ep, server, file).await;
+            return self.get_sub_for_season_episode_server(slug, ep, season, server, file).await;
         }
 
         // Self-healing: if file is not found, attempt crawl
         info!(
-            "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}, server: {:?}). Attempting self-healing crawl...",
-            file, slug, ep, server
+            "Sub-playlist file '{}' not found on disk for slug '{}' (ep: {:?}, season: {:?}, server: {:?}). Attempting self-healing crawl...",
+            file, slug, ep, season, server
         );
-        let _ = self.crawl_and_cache_for_episode_server(slug, ep, server, db).await;
+        let _ = self.crawl_and_cache_for_season_episode_server(slug, ep, season, server, db).await;
 
         if file_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -510,7 +573,18 @@ impl PlaylistCache {
         server: Option<usize>,
         file: &str,
     ) -> Result<String, (StatusCode, String)> {
-        let slug_dir = self.cache_slug_dir_with_server(slug, ep, server);
+        self.get_sub_for_season_episode_server(slug, ep, None, server, file).await
+    }
+
+    pub async fn get_sub_for_season_episode_server(
+        &self,
+        slug: &str,
+        ep: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+        file: &str,
+    ) -> Result<String, (StatusCode, String)> {
+        let slug_dir = self.cache_slug_dir_with_season_server(slug, ep, season, server);
         let sub_dir = slug_dir.join("sub");
         let sub_file = sub_dir.join(file);
         let direct_file = slug_dir.join(file);
@@ -568,8 +642,8 @@ impl PlaylistCache {
         }
 
         info!(
-            "Successfully fetched and cached subtitle '{}' for slug '{}' (ep: {:?}, server: {:?})",
-            file, slug, ep, server
+            "Successfully fetched and cached subtitle '{}' for slug '{}' (ep: {:?}, season: {:?}, server: {:?})",
+            file, slug, ep, season, server
         );
         Ok(content)
     }
@@ -598,14 +672,51 @@ impl PlaylistCache {
         server: Option<usize>,
         db: Option<&Database>,
     ) -> Result<String, (StatusCode, String)> {
-        info!("Crawling upstream playlists for slug '{}' (ep: {:?}, server: {:?})...", slug, ep_num, server);
+        self.crawl_and_cache_for_season_episode_server(slug, ep_num, None, server, db).await
+    }
 
-        // An explicit episode/server never falls back to another source.
+    pub async fn crawl_and_cache_for_season_episode_server(
+        &self,
+        slug: &str,
+        ep_num: Option<i32>,
+        season: Option<i32>,
+        server: Option<usize>,
+        db: Option<&Database>,
+    ) -> Result<String, (StatusCode, String)> {
+        info!("Crawling upstream playlists for slug '{}' (ep: {:?}, season: {:?}, server: {:?})...", slug, ep_num, season, server);
+
+        // An explicit episode/season/server never falls back to another source.
         let requested_server = server.unwrap_or(0);
         let db_source = db
             .and_then(|database| database.get_movie_by_slug(slug).ok().flatten())
             .and_then(|movie| {
-                let episode = movie.episodes.iter().find(|ep| ep.episode == ep_num.unwrap_or(1))?;
+                let wanted = ep_num.unwrap_or(1);
+                let episode = match season {
+                    Some(s) => {
+                        movie.episodes.iter().find(|ep| ep.season == s && ep.episode == wanted)
+                            .or_else(|| {
+                                if wanted > 0 && (wanted as usize) <= movie.episodes.len() {
+                                    let cand = &movie.episodes[wanted as usize - 1];
+                                    if cand.season == s { Some(cand) } else { None }
+                                } else {
+                                    None
+                                }
+                            })
+                    }
+                    None => {
+                        let has_multi = movie.episodes.iter().any(|ep| ep.season > 1);
+                        if has_multi && wanted > 0 && (wanted as usize) <= movie.episodes.len() {
+                            let cand = &movie.episodes[wanted as usize - 1];
+                            if cand.episode != wanted {
+                                Some(cand)
+                            } else {
+                                movie.episodes.iter().find(|ep| ep.episode == wanted)
+                            }
+                        } else {
+                            movie.episodes.iter().find(|ep| ep.episode == wanted)
+                        }
+                    }
+                }?;
                 episode.sources.get(requested_server)
                     .filter(|source| !source.hls_url.trim().is_empty())
                     .map(|source| source.hls_url.clone())
@@ -613,15 +724,22 @@ impl PlaylistCache {
                         .filter(|source| !source.hls_url.trim().is_empty())
                         .map(|source| source.hls_url.clone()))
             });
-        let master_hls_url = if requested_server > 0 || ep_num.unwrap_or(1) > 1 {
+        let has_season_spec = season.unwrap_or(1) > 1;
+        let master_hls_url = if requested_server > 0 || ep_num.unwrap_or(1) > 1 || has_season_spec {
             db_source.ok_or_else(|| (StatusCode::NOT_FOUND,
                 if requested_server == 0 {
-                    format!("Episode {} for slug '{}' is not available", ep_num.unwrap_or(1), slug)
+                    if let Some(s) = season.filter(|s| *s > 1) {
+                        format!("Episode {} (season {}) for slug '{}' is not available", ep_num.unwrap_or(1), s, slug)
+                    } else {
+                        format!("Episode {} for slug '{}' is not available", ep_num.unwrap_or(1), slug)
+                    }
+                } else if let Some(s) = season.filter(|s| *s > 1) {
+                    format!("Episode {}, season {}, server {} for slug '{}' is not available", ep_num.unwrap_or(1), s, requested_server, slug)
                 } else {
                     format!("Episode {}, server {} for slug '{}' is not available", ep_num.unwrap_or(1), requested_server, slug)
                 }))?
         } else {
-            match fetch_upstream_title_hls(slug).await {
+            match fetch_upstream_title_hls_for_season_episode(slug, ep_num.unwrap_or(1), season).await {
                 Some(url) => url,
                 None => db_source.or_else(|| db.and_then(|database|
                     database.get_movie_by_slug(slug).ok().flatten()
@@ -647,7 +765,7 @@ impl PlaylistCache {
 
         if master_resp.status() == StatusCode::FORBIDDEN {
             if let Some(episode) = ep_num.filter(|number| *number > 0) {
-                let fresh_url = fetch_upstream_title_hls_for_episode(slug, episode).await
+                let fresh_url = fetch_upstream_title_hls_for_season_episode(slug, episode, season).await
                     .ok_or_else(|| (StatusCode::BAD_GATEWAY, format!("Could not refresh episode {} for slug '{}'", episode, slug)))?;
                 let fresh_parsed = is_valid_remote_url(&fresh_url)
                     .map_err(|e| (StatusCode::FORBIDDEN, format!("Refreshed episode URL rejected by SSRF policy: {}", e)))?;
@@ -679,10 +797,10 @@ impl PlaylistCache {
 
         // Parse and rewrite master, extract sub-playlists
         let (rewritten_master, sub_playlists) =
-            parse_master_and_extract_subs_for_server(&master_body, &final_master_url, server);
+            parse_master_and_extract_subs_for_season_server(&master_body, &final_master_url, season, server);
 
-        // Ensure local directory exists for this episode & server
-        let slug_dir = self.cache_slug_dir_with_server(slug, ep_num, server);
+        // Ensure local directory exists for this season, episode & server
+        let slug_dir = self.cache_slug_dir_with_season_server(slug, ep_num, season, server);
         tokio::fs::create_dir_all(&slug_dir).await.map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -715,7 +833,7 @@ impl PlaylistCache {
                     Some(final_expiry) => Some(sub_exp.map_or(final_expiry, |expiry| expiry.min(final_expiry))),
                     None => sub_exp,
                 };
-                let processed = process_sub_playlist_for_server(&sub_body, &final_sub_url, server);
+                let processed = process_sub_playlist_for_season_server(&sub_body, &final_sub_url, season, server);
                 tokio::fs::write(&file_dest, processed).await.ok()?;
                 Some(sub_exp)
             });
@@ -748,7 +866,7 @@ impl PlaylistCache {
         let _ = tokio::fs::write(slug_dir.join(".metadata.json"), meta_json.to_string()).await;
 
         // Save rewritten master.m3u8
-        let master_dest = self.master_path_for_ep_server(slug, ep_num, server);
+        let master_dest = self.master_path_for_season_ep_server(slug, ep_num, season, server);
         tokio::fs::write(&master_dest, &rewritten_master)
             .await
             .map_err(|e| {
@@ -759,8 +877,8 @@ impl PlaylistCache {
             })?;
 
         info!(
-            "Successfully cached all playlists for slug '{}' (ep: {:?}, server: {:?}) to {:?}",
-            slug, ep_num, server, slug_dir
+            "Successfully cached all playlists for slug '{}' (ep: {:?}, season: {:?}, server: {:?}) to {:?}",
+            slug, ep_num, season, server, slug_dir
         );
         Ok(rewritten_master)
     }
@@ -773,16 +891,43 @@ pub fn parse_master_and_extract_subs(
     parse_master_and_extract_subs_for_server(content, master_url, None)
 }
 
+#[allow(dead_code)]
 fn local_playlist_name(filename: &str, server: Option<usize>) -> String {
-    match server.filter(|index| *index > 0) {
-        Some(index) => format!("{}?server={}", filename, index),
-        None => filename.to_owned(),
+    local_playlist_name_with_season(filename, None, server)
+}
+
+fn local_playlist_name_with_season(
+    filename: &str,
+    season: Option<i32>,
+    server: Option<usize>,
+) -> String {
+    let has_season = season.is_some() && season.unwrap_or(1) > 1;
+    let has_server = server.is_some() && server.unwrap_or(0) > 0;
+    match (has_season, has_server) {
+        (true, true) => format!(
+            "{}?season={}&server={}",
+            filename,
+            season.unwrap_or(1),
+            server.unwrap_or(0)
+        ),
+        (true, false) => format!("{}?season={}", filename, season.unwrap_or(1)),
+        (false, true) => format!("{}?server={}", filename, server.unwrap_or(0)),
+        (false, false) => filename.to_owned(),
     }
 }
 
 pub fn parse_master_and_extract_subs_for_server(
     content: &str,
     master_url: &Url,
+    server: Option<usize>,
+) -> (String, Vec<(String, String)>) {
+    parse_master_and_extract_subs_for_season_server(content, master_url, None, server)
+}
+
+pub fn parse_master_and_extract_subs_for_season_server(
+    content: &str,
+    master_url: &Url,
+    season: Option<i32>,
     server: Option<usize>,
 ) -> (String, Vec<(String, String)>) {
     let mut lines = Vec::new();
@@ -807,7 +952,7 @@ pub fn parse_master_and_extract_subs_for_server(
             let filename = extract_filename(trimmed);
             let full_url = resolve_relative_url(master_url, trimmed);
             sub_playlists.push((filename.clone(), full_url));
-            lines.push(local_playlist_name(&filename, server));
+            lines.push(local_playlist_name_with_season(&filename, season, server));
             continue;
         }
 
@@ -817,7 +962,7 @@ pub fn parse_master_and_extract_subs_for_server(
                 let filename = extract_filename(sub_uri);
                 let full_url = resolve_relative_url(master_url, sub_uri);
                 sub_playlists.push((filename.clone(), full_url));
-                format!("URI=\"{}\"", local_playlist_name(&filename, server))
+                format!("URI=\"{}\"", local_playlist_name_with_season(&filename, season, server))
             });
             lines.push(rewritten_line.to_string());
             continue;
@@ -843,6 +988,15 @@ pub fn process_sub_playlist(content: &str, sub_url: &Url) -> String {
 }
 
 pub fn process_sub_playlist_for_server(content: &str, sub_url: &Url, server: Option<usize>) -> String {
+    process_sub_playlist_for_season_server(content, sub_url, None, server)
+}
+
+pub fn process_sub_playlist_for_season_server(
+    content: &str,
+    sub_url: &Url,
+    season: Option<i32>,
+    server: Option<usize>,
+) -> String {
     let mut new_lines = Vec::new();
     for line in content.lines() {
         let stripped = line.trim();
@@ -858,7 +1012,7 @@ pub fn process_sub_playlist_for_server(content: &str, sub_url: &Url, server: Opt
                     let clean = map_uri.split('?').next().unwrap_or(map_uri);
                     if clean.to_lowercase().ends_with(".vtt") {
                         let filename = extract_filename(map_uri);
-                        format!("URI=\"{}\"", local_playlist_name(&format!("sub/{}", filename), server))
+                        format!("URI=\"{}\"", local_playlist_name_with_season(&format!("sub/{}", filename), season, server))
                     } else if is_cdn_segment(map_uri) {
                         format!("URI=\"{}\"", map_uri)
                     } else {
@@ -875,7 +1029,7 @@ pub fn process_sub_playlist_for_server(content: &str, sub_url: &Url, server: Opt
             let clean = stripped.split('?').next().unwrap_or(stripped);
             if clean.to_lowercase().ends_with(".vtt") {
                 let filename = extract_filename(stripped);
-                new_lines.push(local_playlist_name(&format!("sub/{}", filename), server));
+                new_lines.push(local_playlist_name_with_season(&format!("sub/{}", filename), season, server));
             } else if is_cdn_segment(stripped) {
                 new_lines.push(stripped.to_string());
             } else {
@@ -898,9 +1052,10 @@ pub async fn handle_stream_master(
 
     match state
         .playlist_cache
-        .get_master_for_episode_server(
+        .get_master_for_season_episode_server(
             &slug,
             params.ep,
+            params.season,
             params.server,
             params.is_refresh(),
             Some(&state.db),
@@ -925,9 +1080,10 @@ pub async fn handle_stream_master_ep(
 
     match state
         .playlist_cache
-        .get_master_for_episode_server(
+        .get_master_for_season_episode_server(
             &slug,
             Some(ep),
+            params.season,
             params.server,
             params.is_refresh(),
             Some(&state.db),
@@ -964,7 +1120,7 @@ pub async fn handle_stream_file(
 
     match state
         .playlist_cache
-        .get_file_for_episode_server(&slug, params.ep, params.server, &file, Some(&state.db))
+        .get_file_for_season_episode_server(&slug, params.ep, params.season, params.server, &file, Some(&state.db))
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
@@ -995,7 +1151,7 @@ pub async fn handle_stream_file_ep(
 
     match state
         .playlist_cache
-        .get_file_for_episode_server(&slug, Some(ep), params.server, &file, Some(&state.db))
+        .get_file_for_season_episode_server(&slug, Some(ep), params.season, params.server, &file, Some(&state.db))
         .await
     {
         Ok(content) => create_playlist_response(content, content_type),
@@ -1014,7 +1170,7 @@ pub async fn handle_stream_sub(
 
     match state
         .playlist_cache
-        .get_sub_for_episode_server(&slug, params.ep, params.server, &file)
+        .get_sub_for_season_episode_server(&slug, params.ep, params.season, params.server, &file)
         .await
     {
         Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
@@ -1033,7 +1189,7 @@ pub async fn handle_stream_sub_ep(
 
     match state
         .playlist_cache
-        .get_sub_for_episode_server(&slug, Some(ep), params.server, &file)
+        .get_sub_for_season_episode_server(&slug, Some(ep), params.season, params.server, &file)
         .await
     {
         Ok(content) => create_playlist_response(content, "text/vtt; charset=utf-8"),
@@ -1182,6 +1338,67 @@ relative_segment.ts
             cache.master_path_for_ep_server("breaking-bad", Some(2), Some(1)),
             PathBuf::from("/tmp/test_cache/breaking-bad_ep2_srv1/master.m3u8")
         );
+
+        // Season-isolated cache dirs
+        assert_eq!(
+            cache.cache_slug_dir_with_season_server("friends", Some(5), Some(1), None),
+            PathBuf::from("/tmp/test_cache/friends_ep5")
+        );
+        assert_eq!(
+            cache.cache_slug_dir_with_season_server("friends", Some(1), Some(2), None),
+            PathBuf::from("/tmp/test_cache/friends_s2_ep1")
+        );
+        assert_eq!(
+            cache.cache_slug_dir_with_season_server("friends", Some(25), Some(2), None),
+            PathBuf::from("/tmp/test_cache/friends_s2_ep25")
+        );
+        assert_eq!(
+            cache.master_path_for_season_ep_server("friends", Some(25), Some(2), None),
+            PathBuf::from("/tmp/test_cache/friends_s2_ep25/master.m3u8")
+        );
+        assert_eq!(
+            cache.file_path_for_season_ep_server("friends", Some(25), Some(2), None, "v0.m3u8"),
+            PathBuf::from("/tmp/test_cache/friends_s2_ep25/v0.m3u8")
+        );
+        assert_eq!(
+            cache.cache_slug_dir_with_season_server("friends", Some(25), Some(2), Some(2)),
+            PathBuf::from("/tmp/test_cache/friends_s2_ep25_srv2")
+        );
+    }
+
+    #[test]
+    fn test_parse_master_and_process_sub_with_season() {
+        let master = r#"#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="sub",NAME="Vi",URI="/api/hls/TOKEN123/s0.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
+/api/hls/TOKEN123/v0.m3u8
+"#;
+        let base_url = Url::parse("https://fiml4k.fun/api/hls/TOKEN123/master.m3u8").unwrap();
+
+        // Season 2 rewriting
+        let (season2_master, _) = parse_master_and_extract_subs_for_season_server(master, &base_url, Some(2), None);
+        assert!(season2_master.contains(r#"URI="s0.m3u8?season=2""#));
+        assert!(season2_master.contains("\nv0.m3u8?season=2"));
+
+        // Season 2 + server 1 rewriting
+        let (season2_srv1_master, _) = parse_master_and_extract_subs_for_season_server(master, &base_url, Some(2), Some(1));
+        assert!(season2_srv1_master.contains(r#"URI="s0.m3u8?season=2&server=1""#));
+        assert!(season2_srv1_master.contains("\nv0.m3u8?season=2&server=1"));
+
+        // Season 1 (or None) does not add ?season=1
+        let (season1_master, _) = parse_master_and_extract_subs_for_season_server(master, &base_url, Some(1), None);
+        assert!(season1_master.contains(r#"URI="s0.m3u8""#));
+        assert!(season1_master.contains("\nv0.m3u8"));
+
+        // Process sub playlist preserves ?season=2 on .vtt
+        let sub = r#"#EXTM3U
+#EXTINF:30.0,
+vietnamese_sub.vtt
+"#;
+        let sub_url = Url::parse("https://fiml4k.fun/api/hls/TOKEN123/s0.m3u8").unwrap();
+        let processed = process_sub_playlist_for_season_server(sub, &sub_url, Some(2), None);
+        assert!(processed.contains("sub/vietnamese_sub.vtt?season=2"));
     }
 
     #[test]
