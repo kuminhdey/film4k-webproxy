@@ -1,7 +1,13 @@
-import { HistoryItem, MovieItem } from './types';
+import { HistoryItem } from './types';
 
 const HISTORY_KEY = 'bofilm_history';
 const FAVORITES_KEY = 'bofilm_favorites';
+const RESUME_KEY_PREFIX = 'bofilm_resume_';
+
+const LEGACY_PROXY_HOSTS = new Set([
+  'secret.dangducminh.io.vn',
+  'secret1.dangducminh.io.vn',
+]);
 
 export function saveHistory(item: {
   slug: string;
@@ -35,7 +41,7 @@ export function getHistory(): HistoryItem[] {
   try {
     const data = localStorage.getItem(HISTORY_KEY);
     return data ? JSON.parse(data) : [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -84,7 +90,9 @@ export function getContinueWatching(): HistoryItem[] {
                   }
                 }
               }
-            } catch {}
+            } catch {
+              // ignore malformed resume entry
+            }
           }
         }
       }
@@ -113,7 +121,7 @@ export function getContinueWatching(): HistoryItem[] {
     }
 
     return result;
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -132,8 +140,13 @@ export function removeHistoryItem(slug: string) {
 
 export function clearHistory() {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(HISTORY_KEY);
-  window.dispatchEvent(new Event('bofilm_history_update'));
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+    clearAllPlaybackPositions();
+    window.dispatchEvent(new Event('bofilm_history_update'));
+  } catch (e) {
+    console.error('Failed to clear history', e);
+  }
 }
 
 export function getFavorites(): string[] {
@@ -141,7 +154,7 @@ export function getFavorites(): string[] {
   try {
     const data = localStorage.getItem(FAVORITES_KEY);
     return data ? JSON.parse(data) : [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -163,6 +176,7 @@ export function toggleFavorite(slug: string): boolean {
       isAdded = true;
     }
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new Event('bofilm_favorites_update'));
     return isAdded;
   } catch (e) {
     console.error('Failed to toggle favorite', e);
@@ -174,12 +188,16 @@ export function cn(...classes: (string | undefined | null | false)[]) {
   return classes.filter(Boolean).join(' ');
 }
 
+/**
+ * Validates and normalizes image URLs using strict URL parsing (`new URL()`).
+ * Rejects non-HTTP(S) external schemes (e.g., `javascript:`) and unwraps dead legacy proxy hosts.
+ */
 export function getImageUrl(url?: string | null): string {
   if (!url || typeof url !== 'string') {
     return '/logo.png';
   }
 
-  const trimmed = url.trim();
+  let trimmed = url.trim();
   if (!trimmed) {
     return '/logo.png';
   }
@@ -187,31 +205,95 @@ export function getImageUrl(url?: string | null): string {
   if (
     trimmed.startsWith('/api/proxy/image') ||
     trimmed.startsWith('/proxy/image') ||
-    trimmed.startsWith('data:') ||
     trimmed.startsWith('blob:')
   ) {
     return trimmed;
   }
 
+  if (trimmed.startsWith('data:')) {
+    return /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(trimmed) ? trimmed : '/logo.png';
+  }
+
   if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-    return trimmed;
+    return trimmed === '/placeholder.png' ? '/logo-64.png' : trimmed;
   }
 
-  const targetUrl = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed;
-
-  // TMDB or direct image urls work natively in modern browsers
-  if (targetUrl.includes('image.tmdb.org') || targetUrl.includes('tmdb.org')) {
-    return targetUrl;
+  if (trimmed.startsWith('//')) {
+    trimmed = `https:${trimmed}`;
   }
 
-  if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
-    return `/api/proxy/image?url=${encodeURIComponent(targetUrl)}`;
-  }
+  try {
+    let parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return '/logo.png';
+    }
 
-  return targetUrl;
+    // Unwrap legacy hardcoded proxy URLs (`https://secret.dangducminh.io.vn/?url=...`)
+    let guard = 0;
+    while (LEGACY_PROXY_HOSTS.has(parsed.hostname.toLowerCase()) && guard < 3) {
+      guard += 1;
+      const innerUrl = parsed.searchParams.get('url');
+      if (innerUrl) {
+        parsed = new URL(innerUrl);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+          return '/logo.png';
+        }
+      } else if (parsed.pathname.startsWith('/api/proxy/image')) {
+        return `${parsed.pathname}${parsed.search}`;
+      } else {
+        break;
+      }
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'image.tmdb.org' || host.endsWith('.tmdb.org')) {
+      return parsed.toString();
+    }
+
+    return `/api/proxy/image?url=${encodeURIComponent(parsed.toString())}`;
+  } catch {
+    return '/logo.png';
+  }
 }
 
-const RESUME_KEY_PREFIX = 'bofilm_resume_';
+/**
+ * Validates external iframe embed URLs (`CRIT-03`).
+ * Allows ONLY `https:`/`http:` URLs whose origin strictly differs from `window.location.origin`
+ * so sandboxed iframes (`allow-scripts allow-same-origin`) can never escape or read parent storage.
+ */
+export function sanitizeEmbedUrl(raw?: string | null): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let candidate = raw.trim();
+  if (!candidate || candidate.includes('.m3u8')) return '';
+
+  try {
+    let parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return '';
+    }
+
+    if (LEGACY_PROXY_HOSTS.has(parsed.hostname.toLowerCase())) {
+      const inner = parsed.searchParams.get('url');
+      if (!inner) return '';
+      parsed = new URL(inner);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return '';
+      }
+    }
+
+    if (parsed.pathname.toLowerCase().endsWith('.m3u8') || parsed.toString().includes('.m3u8')) {
+      return '';
+    }
+
+    if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
+      return '';
+    }
+
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
 
 export function savePlaybackPosition(
   movieSlug: string,
@@ -264,7 +346,7 @@ export function getPlaybackPosition(
     if (parsed && typeof parsed.time === 'number' && parsed.time > 5) {
       return parsed;
     }
-  } catch (e) {
+  } catch {
     return null;
   }
   return null;
@@ -285,7 +367,9 @@ export function clearPlaybackPosition(movieSlug: string, episodeSlug?: string) {
       }
       keysToRemove.forEach((k) => localStorage.removeItem(k));
     }
-  } catch (e) {}
+  } catch {
+    // ignore storage errors
+  }
 }
 
 export function clearAllPlaybackPositions() {

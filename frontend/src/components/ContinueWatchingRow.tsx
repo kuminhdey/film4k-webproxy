@@ -29,6 +29,8 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
   onNavigateHistory,
 }) => {
   const [items, setItems] = useState<HistoryItem[]>([]);
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
+  const confirmDialogRef = useRef<HTMLDialogElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -53,6 +55,15 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
       window.removeEventListener('storage', handleUpdate);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showConfirmClear) return;
+    const dialog = confirmDialogRef.current;
+    dialog?.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+    };
+  }, [showConfirmClear]);
 
   const checkScroll = () => {
     const el = scrollContainerRef.current;
@@ -90,12 +101,26 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
     loadItems();
   };
 
-  const handleClearAll = () => {
-    if (window.confirm('Bạn có chắc muốn xóa toàn bộ danh sách "Tiếp tục xem"? Tiến trình xem đã lưu cũng sẽ bị xóa.')) {
-      clearHistory();
-      clearAllPlaybackPositions();
-      loadItems();
+  const confirmClearAll = () => {
+    clearHistory();
+    clearAllPlaybackPositions();
+    setShowConfirmClear(false);
+    loadItems();
+  };
+
+  const handleHistoryLinkClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.altKey ||
+      e.shiftKey
+    ) {
+      return;
     }
+    e.preventDefault();
+    onNavigateHistory();
   };
 
   if (items.length === 0) {
@@ -107,17 +132,17 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
       {/* Shelf Header */}
       <div className="flex items-center justify-between border-b border-lime-500/20 pb-3">
         <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-xl bg-lime-500/15 border border-lime-500/30 text-lime-400 shadow-[0_0_12px_rgba(132,204,22,0.3)]">
+          <div className="p-1.5 rounded-xl bg-lime-500/15 border border-lime-500/30 text-lime-400">
             <PlayCircle className="w-5 h-5 fill-lime-500/20" />
           </div>
           <div>
-            <h2 className="text-lg sm:text-xl font-black text-[#f4fbf0] uppercase tracking-wide flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-extrabold text-[#f4fbf0] uppercase tracking-wide flex items-center gap-2">
               <span>Tiếp Tục Xem</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-lime-500/20 text-lime-300 border border-lime-500/30 font-bold lowercase">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-lime-500/20 text-lime-300 border border-lime-500/30 font-bold lowercase tabular-nums">
                 {items.length} phim
               </span>
             </h2>
-            <p className="text-xs text-[#8aa885] hidden sm:block">
+            <p className="text-xs text-[#9ab395] hidden sm:block">
               Tiếp tục tận hưởng những bộ phim bạn đang theo dõi dở
             </p>
           </div>
@@ -131,7 +156,8 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
               type="button"
               onClick={() => handleScroll('left')}
               disabled={!canScrollLeft}
-              className={`p-1.5 rounded-xl border transition-all ${
+              aria-label="Cuộn sang trái"
+              className={`min-w-[38px] min-h-[38px] p-1.5 rounded-xl border transition-all flex items-center justify-center ${
                 canScrollLeft
                   ? 'bg-[#071307] border-lime-500/30 text-[#cbe1c8] hover:text-lime-300 hover:border-lime-400 cursor-pointer shadow-sm'
                   : 'bg-[#071307]/40 border-lime-500/10 text-white/20 cursor-not-allowed'
@@ -144,7 +170,8 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
               type="button"
               onClick={() => handleScroll('right')}
               disabled={!canScrollRight}
-              className={`p-1.5 rounded-xl border transition-all ${
+              aria-label="Cuộn sang phải"
+              className={`min-w-[38px] min-h-[38px] p-1.5 rounded-xl border transition-all flex items-center justify-center ${
                 canScrollRight
                   ? 'bg-[#071307] border-lime-500/30 text-[#cbe1c8] hover:text-lime-300 hover:border-lime-400 cursor-pointer shadow-sm'
                   : 'bg-[#071307]/40 border-lime-500/10 text-white/20 cursor-not-allowed'
@@ -158,22 +185,23 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
           {/* Clear All + View All */}
           <button
             type="button"
-            onClick={handleClearAll}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-red-950/40 border border-red-500/25 text-red-300 hover:bg-red-900/60 text-[11px] font-bold transition-colors cursor-pointer"
+            onClick={() => setShowConfirmClear(true)}
+            aria-label="Xóa toàn bộ danh sách tiếp tục xem"
+            className="min-h-[38px] flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-red-950/40 border border-red-500/25 text-red-300 hover:bg-red-900/60 text-xs font-bold transition-colors cursor-pointer"
             title="Xóa toàn bộ danh sách tiếp tục xem"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Xóa hết</span>
           </button>
 
-          <button
-            type="button"
-            onClick={onNavigateHistory}
-            className="flex items-center gap-1 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors ml-1 cursor-pointer"
+          <a
+            href="/lich-su"
+            onClick={handleHistoryLinkClick}
+            className="min-h-[38px] inline-flex items-center gap-1 px-2 text-xs font-bold text-lime-400 hover:text-lime-300 transition-colors cursor-pointer"
           >
             <span>Lịch sử</span>
             <ChevronRight className="w-4 h-4" />
-          </button>
+          </a>
         </div>
       </div>
 
@@ -207,116 +235,147 @@ export const ContinueWatchingRow: React.FC<ContinueWatchingRowProps> = ({
                 type="button"
                 onClick={() => onWatch(item.slug, item.episodeSlug, item.time)}
                 aria-label={`Tiếp tục xem ${item.name}${item.episodeName ? `, ${item.episodeName}` : ''}`}
-                className="w-full h-full text-left rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-[#0a1b0a] transition-all duration-300 hover:shadow-[0_8px_30px_rgba(132,204,22,0.22)] overflow-hidden cursor-pointer flex flex-col justify-between focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-400"
+                className="w-full h-full text-left rounded-2xl bg-[#071307] border border-lime-500/20 hover:border-lime-400/50 hover:bg-[#0a1b0a] transition-all duration-200 overflow-hidden cursor-pointer flex flex-col justify-between focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-400"
               >
-              {/* Media Thumbnail Container with 16:9 widescreen ratio */}
-              <div className="relative aspect-video w-full bg-black/60 overflow-hidden">
-                <img
-                  src={getImageUrl(item.posterUrl)}
-                  alt={item.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
-                  }}
-                />
+                {/* Media Thumbnail Container with 16:9 widescreen ratio */}
+                <div className="relative aspect-video w-full bg-black/60 overflow-hidden">
+                  <img
+                    src={getImageUrl(item.posterUrl)}
+                    alt={item.name}
+                    width={320}
+                    height={180}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
 
-                {/* Ambient Dark Gradient */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/30 group-hover:via-black/20 transition-colors" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/30 group-hover:via-black/20 transition-colors" />
 
-                {/* Floating Episode Badge */}
-                <div className="absolute top-2 left-2 flex items-center gap-1 z-10">
-                  <span className="px-2 py-0.5 rounded-lg bg-black/75 backdrop-blur-md text-lime-300 border border-lime-500/30 text-[11px] font-extrabold shadow-md">
-                    {item.episodeName
-                      ? item.episodeName.startsWith('Tập') || isNaN(Number(item.episodeName.trim()))
-                        ? item.episodeName
-                        : `Tập ${item.episodeName}`
-                      : 'Đang xem'}
-                  </span>
-                </div>
-
-                {/* Quick Remove Dismiss Button */}
-                {/* Center Hover Play Button */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-11 h-11 rounded-full bg-lime-500/90 group-hover:bg-lime-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(132,204,22,0.7)] transform scale-90 group-hover:scale-100 transition-all duration-300">
-                    <Play className="w-5 h-5 fill-black ml-0.5" />
-                  </div>
-                </div>
-
-                {/* Prominent Progress Percentage Badge on Thumbnail */}
-                <div className="absolute bottom-2.5 left-2 z-10">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-lime-400 text-black font-black text-xs shadow-[0_0_12px_rgba(132,204,22,0.7)]">
-                    <Play className="w-2.5 h-2.5 fill-black" />
-                    <span>{progressPercent}%</span>
-                  </div>
-                </div>
-
-                {/* Remaining Time Badge */}
-                <div className="absolute bottom-2.5 right-2 z-10">
-                  {hasProgress && remainingMinutes > 0 ? (
-                    <span className="px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-sm text-[10px] font-bold text-[#fef08a] border border-yellow-400/20 shadow">
-                      Còn {remainingMinutes}p
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-sm text-[10px] font-bold text-[#8aa885]">
-                      Xem tiếp
-                    </span>
-                  )}
-                </div>
-
-                {/* Bottom Glowing Progress Bar */}
-                <div className="absolute bottom-0 left-0 right-0 h-2 bg-black/70">
-                  <div
-                    className="h-full bg-gradient-to-r from-lime-400 via-lime-300 to-emerald-400 shadow-[0_0_10px_rgba(132,204,22,0.9)] transition-all duration-300 relative"
-                    style={{ width: `${hasProgress ? progressPercent : 15}%` }}
-                  >
-                    <span className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white shadow-[0_0_6px_#fff]" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Card Meta Content */}
-              <div className="p-3 space-y-1.5 flex-1 flex flex-col justify-between">
-                <div>
-                  <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug h-[2.5rem] min-h-[2.5rem]">
-                    {item.name}
-                  </h3>
-                  <div className="flex items-center gap-1.5 text-[11px] text-[#8aa885] mt-1 h-[1.2rem] min-h-[1.2rem]">
-                    <Clock className="w-3 h-3 text-lime-400/70 shrink-0" />
-                    <span className="truncate">
-                      {hasProgress ? (
-                        `Đã xem ${formatTime(item.time!)} / ${formatTime(item.duration!)}`
-                      ) : (
-                        'Vừa xem gần đây'
-                      )}
+                  <div className="absolute top-2 left-2 flex items-center gap-1 z-10">
+                    <span className="px-2 py-0.5 rounded-lg bg-black/75 backdrop-blur-md text-lime-300 border border-lime-500/30 text-xs font-extrabold shadow-md">
+                      {item.episodeName
+                        ? item.episodeName.startsWith('Tập') || isNaN(Number(item.episodeName.trim()))
+                          ? item.episodeName
+                          : `Tập ${item.episodeName}`
+                        : 'Đang xem'}
                     </span>
                   </div>
+
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-11 h-11 rounded-full bg-lime-500/90 group-hover:bg-lime-400 text-black flex items-center justify-center shadow-lg transform scale-95 group-hover:scale-100 transition-all duration-200">
+                      <Play className="w-5 h-5 fill-black ml-0.5" />
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-2.5 left-2 z-10">
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-lime-400 text-black font-black text-xs shadow-sm tabular-nums">
+                      <Play className="w-2.5 h-2.5 fill-black" />
+                      <span>{progressPercent}%</span>
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-2.5 right-2 z-10">
+                    {hasProgress && remainingMinutes > 0 ? (
+                      <span className="px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-sm text-xs font-bold text-[#fef08a] border border-yellow-400/20 shadow tabular-nums">
+                        Còn {remainingMinutes}p
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-sm text-xs font-bold text-[#9ab395]">
+                        Xem tiếp
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/70">
+                    <div
+                      className="h-full bg-gradient-to-r from-lime-400 via-lime-300 to-emerald-400 transition-all duration-300"
+                      style={{ width: `${hasProgress ? progressPercent : 15}%` }}
+                    />
+                  </div>
                 </div>
 
-                {/* Sub Action */}
-                <div className="pt-2 flex items-center justify-between border-t border-lime-500/10 text-[11px] font-bold text-lime-400/90 group-hover:text-lime-300">
-                  <span className="flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-lime-400" />
-                    <span>Xem tiếp ngay</span>
-                  </span>
-                  <span className="text-[11px] font-extrabold text-lime-400">
-                    {progressPercent}%
-                  </span>
+                {/* Card Meta Content */}
+                <div className="p-3 space-y-1.5 flex-1 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-bold text-[#f4fbf0] group-hover:text-lime-300 transition-colors line-clamp-2 leading-snug h-[2.5rem] min-h-[2.5rem]">
+                      {item.name}
+                    </h3>
+                    <div className="flex items-center gap-1.5 text-xs text-[#9ab395] mt-1 h-[1.25rem] min-h-[1.25rem] tabular-nums">
+                      <Clock className="w-3 h-3 text-lime-400/70 shrink-0" />
+                      <span className="truncate">
+                        {hasProgress
+                          ? `Đã xem ${formatTime(item.time!)} / ${formatTime(item.duration!)}`
+                          : 'Vừa xem gần đây'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between border-t border-lime-500/10 text-xs font-bold text-lime-400/90 group-hover:text-lime-300 tabular-nums">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-lime-400" />
+                      <span>Xem tiếp ngay</span>
+                    </span>
+                    <span className="text-xs font-extrabold text-lime-400">
+                      {progressPercent}%
+                    </span>
+                  </div>
                 </div>
-              </div>
               </button>
               <button
                 type="button"
                 onClick={(e) => handleRemove(e, item.slug)}
                 aria-label={`Xóa ${item.name} khỏi danh sách tiếp tục xem`}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/70 hover:bg-red-950/80 text-white/70 hover:text-red-300 border border-white/10 hover:border-red-500/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer z-10"
+                className="touch-target-44 absolute top-1.5 right-1.5 p-2 rounded-xl bg-black/75 hover:bg-red-950/90 text-white/80 hover:text-red-300 border border-white/15 hover:border-red-500/40 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer z-10"
                 title="Xóa khỏi danh sách tiếp tục xem"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           );
         })}
       </div>
+
+      {/* Accessible Confirmation Dialog replacing window.confirm() */}
+      {showConfirmClear && (
+        <dialog
+          ref={confirmDialogRef}
+          aria-label="Xác nhận xóa lịch sử tiếp tục xem"
+          onCancel={() => setShowConfirmClear(false)}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowConfirmClear(false);
+          }}
+          className="fixed inset-0 z-50 w-screen h-screen max-w-none max-h-none m-0 border-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl bg-[#0a170a] border border-lime-500/25 p-5 space-y-4 text-[#f4fbf0] shadow-2xl"
+          >
+            <h3 className="text-base font-extrabold">Xóa danh sách Tiếp tục xem?</h3>
+            <p className="text-xs text-[#9ab395] leading-relaxed">
+              Toàn bộ lịch sử xem gần đây và mốc thời gian xem dở của các bộ phim trên trình duyệt này sẽ được xóa sạch.
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowConfirmClear(false)}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-[#cbe1c8] cursor-pointer"
+              >
+                Giữ lại
+              </button>
+              <button
+                type="button"
+                onClick={confirmClearAll}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-extrabold text-white cursor-pointer"
+              >
+                Xóa toàn bộ
+              </button>
+            </div>
+          </div>
+        </dialog>
+      )}
     </section>
   );
 };
