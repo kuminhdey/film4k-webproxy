@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Loader2, Film, ChevronRight } from 'lucide-react';
+import { Sparkles, Film } from 'lucide-react';
 import { MovieCard } from './MovieCard';
 import { MovieItem } from '../types';
 import { getRelatedMovies } from '../api';
@@ -19,16 +19,15 @@ export const RelatedMoviesRow: React.FC<RelatedMoviesRowProps> = ({
 }) => {
   const [movies, setMovies] = useState<MovieItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const genreHint = genres.length > 0 ? genres[0] : undefined;
 
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
 
-    const genreHint = genres.length > 0 ? genres[0] : undefined;
     getRelatedMovies(currentSlug, genreHint)
       .then((items) => {
         if (!isMounted) return;
-        // Filter out current movie just in case
         const filtered = (items || []).filter((m) => m.slug !== currentSlug);
         setMovies(filtered);
         setLoading(false);
@@ -44,7 +43,7 @@ export const RelatedMoviesRow: React.FC<RelatedMoviesRowProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [currentSlug, genres]);
+  }, [currentSlug, genreHint]);
 
   if (loading) {
     return (
@@ -80,12 +79,12 @@ export const RelatedMoviesRow: React.FC<RelatedMoviesRowProps> = ({
             <h3 className="text-base sm:text-lg font-extrabold text-[#f4fbf0] tracking-tight">
               {title}
             </h3>
-            <p className="text-[11px] sm:text-xs text-[#8aa885]">
+            <p className="text-xs text-[#9ab395]">
               Tuyển tập phim cùng thể loại, đề tài và phong cách
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-lime-950/40 border border-lime-500/20 text-lime-300 text-xs font-semibold">
+        <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-lime-950/40 border border-lime-500/20 text-lime-300 text-xs font-semibold tabular-nums">
           <Film className="w-3.5 h-3.5 text-lime-400" />
           <span>{movies.length} phim</span>
         </div>

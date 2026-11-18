@@ -1,12 +1,21 @@
-import Hls from 'hls.js';
+import Hls, {
+  type FragmentLoaderConstructor,
+  type FragmentLoaderContext,
+  type HlsConfig,
+  type LoaderCallbacks,
+  type LoaderConfiguration,
+  type LoaderContext,
+  type LoaderResponse,
+  type LoaderStats,
+} from 'hls.js';
 
 // PNG signature: 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'
 const PNG_SIG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
 /**
- * Strip fake PNG header from obfuscated MPEG-TS video chunks.
- * Checks for PNG magic bytes, parses until IEND chunk or finds
- * the MPEG-TS packet sync byte (0x47 / 71).
+ * Strip fake PNG header from obfuscated MPEG-TS / fMP4 video chunks.
+ * Checks for PNG magic bytes, parses until IEND chunk, fMP4 box header, or finds
+ * 3 consecutive MPEG-TS packet sync bytes (0x47 at i, i + 188, i + 376).
  */
 export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
   if (!buffer || buffer.byteLength < PNG_SIG.length) {
@@ -45,9 +54,6 @@ export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
       bytes[offset + 6] === 78 &&
       bytes[offset + 7] === 68
     ) {
-      // Clean video media payload starts right after IEND chunk.
-      // chunkEnd is the exact end of the PNG stream (IEND chunk + 4-byte CRC).
-      // Both fMP4 (ftyp, styp, moof, moov) and MPEG-TS (0x47) payloads begin immediately at chunkEnd.
       if (chunkEnd < bytes.length) {
         return buffer.slice(chunkEnd);
       }
@@ -56,7 +62,6 @@ export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
   }
 
   // Second method: Search for fMP4 box header (ftyp, styp, moof, moov) in first 512 bytes
-  // if the fake PNG header lacks a standard IEND chunk structure.
   for (let i = PNG_SIG.length; i + 8 <= Math.min(bytes.length, 512); i++) {
     const t0 = bytes[i + 4];
     const t1 = bytes[i + 5];
@@ -66,22 +71,25 @@ export function stripPngHeader(buffer: ArrayBufferLike): ArrayBufferLike {
       (t0 === 102 && t1 === 116 && t2 === 121 && t3 === 112) || // ftyp
       (t0 === 115 && t1 === 116 && t2 === 121 && t3 === 112) || // styp
       (t0 === 109 && t1 === 111 && t2 === 111 && t3 === 102) || // moof
-      (t0 === 109 && t1 === 111 && t2 === 111 && t3 === 118)    // moov
+      (t0 === 109 && t1 === 111 && t2 === 111 && t3 === 118) // moov
     ) {
       return buffer.slice(i);
     }
   }
 
-  // Third method: Search for MPEG-TS sync byte 0x47 (71)
-  // If the stream server injects a fake PNG header without clean IEND chunk structure,
-  // scan after the PNG signature for the first 0x47 sync byte that repeats with 188-byte TS packet spacing.
+  // Third method: Search for MPEG-TS sync byte 0x47 (71) verified across 3 packet boundaries
+  // (i, i + 188, i + 376) to prevent false-positive slicing inside compressed PNG IDAT data.
   for (let i = PNG_SIG.length; i < bytes.length; i++) {
     if (bytes[i] === 0x47) {
-      // Verify MPEG-TS 188-byte packet boundary
-      if (i + 188 < bytes.length && bytes[i + 188] === 0x47) {
-        return buffer.slice(i);
-      }
-      if (i + 188 >= bytes.length) {
+      if (i + 376 < bytes.length) {
+        if (bytes[i + 188] === 0x47 && bytes[i + 376] === 0x47) {
+          return buffer.slice(i);
+        }
+      } else if (i + 188 < bytes.length) {
+        if (bytes[i + 188] === 0x47) {
+          return buffer.slice(i);
+        }
+      } else {
         return buffer.slice(i);
       }
     }
@@ -113,71 +121,102 @@ export type StatsCallback = (info: {
   type: string;
 }) => void;
 
-export function createFilm4kFragmentLoader(statsListener: StatsCallback | null = null) {
+type FragCallbacks = LoaderCallbacks<FragmentLoaderContext>;
+type FragNetworkDetails = Parameters<FragCallbacks['onSuccess']>[3];
+
+export type Film4kLoaderClass = FragmentLoaderConstructor & {
+  reset(): void;
+  bytesLoaded(): number;
+};
+
+export function createFilm4kFragmentLoader(
+  statsListener: StatsCallback | null = null
+): Film4kLoaderClass {
   let cumulativeBytesLoaded = 0;
-  return class Film4kFragmentLoader extends Hls.DefaultConfig.loader {
-  static reset(): void { cumulativeBytesLoaded = 0; }
-  static bytesLoaded(): number { return cumulativeBytesLoaded; }
-  constructor(config: any) {
-    super(config);
-    const originalLoad = this.load.bind(this);
+  const BaseLoader = Hls.DefaultConfig.loader;
 
-    this.load = function (context: any, loaderConfig: any, callbacks: any) {
-      const isCdn = Boolean(context.url && (context.url.includes('cdn') || context.url.startsWith('http')));
-      const fragType = context.frag ? context.frag.type : 'frag';
-      const startTime = performance.now();
+  class Film4kFragmentLoader extends BaseLoader {
+    static reset(): void {
+      cumulativeBytesLoaded = 0;
+    }
+    static bytesLoaded(): number {
+      return cumulativeBytesLoaded;
+    }
 
-      const customCallbacks = {
-        ...callbacks,
-        onSuccess: function (
-          response: any,
-          stats: any,
-          ctx: any,
-          networkDetails: any
-        ) {
-          if (response && response.data) {
-            response.data = extractCleanBuffer(response.data);
-          }
+    constructor(config: HlsConfig) {
+      super(config);
+      const originalLoad = this.load.bind(this);
 
-          const chunkBytes = response && response.data ? response.data.byteLength : 0;
-          cumulativeBytesLoaded += chunkBytes;
+      this.load = function (
+        context: FragmentLoaderContext,
+        loaderConfig: LoaderConfiguration,
+        callbacks: FragCallbacks
+      ) {
+        const isCdn = Boolean(
+          context.url && (context.url.includes('cdn') || context.url.startsWith('http'))
+        );
+        const fragType = context.frag?.type || 'frag';
+        const startTime = performance.now();
 
-          const mb = chunkBytes / (1024 * 1024);
-          const totalMb = Number((cumulativeBytesLoaded / (1024 * 1024)).toFixed(1));
+        const customCallbacks: FragCallbacks = {
+          ...callbacks,
+          onSuccess: function (
+            response: LoaderResponse,
+            stats: LoaderStats,
+            ctx: FragmentLoaderContext,
+            networkDetails: FragNetworkDetails
+          ) {
+            if (response && response.data) {
+              response.data = extractCleanBuffer(response.data) as string | ArrayBuffer;
+            }
 
-          // Calculate precise speed in Mbps
-          const elapsedSec = Math.max(0.05, (performance.now() - startTime) / 1000);
-          const rawSpeed = (chunkBytes * 8) / (elapsedSec * 1_000_000);
-          const speedMbps = chunkBytes > 0 ? rawSpeed.toFixed(2) : '—';
+            const chunkBytes =
+              response && response.data instanceof ArrayBuffer
+                ? response.data.byteLength
+                : response && typeof response.data === 'string'
+                ? response.data.length
+                : 0;
+            cumulativeBytesLoaded += chunkBytes;
 
-          if (statsListener) {
-            statsListener({
-              mb,
-              totalMb,
-              sec: Number(elapsedSec.toFixed(2)),
-              speedMbps,
-              isCdn,
-              type: fragType,
-            });
-          }
+            const mb = chunkBytes / (1024 * 1024);
+            const totalMb = Number((cumulativeBytesLoaded / (1024 * 1024)).toFixed(1));
 
-          callbacks.onSuccess(response, stats, ctx, networkDetails);
-        },
-        onError: function (
-          err: any,
-          ctx: any,
-          networkDetails: any,
-          stats: any
-        ) {
-          console.warn('[Film4kFragmentLoader] Chunk download error:', err);
-          if (callbacks.onError) {
+            const elapsedSec = Math.max(0.05, (performance.now() - startTime) / 1000);
+            const rawSpeed = (chunkBytes * 8) / (elapsedSec * 1_000_000);
+            const speedMbps = chunkBytes > 0 ? rawSpeed.toFixed(2) : '—';
+
+            if (statsListener) {
+              statsListener({
+                mb,
+                totalMb,
+                sec: Number(elapsedSec.toFixed(2)),
+                speedMbps,
+                isCdn,
+                type: fragType,
+              });
+            }
+
+            callbacks.onSuccess(response, stats, ctx, networkDetails);
+          },
+          onError: function (
+            err: { code: number; text: string },
+            ctx: FragmentLoaderContext,
+            networkDetails: FragNetworkDetails,
+            stats: LoaderStats
+          ) {
+            console.warn('[Film4kFragmentLoader] Chunk download error:', err);
             callbacks.onError(err, ctx, networkDetails, stats);
-          }
-        },
-      };
+          },
+        };
 
-      originalLoad(context, loaderConfig, customCallbacks);
-    };
+        originalLoad(
+          context,
+          loaderConfig,
+          customCallbacks as unknown as LoaderCallbacks<LoaderContext>
+        );
+      };
+    }
   }
-}
+
+  return Film4kFragmentLoader as unknown as Film4kLoaderClass;
 }

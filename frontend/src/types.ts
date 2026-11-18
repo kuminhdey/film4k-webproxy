@@ -13,6 +13,8 @@ export interface MovieItem {
   casts?: string;
   thumb_url: string;
   poster_url: string;
+  movie_type?: string;
+  genres?: string[];
   created?: string;
   modified?: string;
 }
@@ -55,6 +57,7 @@ export interface ServerSource {
   name?: string;
   hlsUrl?: string;
   url?: string;
+  embed?: string;
   proxyStreamUrl?: string;
   quality?: string;
 }
@@ -113,12 +116,6 @@ export interface FilmListResponse {
   status: string;
   paginate: Paginate;
   items: MovieItem[];
-  message?: string;
-}
-
-export interface FilmDetailResponse {
-  status: string;
-  movie: MovieDetail;
   message?: string;
 }
 
@@ -198,43 +195,6 @@ export interface AdminLogEntry {
   message: string;
   task?: string;
   source?: string;
-}
-
-export interface Episode {
-  id?: number;
-  movieSlug: string;
-  season: number;
-  episode: number;
-  title?: string;
-  runtime?: number;
-  still?: string;
-  sources: ServerSource[];
-  servers?: ServerSource[];
-  subtitles?: (string | SubtitleTrack)[];
-  audio_tracks?: (string | AudioTrack)[];
-}
-
-export interface Movie {
-  id?: number | string;
-  slug: string;
-  type?: string;
-  movie_type?: string;
-  title_vi?: string;
-  title_en?: string;
-  year?: number;
-  quality?: string;
-  score?: number;
-  genres: string[];
-  country?: string;
-  poster?: string;
-  backdrop?: string;
-  overview?: string;
-  totalEpisodes?: number;
-  stream?: string | { hlsUrl?: string; [key: string]: any };
-  servers?: ServerSource[];
-  subtitles?: (string | SubtitleTrack)[];
-  audio_tracks?: (string | AudioTrack | { id?: number | string; name?: string; label?: string; lang?: string })[];
-  episodes: Episode[];
 }
 
 export interface MovieSummary {
