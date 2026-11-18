@@ -928,9 +928,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!showSettingsMenu || !containerRef.current) return;
     const el = containerRef.current;
     const updateMaxHeight = () => {
+      if (typeof window !== 'undefined' && window.innerWidth < 640 && !isFullscreen) {
+        setMenuMaxHeight(Math.max(220, Math.floor(window.innerHeight * 0.62)));
+        return;
+      }
       const containerH = el.clientHeight;
-      const available = containerH - 105;
-      setMenuMaxHeight(Math.max(180, Math.floor(available)));
+      const available = containerH - 72;
+      setMenuMaxHeight(Math.max(120, Math.floor(available)));
     };
     updateMaxHeight();
     if (typeof ResizeObserver !== 'undefined') {
@@ -940,7 +944,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     window.addEventListener('resize', updateMaxHeight);
     return () => window.removeEventListener('resize', updateMaxHeight);
-  }, [showSettingsMenu]);
+  }, [showSettingsMenu, isFullscreen]);
 
   useEffect(() => {
     hlsFallbackErrorRef.current = false;
@@ -3313,14 +3317,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
 
           {/* Top Action Tools with explicit ARIA labels & states (`HIGH-11`) */}
-          <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 flex-shrink-0">
             <div className="relative" ref={shareMenuRef}>
               <button
                 type="button"
                 onClick={() => setShowShareMenu((prev) => !prev)}
                 aria-label="Chia sẻ phim và tập"
                 aria-expanded={showShareMenu}
-                className="min-h-[36px] flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors cursor-pointer"
+                className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors cursor-pointer"
                 title="Chia sẻ phim & tập"
               >
                 <Share2 className="w-3.5 h-3.5" />
@@ -3370,7 +3374,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={() => setIsDimmed(!isDimmed)}
               aria-label={isDimmed ? 'Bật lại đèn nền' : 'Tắt đèn rạp chiếu'}
               aria-pressed={isDimmed}
-              className={`min-h-[36px] flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              className={`min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                 isDimmed
                   ? 'bg-yellow-400/20 text-yellow-300 border border-yellow-400/40'
                   : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -3397,7 +3401,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 isTheater ? 'Thu nhỏ chế độ rạp chiếu' : 'Mở rộng chế độ rạp chiếu'
               }
               aria-pressed={isTheater}
-              className={`min-h-[36px] flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              className={`hidden sm:flex min-h-[36px] items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                 isTheater
                   ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40'
                   : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -3423,7 +3427,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 onClick={togglePip}
                 aria-label={isPip ? 'Thoát Hình trong hình PiP' : 'Bật Hình trong hình PiP'}
                 aria-pressed={isPip}
-                className={`min-h-[36px] flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   isPip
                     ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
                     : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -3450,7 +3454,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }}
               aria-label="Thống kê kỹ thuật trình phát"
               aria-pressed={showStats}
-              className={`min-w-[36px] min-h-[36px] p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
+              className={`min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
                 showStats
                   ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40'
                   : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -3465,7 +3469,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={handleHealthGaugeToggle}
               aria-label="Thước đo sức khỏe luồng phát"
               aria-pressed={showHealthGauge}
-              className={`min-w-[36px] min-h-[36px] p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
+              className={`min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer ${
                 showHealthGauge
                   ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40'
                   : 'bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20'
@@ -3480,7 +3484,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={() => setShowShortcutsModal(true)}
               aria-label="Mở bảng phím tắt trình phát"
               aria-expanded={showShortcutsModal}
-              className="min-w-[36px] min-h-[36px] p-1.5 rounded-lg bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors flex items-center justify-center cursor-pointer"
+              className="hidden sm:flex min-w-[36px] min-h-[36px] p-1.5 rounded-lg bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors items-center justify-center cursor-pointer"
               title="Phím tắt trình phát (Phím /)"
             >
               <Keyboard className="w-3.5 h-3.5" />
@@ -3490,7 +3494,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               type="button"
               onClick={handleReload}
               aria-label="Tải lại trình phát video"
-              className="min-w-[36px] min-h-[36px] p-1.5 rounded-lg bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors flex items-center justify-center cursor-pointer"
+              className="min-w-[44px] min-h-[44px] sm:min-w-[36px] sm:min-h-[36px] p-1.5 rounded-lg bg-lime-950/40 hover:bg-lime-900/60 text-[#cbe1c8] hover:text-lime-300 border border-lime-500/20 transition-colors flex items-center justify-center cursor-pointer"
               title="Tải lại trình phát video"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -4205,7 +4209,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       onClick={handleTogglePlay}
                       aria-label={isPlaying ? 'Tạm dừng' : 'Phát'}
                       aria-pressed={isPlaying}
-                      className="min-w-[38px] min-h-[40px] sm:min-w-[42px] sm:min-h-[42px] p-1.5 sm:p-2 rounded-xl text-[#f4fbf0] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
+                      className="min-w-[44px] min-h-[44px] sm:min-w-[42px] sm:min-h-[42px] p-1.5 sm:p-2 rounded-xl text-[#f4fbf0] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
                       title={isPlaying ? 'Tạm dừng (Phím Space)' : 'Phát (Phím Space)'}
                     >
                       {isPlaying ? (
@@ -4219,7 +4223,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       type="button"
                       onClick={() => handleSkip(-10)}
                       aria-label="Lùi 10 giây"
-                      className="min-w-[34px] min-h-[40px] sm:px-2 py-1 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors text-xs font-bold flex items-center justify-center gap-0.5 cursor-pointer"
+                      className="hidden sm:flex min-w-[42px] min-h-[42px] sm:px-2 py-1 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors text-xs font-bold items-center justify-center gap-0.5 cursor-pointer"
                       title="Lùi 10 giây (Phím ← hoặc J)"
                     >
                       <RotateCcw className="w-4 h-4" />
@@ -4230,7 +4234,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       type="button"
                       onClick={() => handleSkip(10)}
                       aria-label="Tiến 10 giây"
-                      className="min-w-[34px] min-h-[40px] sm:px-2 py-1 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors text-xs font-bold flex items-center justify-center gap-0.5 cursor-pointer"
+                      className="hidden sm:flex min-w-[42px] min-h-[42px] sm:px-2 py-1 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors text-xs font-bold items-center justify-center gap-0.5 cursor-pointer"
                       title="Tiến 10 giây (Phím → hoặc L)"
                     >
                       <RotateCw className="w-4 h-4" />
@@ -4243,7 +4247,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         onClick={handleToggleMute}
                         aria-label={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}
                         aria-pressed={isMuted}
-                        className="min-w-[34px] min-h-[40px] p-1.5 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
+                        className="min-w-[44px] min-h-[44px] sm:min-w-[42px] sm:min-h-[42px] p-1.5 rounded-xl text-[#cbe1c8] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
                         title={isMuted ? 'Bật tiếng (Phím M)' : 'Tắt tiếng (Phím M)'}
                       >
                         {isMuted || volume === 0 ? (
@@ -4311,7 +4315,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         onClick={() => setShowEpisodeDrawer((prev) => !prev)}
                         aria-label="Danh sách tập phim"
                         aria-expanded={showEpisodeDrawer}
-                        className={`min-w-[36px] min-h-[40px] sm:px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                        className={`min-w-[44px] min-h-[44px] sm:min-w-[42px] sm:min-h-[42px] sm:px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${
                           showEpisodeDrawer
                             ? 'bg-lime-500 text-black border border-lime-300'
                             : 'bg-white/10 hover:bg-white/20 text-[#cbe1c8] hover:text-white'
@@ -4330,7 +4334,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         onClick={() => setShowSettingsMenu((prev) => !prev)}
                         aria-label="Cài đặt chất lượng và trình phát"
                         aria-expanded={showSettingsMenu}
-                        className={`min-w-[36px] min-h-[40px] sm:px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        className={`min-w-[44px] min-h-[44px] sm:min-w-[42px] sm:min-h-[42px] sm:px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                           showSettingsMenu
                             ? 'bg-lime-500 text-black'
                             : 'bg-white/10 hover:bg-white/20 text-[#cbe1c8] hover:text-white'
@@ -4350,7 +4354,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                           style={{
                             maxHeight: menuMaxHeight ? `${menuMaxHeight}px` : undefined,
                           }}
-                          className="absolute bottom-full right-0 mb-2 bg-[#0a180b]/98 backdrop-blur-2xl border border-lime-500/25 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.9)] w-[284px] sm:w-[310px] max-w-[calc(100vw-24px)] overflow-y-auto z-50"
+                          className={`${
+                            isFullscreen
+                              ? 'absolute bottom-full right-0 mb-2 w-[284px] sm:w-[310px] max-w-[calc(100vw-24px)] z-50'
+                              : 'fixed inset-x-3 bottom-20 z-[70] sm:absolute sm:inset-x-auto sm:bottom-full sm:right-0 sm:mb-2 sm:w-[310px] sm:z-50'
+                          } bg-[#0a180b]/98 backdrop-blur-2xl border border-lime-500/25 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.9)] overflow-y-auto`}
                         >
                           {/* 4-Tab Segmented Header */}
                           <div
@@ -5030,7 +5038,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       </button>
                     )}
 
-                    {/* Fullscreen Button — guaranteed on-screen at 375px-390px! */}
+                    {/* Fullscreen Button — guaranteed on-screen & >= 44x44px at 375px-390px! */}
                     <button
                       type="button"
                       onClick={toggleFullscreen}
@@ -5038,7 +5046,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'
                       }
                       aria-pressed={isFullscreen}
-                      className="min-w-[38px] min-h-[40px] sm:min-w-[42px] sm:min-h-[42px] p-1.5 sm:p-2 rounded-xl text-[#f4fbf0] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
+                      className="min-w-[44px] min-h-[44px] sm:min-w-[42px] sm:min-h-[42px] p-1.5 sm:p-2 rounded-xl text-[#f4fbf0] hover:text-lime-300 hover:bg-white/10 transition-colors flex items-center justify-center cursor-pointer"
                       title={
                         isFullscreen
                           ? 'Thoát toàn màn hình (Phím F)'

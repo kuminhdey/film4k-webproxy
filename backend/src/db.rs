@@ -1191,9 +1191,17 @@ impl Database {
         if let Some(ref g) = query.genre {
             if !g.trim().is_empty() && g != "all" {
                 let genre_name = genre_name_for_slug(g.trim()).unwrap_or(g.trim());
-                let pattern = format!("%\"{}\"%", escape_like(genre_name));
-                where_clauses.push("genres_json LIKE ? ESCAPE '\\'");
-                query_params.push(Box::new(pattern));
+                if genre_name == "Gay Cấn" || genre_name == "Gây Cấn" {
+                    where_clauses.push(
+                        "(genres_json LIKE ? ESCAPE '\\' OR genres_json LIKE ? ESCAPE '\\')",
+                    );
+                    query_params.push(Box::new("%Gay Cấn%".to_string()));
+                    query_params.push(Box::new("%Gây Cấn%".to_string()));
+                } else {
+                    let pattern = format!("%{}%", escape_like(genre_name));
+                    where_clauses.push("genres_json LIKE ? ESCAPE '\\'");
+                    query_params.push(Box::new(pattern));
+                }
             }
         }
 
@@ -2031,10 +2039,17 @@ impl Database {
     }
 
     pub fn generate_fallback_home(&self) -> anyhow::Result<HomeResponse> {
-        let (all_movies, total) = self.get_movies(None, None, None, 24, 0)?;
+        let (mut all_movies, total) = self.get_movies(None, None, None, 24, 0)?;
         let (top_movies, _) = self.get_movies(None, None, None, 10, 0)?;
         let (new_series, _) = self.get_movies(None, None, Some("tv"), 12, 0)?;
         let (new_movies, _) = self.get_movies(None, None, Some("movie"), 12, 0)?;
+        if let Ok((anime_movies, _)) = self.get_movies(None, Some("Hoạt Hình"), None, 12, 0) {
+            for m in anime_movies {
+                if !all_movies.iter().any(|existing| existing.slug == m.slug) {
+                    all_movies.push(m);
+                }
+            }
+        }
         let hero = top_movies.iter().take(5).cloned().collect();
 
         let mut genres_set = std::collections::BTreeSet::new();

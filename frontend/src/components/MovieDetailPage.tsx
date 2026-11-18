@@ -120,7 +120,7 @@ export const MovieDetailPage: React.FC<MovieDetailPageProps> = ({
 
   if (loading) {
     return (
-      <div className="py-32 flex flex-col items-center justify-center text-center">
+      <div className="min-h-[calc(100svh-3.5rem)] py-24 flex flex-col items-center justify-center text-center">
         <Loader2 className="w-12 h-12 text-lime-400 animate-spin mb-3" />
         <p className="text-sm font-semibold text-[#9ab395]">
           Đang tải thông tin phim Bơ Film...
