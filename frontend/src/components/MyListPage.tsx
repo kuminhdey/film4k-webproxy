@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Bookmark, Film, Trash2, Loader2, ArrowLeft } from 'lucide-react';
-import { getFavorites, toggleFavorite } from '../utils';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Bookmark, Loader2, ArrowLeft } from 'lucide-react';
+import { getFavorites } from '../utils';
 import { getMoviesBySlugs } from '../api';
 import { MovieItem } from '../types';
 import { MovieCard } from './MovieCard';
@@ -16,8 +16,10 @@ export const MyListPage: React.FC<MyListPageProps> = ({
 }) => {
   const [movies, setMovies] = useState<MovieItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
-  const loadFavs = async () => {
+  const loadFavs = useCallback(async () => {
+    const reqId = ++requestIdRef.current;
     setLoading(true);
     const slugs = getFavorites();
     if (slugs.length === 0) {
@@ -25,22 +27,34 @@ export const MyListPage: React.FC<MyListPageProps> = ({
       setLoading(false);
       return;
     }
-    const items = await getMoviesBySlugs(slugs);
-    setMovies(items);
-    setLoading(false);
-  };
+    try {
+      const items = await getMoviesBySlugs(slugs);
+      if (reqId === requestIdRef.current) {
+        setMovies(items);
+      }
+    } finally {
+      if (reqId === requestIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     loadFavs();
-  }, []);
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, [loadFavs]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex items-center justify-between border-b border-lime-500/15 pb-4">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 rounded-xl bg-[#071307] border border-lime-500/20 text-[#cbe1c8] hover:text-lime-300 transition-colors"
+            aria-label="Quay lại trang trước"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-2 rounded-xl bg-[#071307] border border-lime-500/20 text-[#cbe1c8] hover:text-lime-300 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
