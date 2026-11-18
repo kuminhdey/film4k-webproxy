@@ -1,26 +1,66 @@
+// crawler_service.js
 /**
- * Film4k Master Crawler Service (Crawlee + Proxy + SQLite + JSON Master Sync)
- * 
+ * Film4k Master Crawler Service (Crawlee + Optional Proxy + SQLite + JSON Master Sync)
+ *
  * Tính năng chính:
- * 1. Tự động cào các phim Hot / Mới cập nhật từ Film4k qua Proxy Singapore WARP (161.118.202.252:9872).
- * 2. Bóc tách chi tiết metadata, ảnh poster/backdrop TMDB, danh sách tập và luồng phát stream m3u8.
+ * 1. Tự động cào các phim Hot / Mới cập nhật từ Film4k (hỗ trợ danh sách proxy tùy chọn qua biến môi trường CRAWLER_PROXY_URLS).
+ * 2. Bóc tách chi tiết metadata, ảnh poster/backdrop TMDB, danh sách tập và luồng phát stream m3u8 (chỉ chấp nhận https://).
  * 3. Tự động merge & cập nhật vào file film4k_master_database.json (không bị ghi đè mất dữ liệu cũ).
- * 4. Đồng bộ trực tiếp vào SQLite database (movies.db) và kích hoạt reload trên Axum Backend API.
+ * 4. Đồng bộ trực tiếp vào SQLite database (movies.db) qua execFileSync và gửi thông báo reload tới Axum Backend API.
  */
 
 const { CheerioCrawler, ProxyConfiguration, Dataset } = require('crawlee');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
-// ---------------------------------------------------------------------
-// Cấu hình Proxy Pool trên VPS Singapore (WARP / US / Hà Lan)
-// ---------------------------------------------------------------------
-const DEFAULT_PROXY_URLS = [
-    'http://161.118.202.252:9872', // Cloudflare WARP ⚡ (Độ trễ cực thấp, IP sạch)
-    'http://161.118.202.252:9874', // US 🇺🇸
-    'http://161.118.202.252:9875'  // Netherlands 🇳🇱
-];
+function getConfiguredProxyUrls() {
+    const raw = (process.env.CRAWLER_PROXY_URLS || '').trim();
+    if (!raw) {
+        return [];
+    }
+    return raw
+        .split(',')
+        .map(entry => entry.trim())
+        .filter(entry => {
+            if (!entry) return false;
+            try {
+                const parsed = new URL(entry);
+                return (
+                    parsed.protocol === 'http:' ||
+                    parsed.protocol === 'https:' ||
+                    parsed.protocol === 'socks5:'
+                );
+            } catch (_err) {
+                return false;
+            }
+        });
+}
+
+function isHttpsUrl(value) {
+    if (typeof value !== 'string' || !value.startsWith('https://')) {
+        return false;
+    }
+    if (/\s/.test(value)) {
+        return false;
+    }
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'https:' && Boolean(parsed.hostname);
+    } catch (_err) {
+        return false;
+    }
+}
+
+function normalizeUpstreamUrl(rawUrl) {
+    if (typeof rawUrl !== 'string') return '';
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('/')) {
+        return `https://fiml4k.fun${trimmed}`;
+    }
+    return trimmed;
+}
 
 const MASTER_JSON_PATH = path.join(__dirname, 'film4k_master_database.json');
 const SQLITE_DB_PATH = path.join(__dirname, 'movies.db');
@@ -77,7 +117,6 @@ function updateMasterDatabase(newRecords, filePath = MASTER_JSON_PATH) {
     }
 
     const movieMap = new Map();
-    // 1. Nạp danh sách phim cũ vào map theo slug
     for (const item of existingList) {
         if (item && item.slug) {
             movieMap.set(item.slug, item);
@@ -87,9 +126,9 @@ function updateMasterDatabase(newRecords, filePath = MASTER_JSON_PATH) {
     let addedCount = 0;
     let updatedCount = 0;
 
-    // 2. Upsert các phim vừa cào được
     for (const record of newRecords) {
         if (!record || !record.slug) continue;
+        if (!isHttpsUrl(record.poster)) continue;
         if (movieMap.has(record.slug)) {
             updatedCount++;
         } else {
@@ -98,10 +137,8 @@ function updateMasterDatabase(newRecords, filePath = MASTER_JSON_PATH) {
         movieMap.set(record.slug, record);
     }
 
-    // 3. Chuyển map thành mảng (các phim mới được ưu tiên hiển thị)
     const mergedList = Array.from(movieMap.values());
 
-    // 4. Ghi file an toàn (ghi vào file tmp rồi rename)
     const tempFile = `${filePath}.tmp`;
     fs.writeFileSync(tempFile, JSON.stringify(mergedList, null, 2), 'utf-8');
     fs.renameSync(tempFile, filePath);
@@ -117,24 +154,34 @@ function updateMasterDatabase(newRecords, filePath = MASTER_JSON_PATH) {
  * Đồng bộ dữ liệu vào SQLite movies.db và thông báo backend
  */
 async function syncDatabaseAndNotify(backendUrl = 'http://127.0.0.1:8090') {
-    console.log(`\n🔄 [Sync] Đang đồng bộ vào SQLite movies.db...`);
+    console.log(`\n🔄 [Sync] Đang đồng bộ vào SQLite (${path.basename(SQLITE_DB_PATH)})...`);
 
-    // 1. Chạy sync_sqlite.py để nạp trực tiếp vào movies.db
     try {
         if (fs.existsSync(SYNC_SQLITE_SCRIPT)) {
-            const output = execSync(`python3 "${SYNC_SQLITE_SCRIPT}"`, { encoding: 'utf-8' });
-            console.log(`   ${output.trim()}`);
+            const output = execFileSync('python3', [SYNC_SQLITE_SCRIPT], {
+                encoding: 'utf-8',
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+            if (output && output.trim()) {
+                console.log(`   ${output.trim()}`);
+            }
         }
     } catch (err) {
         console.warn(`   ⚠️ Lỗi khi chạy sync_sqlite.py:`, err.message);
     }
 
-    // 2. Kích hoạt Backend API nếu server Axum đang chạy
     try {
-        console.log(`📡 [Backend API] Gửi thông báo reload tới ${backendUrl}/api/crawler/trigger...`);
-        const res = await fetch(`${backendUrl}/api/crawler/trigger`, {
+        const adminToken = (process.env.ADMIN_TOKEN || '').trim();
+        const headers = { 'Content-Type': 'application/json' };
+        if (adminToken) {
+            headers['Authorization'] = `Bearer ${adminToken}`;
+        }
+        const triggerPath = adminToken ? '/api/admin/crawler/trigger' : '/api/crawler/trigger';
+        console.log(`📡 [Backend API] Gửi thông báo reload tới ${backendUrl}${triggerPath}...`);
+        const res = await fetch(`${backendUrl}${triggerPath}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
+            body: JSON.stringify({ mode: 'latest' }),
             signal: AbortSignal.timeout(3000)
         });
         if (res.ok) {
@@ -143,7 +190,7 @@ async function syncDatabaseAndNotify(backendUrl = 'http://127.0.0.1:8090') {
         } else {
             console.log(`   ℹ️ Backend trả về HTTP ${res.status}`);
         }
-    } catch (e) {
+    } catch (_e) {
         console.log(`   ℹ️ Backend chưa chạy hoặc không phản hồi (SQLite đã được cập nhật trực tiếp).`);
     }
 }
@@ -154,20 +201,21 @@ async function syncDatabaseAndNotify(backendUrl = 'http://127.0.0.1:8090') {
 async function runCrawler(userOptions = {}) {
     const options = { ...parseArgs(), ...userOptions };
     const { mode, limit, page, slug, concurrency, backendUrl } = options;
+    const proxyUrls = getConfiguredProxyUrls();
 
     console.log('================================================================');
     console.log('🚀 [FILM4K INTEGRATED CRAWLER SERVICE]');
-    console.log(`⚡ Proxy: ${DEFAULT_PROXY_URLS[0]} (VPS Singapore WARP)`);
+    console.log(
+        `⚡ Proxy: ${proxyUrls.length > 0 ? `${proxyUrls.length} configured endpoint(s)` : 'Direct (no CRAWLER_PROXY_URLS set)'}`
+    );
     console.log(`🎯 Chế độ: ${mode.toUpperCase()} | Giới hạn batch: ${limit || 'Tất cả'} phim | Luồng: ${concurrency}`);
     console.log('================================================================\n');
 
-    const proxyConfiguration = new ProxyConfiguration({
-        proxyUrls: DEFAULT_PROXY_URLS
-    });
+    const proxyConfiguration =
+        proxyUrls.length > 0 ? new ProxyConfiguration({ proxyUrls }) : undefined;
 
     const crawledMovies = [];
 
-    // Đọc danh sách slug hiện có để ưu tiên lấy phim chưa có
     let existingSlugs = new Set();
     if (fs.existsSync(MASTER_JSON_PATH)) {
         try {
@@ -175,34 +223,29 @@ async function runCrawler(userOptions = {}) {
             if (Array.isArray(currentData)) {
                 existingSlugs = new Set(currentData.map(m => m.slug));
             }
-        } catch (e) {}
+        } catch (_e) {}
     }
 
-    const crawler = new CheerioCrawler({
-        proxyConfiguration,
+    const crawlerOptions = {
         maxConcurrency: concurrency,
-        maxRequestsPerCrawl: (limit ? limit + 10 : 100),
+        maxRequestsPerCrawl: limit ? limit + 10 : 100,
         requestHandlerTimeoutSecs: 35,
 
         async requestHandler({ request, $, body, json }) {
             const url = request.url;
             const label = request.userData.label || '';
 
-            // -------------------------------------------------------------
-            // 1. XỬ LÝ TRANG HOME ĐỂ LẤY PHIM HOT / MỚI CẬP NHẬT
-            // -------------------------------------------------------------
             if (label === 'HOME' || url.includes('/api/home')) {
                 console.log(`🔥 [Film4k Home] Đang nạp danh mục phim Hot & Mới từ: ${url}`);
                 const homeData = json || JSON.parse(body.toString('utf-8'));
 
                 const candidateSlugs = [];
-                const addSlug = (m) => {
+                const addSlug = m => {
                     if (m && m.slug && !candidateSlugs.includes(m.slug)) {
                         candidateSlugs.push(m.slug);
                     }
                 };
 
-                // Thu thập theo thứ tự ưu tiên: Top Hot -> Hero Banner -> Phim Chiếu Rạp Mới -> Series Mới -> Mới cập nhật
                 (homeData.top || []).forEach(addSlug);
                 (homeData.hero || []).forEach(addSlug);
                 (homeData.newMovies || []).forEach(addSlug);
@@ -211,11 +254,9 @@ async function runCrawler(userOptions = {}) {
 
                 console.log(`[+] Tìm thấy tổng cộng ${candidateSlugs.length} phim hot/mới trên trang chủ.`);
 
-                // Lọc ưu tiên các phim chưa có trong database trước
                 const unCrawledSlugs = candidateSlugs.filter(s => !existingSlugs.has(s));
                 console.log(`[+] Trong đó có ${unCrawledSlugs.length} phim chưa có trong database.`);
 
-                // Chọn danh sách theo giới hạn limit
                 let selectedSlugs = unCrawledSlugs.slice(0, limit);
                 if (selectedSlugs.length < limit) {
                     const remaining = limit - selectedSlugs.length;
@@ -224,20 +265,17 @@ async function runCrawler(userOptions = {}) {
                 }
 
                 console.log(`[+] Đang đẩy ${selectedSlugs.length} phim vào hàng đợi bóc tách chi tiết:`);
-                selectedSlugs.forEach((s, idx) => console.log(`   ${idx + 1}. ${s} ${existingSlugs.has(s) ? '(cập nhật)' : '(mới)'}`));
+                selectedSlugs.forEach((s, idx) =>
+                    console.log(`   ${idx + 1}. ${s} ${existingSlugs.has(s) ? '(cập nhật)' : '(mới)'}`)
+                );
 
                 const apiRequests = selectedSlugs.map(s => ({
-                    url: `https://fiml4k.fun/api/watch/${s}`,
+                    url: `https://fiml4k.fun/api/watch/${encodeURIComponent(s)}`,
                     userData: { label: 'WATCH', slug: s }
                 }));
 
                 await crawler.addRequests(apiRequests);
-            }
-
-            // -------------------------------------------------------------
-            // 2. XỬ LÝ SITEMAP XML (Nếu chạy chế độ sitemap)
-            // -------------------------------------------------------------
-            else if (label === 'SITEMAP' || url.includes('sitemap-page.xml')) {
+            } else if (label === 'SITEMAP' || url.includes('sitemap-page.xml')) {
                 console.log(`📑 [Sitemap] Đang nạp sitemap: ${url}`);
                 const locs = [];
                 $('loc').each((_, el) => {
@@ -256,17 +294,12 @@ async function runCrawler(userOptions = {}) {
 
                 console.log(`[+] Đang đưa ${targetSlugs.length} phim từ sitemap vào xử lý...`);
                 const apiRequests = targetSlugs.map(s => ({
-                    url: `https://fiml4k.fun/api/watch/${s}`,
+                    url: `https://fiml4k.fun/api/watch/${encodeURIComponent(s)}`,
                     userData: { label: 'WATCH', slug: s }
                 }));
 
                 await crawler.addRequests(apiRequests);
-            }
-
-            // -------------------------------------------------------------
-            // 3. BÓC TÁCH CHI TIẾT TỪNG PHIM (/api/watch/{slug})
-            // -------------------------------------------------------------
-            else if (label === 'WATCH' || url.includes('/api/watch/')) {
+            } else if (label === 'WATCH' || url.includes('/api/watch/')) {
                 const currentSlug = request.userData.slug;
                 try {
                     const data = json || JSON.parse(body.toString('utf-8'));
@@ -278,38 +311,62 @@ async function runCrawler(userOptions = {}) {
                     const m = data.movie;
                     const isTv = m.mediaType === 'tv';
 
-                    // Xử lý danh sách tập phim & luồng m3u8
                     let episodesData = [];
                     let defaultStream = null;
 
                     if (isTv && Array.isArray(data.episodes) && data.episodes.length > 0) {
-                        episodesData = data.episodes.map(ep => ({
-                            movieSlug: m.slug,
-                            season: ep.season || 1,
-                            episode: ep.episode,
-                            title: ep.title || `Tập ${ep.episode}`,
-                            runtime: ep.runtime || 45,
-                            still: ep.still || '',
-                            sources: (ep.sources || []).map(s => {
-                                const rawUrl = s.url || '';
-                                const hls = rawUrl.startsWith('http') ? rawUrl : `https://fiml4k.fun${rawUrl}`;
+                        episodesData = data.episodes
+                            .map(ep => {
+                                const sources = (ep.sources || [])
+                                    .map(s => {
+                                        const hls = normalizeUpstreamUrl(s.url || '');
+                                        if (!isHttpsUrl(hls)) return null;
+                                        return {
+                                            label: s.label || 'Server 1',
+                                            hlsUrl: hls,
+                                            proxyStreamUrl: `https://secret.dangducminh.io.vn/?url=${encodeURIComponent(hls)}`
+                                        };
+                                    })
+                                    .filter(Boolean);
+                                if (sources.length === 0) return null;
+                                const stillUrl = normalizeUpstreamUrl(ep.still || '');
                                 return {
-                                    label: s.label || 'Server 1',
-                                    hlsUrl: hls,
-                                    proxyStreamUrl: `https://secret.dangducminh.io.vn/?url=${encodeURIComponent(hls)}`
+                                    movieSlug: m.slug,
+                                    season: ep.season || 1,
+                                    episode: ep.episode,
+                                    title: ep.title || `Tập ${ep.episode}`,
+                                    runtime: ep.runtime || 45,
+                                    still: isHttpsUrl(stillUrl) ? stillUrl : '',
+                                    sources
                                 };
                             })
-                        }));
+                            .filter(Boolean);
                     } else if (m.hlsUrl || (data.sources && data.sources.length > 0)) {
                         const rawHls = m.hlsUrl || data.sources[0]?.url;
-                        if (rawHls) {
-                            const fullHls = rawHls.startsWith('http') ? rawHls : `https://fiml4k.fun${rawHls}`;
+                        const fullHls = normalizeUpstreamUrl(rawHls || '');
+                        if (isHttpsUrl(fullHls)) {
                             defaultStream = {
                                 label: data.sources?.[0]?.label || 'Server 1',
                                 hlsUrl: fullHls,
                                 proxyStreamUrl: `https://secret.dangducminh.io.vn/?url=${encodeURIComponent(fullHls)}`
                             };
                         }
+                    }
+
+                    const posterUrl = normalizeUpstreamUrl(m.poster?.vi || m.poster?.en || '');
+                    const backdropUrl = normalizeUpstreamUrl(m.backdrop || '');
+
+                    if (!isHttpsUrl(posterUrl)) {
+                        console.warn(`⚠️ [Validation] Bỏ qua ${currentSlug}: poster không dùng https://`);
+                        return;
+                    }
+                    if (!isTv && !defaultStream) {
+                        console.warn(`⚠️ [Validation] Bỏ qua ${currentSlug}: stream không hợp lệ`);
+                        return;
+                    }
+                    if (isTv && episodesData.length === 0) {
+                        console.warn(`⚠️ [Validation] Bỏ qua ${currentSlug}: không có tập hợp lệ`);
+                        return;
                     }
 
                     const movieRecord = {
@@ -323,8 +380,8 @@ async function runCrawler(userOptions = {}) {
                         score: typeof m.score === 'number' ? Math.round(m.score * 10) / 10 : 0.0,
                         genres: m.genres?.vi || m.genres?.en || [],
                         country: m.country?.vi || m.country?.en || '',
-                        poster: m.poster?.vi || m.poster?.en || '',
-                        backdrop: m.backdrop || '',
+                        poster: posterUrl,
+                        backdrop: isHttpsUrl(backdropUrl) ? backdropUrl : '',
                         overview: m.overview?.vi || m.overview?.en || '',
                         totalEpisodes: isTv ? (m.epTotal || episodesData.length) : 1,
                         stream: defaultStream,
@@ -334,7 +391,7 @@ async function runCrawler(userOptions = {}) {
 
                     const tag = isTv ? `[📺 SERIES - ${episodesData.length} tập]` : `[🎬 MOVIE]`;
                     console.log(`✅ ${tag} ${movieRecord.title_vi} (${movieRecord.year}) • ${movieRecord.quality} • ⭐ ${movieRecord.score}`);
-                    
+
                     if (!isTv && movieRecord.stream) {
                         console.log(`   🎥 Stream m3u8: ${movieRecord.stream.hlsUrl.substring(0, 75)}...`);
                         console.log(`   ⚡ Proxy Stream: ${movieRecord.stream.proxyStreamUrl.substring(0, 80)}...`);
@@ -354,13 +411,18 @@ async function runCrawler(userOptions = {}) {
         failedRequestHandler({ request, error }) {
             console.error(`❌ Request thất bại [${request.url}]: ${error.message}`);
         }
-    });
+    };
 
-    // Quyết định điểm bắt đầu cào
+    if (proxyConfiguration) {
+        crawlerOptions.proxyConfiguration = proxyConfiguration;
+    }
+
+    const crawler = new CheerioCrawler(crawlerOptions);
+
     const initialRequests = [];
     if (mode === 'slug' && slug) {
         initialRequests.push({
-            url: `https://fiml4k.fun/api/watch/${slug}`,
+            url: `https://fiml4k.fun/api/watch/${encodeURIComponent(slug)}`,
             userData: { label: 'WATCH', slug }
         });
     } else if (mode === 'sitemap') {
@@ -369,7 +431,6 @@ async function runCrawler(userOptions = {}) {
             userData: { label: 'SITEMAP' }
         });
     } else {
-        // Mặc định là mode 'hot': Cào danh sách từ api/home
         initialRequests.push({
             url: 'https://fiml4k.fun/api/home',
             userData: { label: 'HOME' }
@@ -383,19 +444,15 @@ async function runCrawler(userOptions = {}) {
     console.log('================================================================');
 
     if (crawledMovies.length > 0) {
-        // 1. Cập nhật vào Master JSON file
         updateMasterDatabase(crawledMovies, MASTER_JSON_PATH);
-
-        // 2. Đồng bộ vào SQLite và Backend
         await syncDatabaseAndNotify(backendUrl);
     }
 
     return crawledMovies;
 }
 
-// Chạy trực tiếp qua CLI
 if (require.main === module) {
-    runCrawler().catch((err) => {
+    runCrawler().catch(err => {
         console.error('💥 [FATAL ERROR] Lỗi chạy crawler service:', err);
         process.exit(1);
     });
@@ -404,5 +461,7 @@ if (require.main === module) {
 module.exports = {
     runCrawler,
     updateMasterDatabase,
-    syncDatabaseAndNotify
+    syncDatabaseAndNotify,
+    getConfiguredProxyUrls,
+    isHttpsUrl
 };
