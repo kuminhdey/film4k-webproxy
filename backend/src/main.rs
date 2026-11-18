@@ -26,12 +26,17 @@ async fn main() -> anyhow::Result<()> {
     info!("📦 Connected to SQLite database at {}", db_path);
 
     // 2. Seed initial movies
-    let seed_paths = [
-        "/app/film4k_master_database.json",
-        "film4k_master_database.json",
-        "../film4k_master_database.json",
-        "/Users/kuminhdey/Downloads/webproxy/film4k_master_database.json",
-    ];
+    let mut seed_paths = Vec::new();
+    if let Ok(env_seed) = std::env::var("SEED_JSON_PATH") {
+        if !env_seed.trim().is_empty() {
+            seed_paths.push(env_seed);
+        }
+    }
+    seed_paths.extend([
+        "/app/film4k_master_database.json".to_string(),
+        "film4k_master_database.json".to_string(),
+        "../film4k_master_database.json".to_string(),
+    ]);
     for seed_path in &seed_paths {
         if std::path::Path::new(seed_path).exists() {
             let count = db.seed_from_file(seed_path)?;
@@ -60,12 +65,16 @@ async fn main() -> anyhow::Result<()> {
         .with_admin(admin);
     let app = create_app(state);
 
+    let host: std::net::IpAddr = std::env::var("HOST")
+        .ok()
+        .and_then(|h| h.trim().parse().ok())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8090);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::from((host, port));
     info!("🚀 Server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

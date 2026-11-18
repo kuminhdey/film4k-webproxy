@@ -3,7 +3,7 @@
 .github
 
 # Legacy Python scripts and caches
-*.py
+/*.py
 *.pyc
 __pycache__
 *.pem

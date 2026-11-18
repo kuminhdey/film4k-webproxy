@@ -66,14 +66,21 @@ COPY --from=backend-builder /app/target/release/webproxy_backend /app/webproxy_b
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 COPY film4k_master_database.json /app/film4k_master_database.json
 COPY scripts /app/scripts
-RUN chmod +x /app/scripts/*.sh
+RUN groupadd -g 10001 webproxy \
+    && useradd -u 10001 -g 10001 -s /usr/sbin/nologin -d /app -M webproxy \
+    && mkdir -p /app/data/playlists \
+    && chmod +x /app/scripts/*.sh \
+    && chown -R 10001:10001 /app/data
 
 # Environment variables
 ENV HOST=0.0.0.0 \
     PORT=8090 \
-    DATABASE_PATH=/app/movies.db \
+    DATABASE_PATH=/app/data/movies.db \
+    PLAYLISTS_DIR=/app/data/playlists \
     RUST_LOG=info \
     BUILD_COMMIT=${BUILD_COMMIT}
+
+USER 10001:10001
 
 EXPOSE 8090
 

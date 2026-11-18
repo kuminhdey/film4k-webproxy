@@ -7,26 +7,47 @@ pub mod proxy;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, Method, StatusCode},
     response::{IntoResponse, Json, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use std::path::PathBuf;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::error;
 
-pub use admin::AdminService;
-pub use playlist_cache::{
-    handle_stream_file, handle_stream_file_ep, handle_stream_master, handle_stream_master_ep,
-    handle_stream_sub, handle_stream_sub_ep,
-    PlaylistCache, PlaylistCacheService, StreamParams,
-};
 use crate::crawler::CrawlerService;
 use crate::db::Database;
 use crate::models::{MoviesQuery, MoviesResponse};
-use crate::proxy::handle_stream_proxy;
+use crate::proxy::{build_safe_http_client, handle_stream_proxy};
+pub use admin::AdminService;
+pub use playlist_cache::{
+    handle_stream_file, handle_stream_file_ep, handle_stream_master, handle_stream_master_ep,
+    handle_stream_sub, handle_stream_sub_ep, PlaylistCache, PlaylistCacheService, StreamParams,
+};
+
+fn resolve_frontend_dist() -> PathBuf {
+    let mut dist_dirs = Vec::new();
+    if let Ok(static_env) = std::env::var("STATIC_DIR") {
+        if !static_env.trim().is_empty() {
+            dist_dirs.push(PathBuf::from(static_env));
+        }
+    }
+    dist_dirs.extend([
+        PathBuf::from("frontend/dist"),
+        PathBuf::from("../frontend/dist"),
+        PathBuf::from("dist"),
+        PathBuf::from("/app/frontend/dist"),
+    ]);
+
+    for candidate in &dist_dirs {
+        if candidate.join("index.html").is_file() || candidate.exists() {
+            return candidate.clone();
+        }
+    }
+    PathBuf::from("frontend/dist")
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,15 +56,12 @@ pub struct AppState {
     pub playlist_cache: PlaylistCacheService,
     pub admin: AdminService,
     pub http_client: reqwest::Client,
+    pub frontend_dist: PathBuf,
 }
 
 impl AppState {
     pub fn new(db: Database, crawler: CrawlerService) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let http_client = build_safe_http_client(15);
 
         Self {
             db,
@@ -51,6 +69,7 @@ impl AppState {
             playlist_cache: PlaylistCacheService::default(),
             admin: AdminService::new(),
             http_client,
+            frontend_dist: resolve_frontend_dist(),
         }
     }
 
@@ -85,7 +104,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/proxy/stream", get(handle_stream_proxy))
         .route("/proxy/image", get(proxy::handle_image_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
-        .route("/stream/:slug/ep/:ep/master.m3u8", get(handle_stream_master_ep))
+        .route(
+            "/stream/:slug/ep/:ep/master.m3u8",
+            get(handle_stream_master_ep),
+        )
         .route("/stream/:slug/ep/:ep/sub/:file", get(handle_stream_sub_ep))
         .route("/stream/:slug/ep/:ep/:file", get(handle_stream_file_ep))
         .route("/stream/:slug/sub/:file", get(handle_stream_sub))
@@ -94,8 +116,18 @@ pub fn create_app(state: AppState) -> Router {
         .route("/admin/login", post(admin::admin_login))
         .route("/admin/logout", post(admin::admin_logout))
         .route("/admin/stats", get(admin::admin_stats))
-        .route("/admin/movies", get(admin::admin_movies))
-        .route("/admin/logs", get(admin::admin_logs).post(admin::admin_log_write))
+        .route(
+            "/admin/movies",
+            get(admin::admin_movies).post(admin::admin_create_movie),
+        )
+        .route(
+            "/admin/movies/:slug",
+            put(admin::admin_update_movie).delete(admin::admin_delete_movie),
+        )
+        .route(
+            "/admin/logs",
+            get(admin::admin_logs).post(admin::admin_log_write),
+        )
         .route("/admin/logs/export", get(admin::admin_logs_export))
         .route("/admin/crawler/start", post(admin::admin_crawler_start))
         .route("/admin/crawler/update", post(admin::admin_crawler_update))
@@ -103,35 +135,49 @@ pub fn create_app(state: AppState) -> Router {
         .route("/admin/crawler/trigger", post(admin::admin_crawler_trigger))
         .route("/admin/crawler/stop", post(admin::admin_crawler_stop))
         .route("/admin/cache/clear", post(admin::admin_cache_clear))
-        .route("/admin/cache/clear/:slug", post(admin::admin_cache_clear_slug));
+        .route(
+            "/admin/cache/clear/:slug",
+            post(admin::admin_cache_clear_slug),
+        );
 
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(AllowOrigin::predicate(|origin: &axum::http::HeaderValue, _req| {
+            if let Ok(extra) = std::env::var("ALLOWED_FRONTEND_ORIGINS") {
+                if !extra.trim().is_empty() {
+                    if let Ok(orig_str) = origin.to_str() {
+                        return extra
+                            .split(',')
+                            .any(|o| o.trim().eq_ignore_ascii_case(orig_str));
+                    }
+                    return false;
+                }
+            }
+            origin.to_str().is_ok_and(|s| {
+                s.starts_with("http://localhost")
+                    || s.starts_with("http://127.0.0.1")
+                    || s.starts_with("https://")
+            })
+        }))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            header::RANGE,
+            header::ORIGIN,
+            header::COOKIE,
+        ])
+        .allow_credentials(true);
 
-    let mut dist_dirs = vec![
-        PathBuf::from("../frontend/dist"),
-        PathBuf::from("frontend/dist"),
-        PathBuf::from("dist"),
-        PathBuf::from("/app/frontend/dist"),
-        PathBuf::from("/Users/kuminhdey/Downloads/webproxy/frontend/dist"),
-    ];
-    if let Ok(static_env) = std::env::var("STATIC_DIR") {
-        dist_dirs.insert(0, PathBuf::from(static_env));
-    }
-
-    let mut frontend_dist = PathBuf::from("../frontend/dist");
-    for candidate in &dist_dirs {
-        if candidate.exists() {
-            frontend_dist = candidate.clone();
-            break;
-        }
-    }
-
-    let index_file = frontend_dist.join("index.html");
-    let serve_dir = ServeDir::new(&frontend_dist)
-        .not_found_service(ServeFile::new(index_file));
+    let index_file = state.frontend_dist.join("index.html");
+    let serve_dir = ServeDir::new(&state.frontend_dist).not_found_service(ServeFile::new(index_file));
 
     Router::new()
         .nest("/api", api_routes)
@@ -140,7 +186,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/health/ready", get(health_ready_handler))
         .route("/proxy/image", get(proxy::handle_image_proxy))
         .route("/stream/:slug/master.m3u8", get(handle_stream_master))
-        .route("/stream/:slug/ep/:ep/master.m3u8", get(handle_stream_master_ep))
+        .route(
+            "/stream/:slug/ep/:ep/master.m3u8",
+            get(handle_stream_master_ep),
+        )
         .route("/stream/:slug/ep/:ep/sub/:file", get(handle_stream_sub_ep))
         .route("/stream/:slug/ep/:ep/:file", get(handle_stream_file_ep))
         .route("/stream/:slug/sub/:file", get(handle_stream_sub))
@@ -179,6 +228,9 @@ pub struct RootQuery {
     pub url: Option<String>,
     pub keep_cdn: Option<String>,
     pub slug: Option<String>,
+    pub ep: Option<i32>,
+    pub season: Option<i32>,
+    pub server: Option<usize>,
 }
 
 pub async fn health_live_handler() -> (StatusCode, axum::Json<serde_json::Value>) {
@@ -190,34 +242,59 @@ pub async fn health_live_handler() -> (StatusCode, axum::Json<serde_json::Value>
     )
 }
 
-fn readiness_gate(build_commit: &str, db_healthy: bool, assets_ready: bool, scheduler_healthy: bool) -> bool {
-    !build_commit.trim().is_empty() && !build_commit.trim().eq_ignore_ascii_case("unknown") && db_healthy && assets_ready && scheduler_healthy
+fn readiness_gate(
+    build_commit: &str,
+    db_healthy: bool,
+    assets_ready: bool,
+    scheduler_healthy: bool,
+) -> bool {
+    !build_commit.trim().is_empty()
+        && !build_commit.trim().eq_ignore_ascii_case("unknown")
+        && db_healthy
+        && assets_ready
+        && scheduler_healthy
 }
 
 pub async fn health_ready_handler(
     State(state): State<AppState>,
 ) -> (StatusCode, axum::Json<serde_json::Value>) {
     let build_commit = option_env!("BUILD_COMMIT").unwrap_or("unknown");
-    let build_identity_ready = !build_commit.trim().is_empty() && !build_commit.trim().eq_ignore_ascii_case("unknown");
-    let assets_ready = build_identity_ready && std::path::Path::new("frontend/dist/index.html").is_file();
+    let build_identity_ready =
+        !build_commit.trim().is_empty() && !build_commit.trim().eq_ignore_ascii_case("unknown");
+    let assets_ready = build_identity_ready
+        && (state.frontend_dist.join("index.html").is_file()
+            || std::path::Path::new("frontend/dist/index.html").is_file());
     let scheduler_healthy = state.crawler.scheduler_is_healthy();
-    match state.db.check_health() {
-        Ok((migration_count, is_healthy)) if readiness_gate(build_commit, is_healthy, assets_ready, scheduler_healthy) => (
-            StatusCode::OK,
-            axum::Json(serde_json::json!({
-                "status": "ready",
-                "ready": true,
-                "migrations_applied": migration_count,
-                "commit": build_commit,
-                "background_scheduler": "healthy"
-            })),
-        ),
+    let db = state.db.clone();
+    match state.db.run_read_blocking(move || db.check_health()).await {
+        Ok((migration_count, is_healthy))
+            if readiness_gate(build_commit, is_healthy, assets_ready, scheduler_healthy) =>
+        {
+            (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "status": "ready",
+                    "ready": true,
+                    "migrations_applied": migration_count,
+                    "commit": build_commit,
+                    "background_scheduler": "healthy"
+                })),
+            )
+        }
         Ok((migration_count, _)) => (
             StatusCode::SERVICE_UNAVAILABLE,
             axum::Json(serde_json::json!({
                 "status": "unhealthy",
                 "ready": false,
-                "reason": if !build_identity_ready { "Build identity unavailable" } else if !assets_ready { "Static assets unavailable" } else if !scheduler_healthy { "Required background scheduler unavailable" } else { "Database schema unavailable" },
+                "reason": if !build_identity_ready {
+                    "Build identity unavailable"
+                } else if !assets_ready {
+                    "Static assets unavailable"
+                } else if !scheduler_healthy {
+                    "Required background scheduler unavailable"
+                } else {
+                    "Database schema unavailable"
+                },
                 "background_scheduler": if scheduler_healthy { "healthy" } else { "unavailable" },
                 "migrations_applied": migration_count
             })),
@@ -234,14 +311,12 @@ pub async fn health_ready_handler(
 }
 
 pub async fn health_check(State(state): State<AppState>) -> Response {
-    match state.db.check_health() {
-        Ok((_, is_healthy))
-            if is_healthy
-                && (option_env!("BUILD_COMMIT").is_none()
-                    || std::path::Path::new("frontend/dist/index.html").is_file()) =>
-        {
-            (StatusCode::OK, "OK").into_response()
-        }
+    let db = state.db.clone();
+    let assets_ok = option_env!("BUILD_COMMIT").is_none()
+        || state.frontend_dist.join("index.html").is_file()
+        || std::path::Path::new("frontend/dist/index.html").is_file();
+    match state.db.run_read_blocking(move || db.check_health()).await {
+        Ok((_, is_healthy)) if is_healthy && assets_ok => (StatusCode::OK, "OK").into_response(),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
             "Degraded: Database unhealthy",
@@ -250,30 +325,41 @@ pub async fn health_check(State(state): State<AppState>) -> Response {
     }
 }
 
-pub async fn spa_page_handler() -> axum::response::Response {
-    let dist_dirs = [
+pub async fn spa_page_handler(State(state): State<AppState>) -> axum::response::Response {
+    let primary_index = state.frontend_dist.join("index.html");
+    if let Ok(content) = tokio::fs::read_to_string(&primary_index).await {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            content,
+        )
+            .into_response();
+    }
+
+    let fallback_dirs = [
         PathBuf::from("/app/frontend/dist"),
         PathBuf::from("../frontend/dist"),
         PathBuf::from("frontend/dist"),
         PathBuf::from("dist"),
-        PathBuf::from("/Users/kuminhdey/Downloads/webproxy/frontend/dist"),
     ];
-    for dir in &dist_dirs {
+    for dir in &fallback_dirs {
         let index = dir.join("index.html");
         if let Ok(content) = tokio::fs::read_to_string(&index).await {
             return (
                 StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
                 content,
-            ).into_response();
+            )
+                .into_response();
         }
     }
 
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        "<h1>🎬 Film4k Cinema</h1><p>Frontend SPA will serve here once built.</p>",
-    ).into_response()
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        "<h1>Film4k Cinema</h1><p>Frontend SPA will serve here once built.</p>",
+    )
+        .into_response()
 }
 
 pub async fn root_handler(
@@ -287,12 +373,17 @@ pub async fn root_handler(
                 url: url.clone(),
                 keep_cdn: query.keep_cdn.clone(),
                 slug: query.slug.clone(),
+                ep: query.ep,
+                season: query.season,
+                server: query.server,
             };
-            return handle_stream_proxy(State(state), Query(proxy_query), headers).await.into_response();
+            return handle_stream_proxy(State(state), Query(proxy_query), headers)
+                .await
+                .into_response();
         }
     }
 
-    spa_page_handler().await
+    spa_page_handler(State(state)).await
 }
 
 pub async fn list_movies(
@@ -308,7 +399,12 @@ pub async fn list_movies(
         }
     });
 
-    match state.db.get_movies_filtered(&query) {
+    let db = state.db.clone();
+    match state
+        .db
+        .run_read_blocking(move || db.get_movies_filtered(&query))
+        .await
+    {
         Ok((movies, total)) => Ok(Json(MoviesResponse {
             movies,
             total,
@@ -319,7 +415,7 @@ pub async fn list_movies(
             error!("Database error in list_movies: {}", err);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to query movies: {}", err),
+                "Internal database error".to_string(),
             ))
         }
     }
@@ -330,7 +426,12 @@ pub async fn search_suggest(
     Query(query): Query<models::SearchSuggestQuery>,
 ) -> Json<models::SearchSuggestResponse> {
     let q = query.q.unwrap_or_default();
-    let results = state.db.search_suggest(&q, 6).unwrap_or_default();
+    let db = state.db.clone();
+    let results = state
+        .db
+        .run_read_blocking(move || db.search_suggest(&q, 6))
+        .await
+        .unwrap_or_default();
     Json(models::SearchSuggestResponse { results })
 }
 
@@ -349,7 +450,12 @@ pub async fn get_movies_by_slugs_handler(
         return Json(models::BySlugsResponse { movies: Vec::new() });
     }
 
-    match state.db.get_movies_by_slugs(&slugs) {
+    let db = state.db.clone();
+    match state
+        .db
+        .run_read_blocking(move || db.get_movies_by_slugs(&slugs))
+        .await
+    {
         Ok(movies) => Json(models::BySlugsResponse { movies }),
         Err(err) => {
             error!("Database error in get_movies_by_slugs_handler: {}", err);
@@ -362,7 +468,12 @@ pub async fn get_movie_recommendations(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Json<models::RecommendationsResponse> {
-    let recommendations = state.db.get_recommendations(&slug, 12).unwrap_or_default();
+    let db = state.db.clone();
+    let recommendations = state
+        .db
+        .run_read_blocking(move || db.get_recommendations(&slug, 12))
+        .await
+        .unwrap_or_default();
     Json(models::RecommendationsResponse { recommendations })
 }
 
@@ -370,26 +481,52 @@ pub async fn get_movie(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<models::Movie>, (StatusCode, String)> {
-    match state.db.get_movie_by_slug(&slug) {
+    let db = state.db.clone();
+    let slug_owned = slug.clone();
+    match state
+        .db
+        .run_read_blocking(move || db.get_movie_by_slug(&slug_owned))
+        .await
+    {
         Ok(Some(movie)) => Ok(Json(movie)),
         Ok(None) => Err((StatusCode::NOT_FOUND, format!("Movie not found: {}", slug))),
         Err(err) => {
             error!("Database error in get_movie: {}", err);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {}", err),
+                "Internal database error".to_string(),
             ))
         }
     }
 }
 
-
 pub async fn get_home(State(state): State<AppState>) -> Json<models::HomeResponse> {
-    Json(state.crawler.get_home())
+    let crawler = state.crawler.clone();
+    let home = tokio::task::spawn_blocking(move || crawler.get_home())
+        .await
+        .unwrap_or_default();
+    Json(home)
 }
 
 pub async fn get_crawler_status(State(state): State<AppState>) -> Json<crawler::CrawlerStatus> {
-    Json(state.crawler.get_status())
+    let crawler = state.crawler.clone();
+    let status = tokio::task::spawn_blocking(move || crawler.get_public_status())
+        .await
+        .unwrap_or_else(|_| crawler::CrawlerStatus {
+            is_running: false,
+            mode: "idle".to_string(),
+            total_discovered: 0,
+            current_index: 0,
+            current_slug: None,
+            percent: 0.0,
+            movies_updated: 0,
+            errors_count: 0,
+            recent_logs: Vec::new(),
+            last_run: None,
+            last_status: "Unavailable".to_string(),
+            total_movies_in_db: 0,
+        });
+    Json(status)
 }
 
 pub async fn trigger_crawler(State(state): State<AppState>) -> Json<serde_json::Value> {

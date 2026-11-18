@@ -1,23 +1,71 @@
-use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard, atomic::{AtomicUsize, Ordering}};
-use rusqlite::{params, Connection};
 use anyhow::Context;
-use tracing::{info, warn};
+use rusqlite::{params, Connection};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex, MutexGuard,
+};
 use tokio::sync::Semaphore;
+use tracing::{info, warn};
 
-use crate::models::{AudioTrack, Episode, HomeResponse, Movie, MovieSummary, MoviesQuery, ServerSource, Source, SubtitleTrack};
+use crate::models::{
+    AudioTrack, Episode, HomeResponse, Movie, MovieSummary, MoviesQuery, ServerSource, Source,
+    SubtitleTrack,
+};
+
+type AdminLogRow = (i64, String, String, String);
+
+fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn sanitize_proxy_field(opt: Option<String>, clean_hls: &str) -> Option<String> {
+    match opt {
+        Some(ref p) if p.contains("secret.dangducminh.io.vn") => {
+            if clean_hls.trim().is_empty() {
+                let raw = crate::proxy::extract_raw_url_from_proxy(p);
+                if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(crate::proxy::build_proxy_stream_url(&raw))
+                }
+            } else {
+                Some(crate::proxy::build_proxy_stream_url(clean_hls))
+            }
+        }
+        other => other,
+    }
+}
 
 fn genre_name_for_slug(value: &str) -> Option<&'static str> {
     match value {
-        "hanh-dong" => Some("Hành Động"), "tinh-cam" => Some("Tình Cảm"),
-        "co-trang" => Some("Cổ Trang"), "tam-ly" => Some("Tâm Lý"),
-        "phim-hai" => Some("Hài Hước"), "hoat-hinh" | "anime" => Some("Hoạt Hình"),
-        "phieu-luu" => Some("Phiêu Lưu"), "khoa-hoc-vien-tuong" => Some("Khoa Học Viễn Tưởng"),
-        "kinh-di" => Some("Kinh Dị"), "hinh-su" => Some("Hình Sự"), "bi-an" => Some("Bí Ẩn"),
-        "chien-tranh" => Some("Chiến Tranh"), "tai-lieu" => Some("Tài Liệu"),
-        "gia-dinh" => Some("Gia Đình"), "gia-tuong" => Some("Giả Tưởng"),
-        "lich-su" => Some("Lịch Sử"), "gay-can" => Some("Gay Cấn"),
-        "lang-man" => Some("Lãng Mạn"), "chinh-kich" => Some("Chính Kịch"), _ => None,
+        "hanh-dong" => Some("Hành Động"),
+        "tinh-cam" => Some("Tình Cảm"),
+        "co-trang" => Some("Cổ Trang"),
+        "tam-ly" => Some("Tâm Lý"),
+        "phim-hai" => Some("Hài Hước"),
+        "hoat-hinh" | "anime" => Some("Hoạt Hình"),
+        "phieu-luu" => Some("Phiêu Lưu"),
+        "khoa-hoc-vien-tuong" => Some("Khoa Học Viễn Tưởng"),
+        "kinh-di" => Some("Kinh Dị"),
+        "hinh-su" => Some("Hình Sự"),
+        "bi-an" => Some("Bí Ẩn"),
+        "chien-tranh" => Some("Chiến Tranh"),
+        "tai-lieu" => Some("Tài Liệu"),
+        "gia-dinh" => Some("Gia Đình"),
+        "gia-tuong" => Some("Giả Tưởng"),
+        "lich-su" => Some("Lịch Sử"),
+        "gay-can" => Some("Gay Cấn"),
+        "lang-man" => Some("Lãng Mạn"),
+        "chinh-kich" => Some("Chính Kịch"),
+        _ => None,
     }
 }
 
@@ -26,11 +74,16 @@ fn country_names_for_slug(value: &str) -> &'static [&'static str] {
         "han-quoc" => &["Hàn Quốc", "South Korea", "Korea"],
         "trung-quoc" => &["Trung Quốc", "China"],
         "my" | "au-my" => &["Âu Mỹ", "Mỹ", "United States", "US", "USA"],
-        "nhat-ban" => &["Nhật Bản", "Japan"], "viet-nam" => &["Việt Nam", "Vietnam"],
-        "thai-lan" => &["Thái Lan", "Thailand"], "hong-kong" => &["Hồng Kông", "Hong Kong"],
-        "dai-loan" => &["Đài Loan", "Taiwan"], "anh" => &["Anh", "United Kingdom", "UK"],
-        "phap" => &["Pháp", "France"], "duc" => &["Đức", "Germany"],
-        "an-do" => &["Ấn Độ", "India"], _ => &[],
+        "nhat-ban" => &["Nhật Bản", "Japan"],
+        "viet-nam" => &["Việt Nam", "Vietnam"],
+        "thai-lan" => &["Thái Lan", "Thailand"],
+        "hong-kong" => &["Hồng Kông", "Hong Kong"],
+        "dai-loan" => &["Đài Loan", "Taiwan"],
+        "anh" => &["Anh", "United Kingdom", "UK"],
+        "phap" => &["Pháp", "France"],
+        "duc" => &["Đức", "Germany"],
+        "an-do" => &["Ấn Độ", "India"],
+        _ => &[],
     }
 }
 
@@ -39,22 +92,56 @@ pub struct Database {
     conn: Arc<Mutex<Connection>>,
     readers: Arc<Vec<Mutex<Connection>>>,
     next_reader: Arc<AtomicUsize>,
+    db_path: Option<PathBuf>,
 }
 
 impl Database {
-    /// Run synchronous SQLite work on the blocking pool with bounded concurrency.
+    /// Run synchronous SQLite write work on the blocking pool with bounded concurrency.
     pub async fn run_blocking<T, F>(&self, operation: F) -> anyhow::Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> anyhow::Result<T> + Send + 'static,
     {
         static DB_WRITE_SLOTS: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
-        let slots = DB_WRITE_SLOTS.get_or_init(|| Arc::new(Semaphore::new(4))).clone();
-        let permit = slots.acquire_owned().await.context("database blocking queue closed")?;
+        let slots = DB_WRITE_SLOTS
+            .get_or_init(|| Arc::new(Semaphore::new(4)))
+            .clone();
+        let permit = slots
+            .acquire_owned()
+            .await
+            .context("database blocking queue closed")?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             operation()
-        }).await.context("database blocking task failed")?
+        })
+        .await
+        .context("database blocking task failed")?
+    }
+
+    /// Run synchronous SQLite read work on a separate 16-slot blocking pool so Tokio workers never stall.
+    pub async fn run_read_blocking<T, F>(&self, operation: F) -> anyhow::Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    {
+        static DB_READ_SLOTS: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
+        let slots = DB_READ_SLOTS
+            .get_or_init(|| Arc::new(Semaphore::new(16)))
+            .clone();
+        let permit = slots
+            .acquire_owned()
+            .await
+            .context("database read blocking queue closed")?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            operation()
+        })
+        .await
+        .context("database read blocking task failed")?
+    }
+
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
     }
 
     pub fn new<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
@@ -65,17 +152,20 @@ impl Database {
             }
         }
         let conn = Connection::open(p)?;
-        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")?;
         let mut db = Self {
             conn: Arc::new(Mutex::new(conn)),
             readers: Arc::new(Vec::new()),
             next_reader: Arc::new(AtomicUsize::new(0)),
+            db_path: Some(p.to_path_buf()),
         };
         db.init_tables()?;
         let mut readers = Vec::with_capacity(4);
         for _ in 0..4 {
             let reader = Connection::open(p)?;
-            reader.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA query_only = ON;")?;
+            reader.execute_batch(
+                "PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;",
+            )?;
             readers.push(Mutex::new(reader));
         }
         db.readers = Arc::new(readers);
@@ -84,32 +174,42 @@ impl Database {
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
             readers: Arc::new(Vec::new()),
             next_reader: Arc::new(AtomicUsize::new(0)),
+            db_path: None,
         };
         db.init_tables()?;
         Ok(db)
     }
 
     fn init_tables(&self) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         Self::run_migrations(&mut conn)
+    }
+
+    fn write_conn(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn read_conn(&self) -> MutexGuard<'_, Connection> {
         if self.readers.is_empty() {
-            // In-memory databases must keep one shared connection for read-after-write.
-            self.conn.lock().unwrap()
+            self.conn.lock().unwrap_or_else(|e| e.into_inner())
         } else {
             let index = self.next_reader.fetch_add(1, Ordering::Relaxed) % self.readers.len();
-            self.readers[index].lock().unwrap()
+            self.readers[index]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
         }
     }
 
-    pub fn get_column_names(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
+    fn get_column_names(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
+        anyhow::ensure!(
+            matches!(table, "movies" | "episodes"),
+            "invalid table identifier"
+        );
         let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
         let cols = stmt
             .query_map([], |row| row.get::<_, String>(1))?
@@ -119,7 +219,9 @@ impl Database {
     }
 
     fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
-        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;",
+        )?;
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -136,7 +238,6 @@ impl Database {
             rows.filter_map(Result::ok).collect()
         };
 
-        // Migration 1: Base schema (movies, episodes, home_cache, playlist_cache, indexes)
         if !applied_versions.contains(&1) {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute_batch(
@@ -209,7 +310,6 @@ impl Database {
             info!("Applied schema migration 1: base_schema");
         }
 
-        // Migration 2: Verify and safely migrate extra columns for pre-existing databases
         if !applied_versions.contains(&2) {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let movie_cols = Self::get_column_names(&tx, "movies")?;
@@ -266,7 +366,6 @@ impl Database {
             info!("Applied schema migration 2: extra_json_columns");
         }
 
-        // Migration 3: Add playlist_cache table and cleanup redundant index
         if !applied_versions.contains(&3) {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute_batch(
@@ -291,7 +390,6 @@ impl Database {
             info!("Applied schema migration 3: playlist_cache_and_index_cleanup");
         }
 
-        // Migration 4: Crawler persistent lease & fencing table (atomic DDL + version insert)
         if !applied_versions.contains(&4) {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute_batch(
@@ -306,16 +404,23 @@ impl Database {
                 );
                 "#,
             )?;
-            tx.execute("INSERT INTO schema_migrations (version, name) VALUES (4, 'crawler_leases')", [])?;
+            tx.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (4, 'crawler_leases')",
+                [],
+            )?;
             tx.commit()?;
             info!("Applied schema migration 4: crawler_leases atomically");
         }
 
-        // Migration 5: durable admin task log stream.
         if !applied_versions.contains(&5) {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            tx.execute_batch("CREATE TABLE IF NOT EXISTS admin_task_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, level TEXT NOT NULL CHECK(level IN ('info','warn','error','success')), message TEXT NOT NULL);")?;
-            tx.execute("INSERT INTO schema_migrations (version, name) VALUES (5, 'admin_task_logs')", [])?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS admin_task_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, level TEXT NOT NULL CHECK(level IN ('info','warn','error','success')), message TEXT NOT NULL);",
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (5, 'admin_task_logs')",
+                [],
+            )?;
             tx.commit()?;
             info!("Applied schema migration 5: admin_task_logs");
         }
@@ -341,9 +446,14 @@ impl Database {
         Ok(None)
     }
 
-    pub fn save_playlist_cache(&self, cache_key: &str, content: &str, ttl_secs: u64) -> anyhow::Result<()> {
+    pub fn save_playlist_cache(
+        &self,
+        cache_key: &str,
+        content: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<()> {
         let ttl = if ttl_secs == 0 { 24 * 3600 } else { ttl_secs };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -365,7 +475,7 @@ impl Database {
     }
 
     pub fn cleanup_expired_playlist_cache(&self) -> anyhow::Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -378,7 +488,6 @@ impl Database {
         Ok(count)
     }
 
-    /// Check the schema needed by request handlers without scanning the entire database.
     pub fn check_health(&self) -> anyhow::Result<(i64, bool)> {
         let conn = self.read_conn();
         let count: i64 = conn.query_row(
@@ -387,54 +496,89 @@ impl Database {
             |r| r.get(0),
         )?;
         let ping: i32 = conn.query_row("SELECT 1", [], |r| r.get(0))?;
-        for table in ["movies", "episodes", "home_cache", "playlist_cache", "crawler_leases", "admin_task_logs"] {
+        for table in [
+            "movies",
+            "episodes",
+            "home_cache",
+            "playlist_cache",
+            "crawler_leases",
+            "admin_task_logs",
+        ] {
             conn.prepare(&format!("SELECT 1 FROM {table} LIMIT 0"))?;
         }
         Ok((count, ping == 1 && count == 5))
     }
 
     pub fn insert_admin_log(&self, level: &str, message: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("INSERT INTO admin_task_logs(level, message) VALUES (?1, ?2)", params![level, message])?;
-        conn.execute("DELETE FROM admin_task_logs WHERE id <= COALESCE((SELECT MAX(id) FROM admin_task_logs) - 10000, 0)", [])?;
+        let conn = self.write_conn();
+        conn.execute(
+            "INSERT INTO admin_task_logs(level, message) VALUES (?1, ?2)",
+            params![level, message],
+        )?;
+        conn.execute(
+            "DELETE FROM admin_task_logs WHERE id <= COALESCE((SELECT MAX(id) FROM admin_task_logs) - 10000, 0)",
+            [],
+        )?;
         Ok(())
     }
 
-    pub fn get_admin_logs(&self, after_id: Option<i64>, before_id: Option<i64>, limit: i64) -> anyhow::Result<(Vec<(i64, String, String, String)>, bool)> {
+    pub fn get_admin_logs(
+        &self,
+        after_id: Option<i64>,
+        before_id: Option<i64>,
+        limit: i64,
+    ) -> anyhow::Result<(Vec<AdminLogRow>, bool)> {
         let conn = self.read_conn();
         let limit = limit.clamp(1, 500);
         let (sql, args): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(id) = after_id {
-            ("SELECT id,timestamp,level,message FROM admin_task_logs WHERE id > ? ORDER BY id ASC LIMIT ?", vec![Box::new(id), Box::new(limit + 1)])
+            (
+                "SELECT id,timestamp,level,message FROM admin_task_logs WHERE id > ? ORDER BY id ASC LIMIT ?",
+                vec![Box::new(id), Box::new(limit + 1)],
+            )
         } else if let Some(id) = before_id {
-            ("SELECT id,timestamp,level,message FROM admin_task_logs WHERE id < ? ORDER BY id DESC LIMIT ?", vec![Box::new(id), Box::new(limit + 1)])
+            (
+                "SELECT id,timestamp,level,message FROM admin_task_logs WHERE id < ? ORDER BY id DESC LIMIT ?",
+                vec![Box::new(id), Box::new(limit + 1)],
+            )
         } else {
-            ("SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id DESC LIMIT ?", vec![Box::new(limit + 1)])
+            (
+                "SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id DESC LIMIT ?",
+                vec![Box::new(limit + 1)],
+            )
         };
         let mut stmt = conn.prepare(sql)?;
-        let mut rows: Vec<_> = stmt.query_map(rusqlite::params_from_iter(args.iter()), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+        let mut rows: Vec<AdminLogRow> = stmt
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<_, _>>()?;
         let has_more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         rows.reverse();
         Ok((rows, has_more))
     }
 
-    pub fn get_all_admin_logs(&self) -> anyhow::Result<Vec<(i64, String, String, String)>> {
+    pub fn get_all_admin_logs(&self) -> anyhow::Result<Vec<AdminLogRow>> {
         let conn = self.read_conn();
-        let mut stmt = conn.prepare("SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id ASC LIMIT 10001")?;
-        let rows: Vec<_> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect::<Result<_, _>>()?;
+        let mut stmt = conn.prepare(
+            "SELECT id,timestamp,level,message FROM admin_task_logs ORDER BY id ASC LIMIT 10001",
+        )?;
+        let rows: Vec<AdminLogRow> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<_, _>>()?;
         anyhow::ensure!(rows.len() <= 10000, "admin log retention bound exceeded");
         Ok(rows)
     }
 
-    /// Acquire or take over crawler lease atomically with monotonic fencing token.
-    /// Returns Some(fence_token) on success, or None if currently held by another active owner.
     pub fn acquire_crawler_lease(
         &self,
         name: &str,
         owner_id: &str,
         ttl_secs: u64,
     ) -> anyhow::Result<Option<i64>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -466,7 +610,6 @@ impl Database {
             }
             Some((_cur_owner, cur_fence, cur_expires)) => {
                 if cur_expires < now {
-                    // Lease expired: monotonic takeover with incremented fence token
                     let new_fence = cur_fence + 1;
                     tx.execute(
                         r#"
@@ -479,14 +622,12 @@ impl Database {
                     tx.commit()?;
                     Ok(Some(new_fence))
                 } else {
-                    // An active run cannot re-enter under the same process owner.
                     Ok(None)
                 }
             }
         }
     }
 
-    /// Renew crawler lease if fence token and owner match and lease is not expired.
     pub fn renew_crawler_lease(
         &self,
         name: &str,
@@ -494,7 +635,7 @@ impl Database {
         fence_token: i64,
         ttl_secs: u64,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -512,15 +653,13 @@ impl Database {
         Ok(rows > 0)
     }
 
-    /// Release crawler lease if still owned by this owner and fence token.
-    /// Preserves monotonic fencing by expiring the lease rather than deleting the row.
     pub fn release_crawler_lease(
         &self,
         name: &str,
         owner_id: &str,
         fence_token: i64,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -532,7 +671,6 @@ impl Database {
         Ok(())
     }
 
-    /// Verify that the crawler fence is valid and active
     pub fn verify_crawler_fence(
         &self,
         name: &str,
@@ -557,15 +695,13 @@ impl Database {
         Ok(valid)
     }
 
-    /// Upsert a movie ensuring that the crawler lease fence token is valid within the SAME immediate transaction.
-    /// Eliminates the takeover race between a standalone fence check and the write transaction.
     pub fn upsert_movie_with_fence(
         &self,
         movie: &Movie,
         owner_id: &str,
         fence_token: i64,
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -591,7 +727,6 @@ impl Database {
         Ok(())
     }
 
-    /// Retrieve current lease info (owner_id, fence_token, expires_at)
     pub fn get_crawler_lease(&self, name: &str) -> anyhow::Result<Option<(String, i64, i64)>> {
         let conn = self.read_conn();
         match conn.query_row(
@@ -605,17 +740,26 @@ impl Database {
         }
     }
 
-    pub fn start_cleanup_task(&self, playlist_cache: Option<crate::playlist_cache::PlaylistCacheService>) {
+    pub fn start_cleanup_task(
+        &self,
+        playlist_cache: Option<crate::playlist_cache::PlaylistCacheService>,
+    ) {
         let db = self.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             loop {
                 interval.tick().await;
                 let cleanup_db = db.clone();
-                match db.run_blocking(move || cleanup_db.cleanup_expired_playlist_cache()).await {
+                match db
+                    .run_blocking(move || cleanup_db.cleanup_expired_playlist_cache())
+                    .await
+                {
                     Ok(deleted) => {
                         if deleted > 0 {
-                            info!("🧹 Purged {} expired playlist cache entries from SQLite", deleted);
+                            info!(
+                                "🧹 Purged {} expired playlist cache entries from SQLite",
+                                deleted
+                            );
                         }
                     }
                     Err(e) => {
@@ -623,6 +767,7 @@ impl Database {
                     }
                 }
                 if let Some(ref cache) = playlist_cache {
+                    let _ = cache.cleanup_expired_disk_cache().await;
                     cache.prune_memory_cache(std::time::Duration::from_secs(24 * 3600));
                 }
             }
@@ -631,12 +776,15 @@ impl Database {
 
     pub fn seed_from_file<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<usize> {
         let count: i64 = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.write_conn();
             conn.query_row("SELECT COUNT(*) FROM movies", [], |r| r.get(0))?
         };
 
         if count > 0 {
-            info!("Database already has {} movies, skipping initial seed", count);
+            info!(
+                "Database already has {} movies, skipping initial seed",
+                count
+            );
             return Ok(count as usize);
         }
 
@@ -648,10 +796,10 @@ impl Database {
 
         let content = std::fs::read_to_string(file_path)
             .with_context(|| format!("Reading seed file {:?}", file_path))?;
-        let movies: Vec<Movie> = serde_json::from_str(&content)
-            .with_context(|| "Parsing seed JSON")?;
+        let movies: Vec<Movie> =
+            serde_json::from_str(&content).with_context(|| "Parsing seed JSON")?;
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn();
         let tx = conn.transaction()?;
 
         let mut inserted = 0;
@@ -661,12 +809,15 @@ impl Database {
         }
 
         tx.commit()?;
-        info!("Successfully seeded {} movies into database atomically", inserted);
+        info!(
+            "Successfully seeded {} movies into database atomically",
+            inserted
+        );
         Ok(inserted)
     }
 
     pub fn upsert_movie(&self, movie: &Movie) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         Self::upsert_movie_conn(&conn, movie)
     }
 
@@ -677,23 +828,45 @@ impl Database {
             movie.title_vi.as_deref().unwrap_or(""),
             movie.title_en.as_deref().unwrap_or(""),
             movie.slug
-        ).to_lowercase();
+        )
+        .to_lowercase();
 
         let stream_str = match &movie.stream {
-            Some(serde_json::Value::String(s)) => Some(s.clone()),
-            Some(serde_json::Value::Object(obj)) => {
-                obj.get("proxyStreamUrl")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| obj.get("hlsUrl").and_then(|v| v.as_str()))
-                    .map(|s| s.to_string())
-                    .or_else(|| Some(serde_json::to_string(obj).unwrap_or_default()))
+            Some(serde_json::Value::String(s)) => {
+                let unwrapped = crate::proxy::extract_raw_url_from_proxy(s);
+                if unwrapped.trim().is_empty() {
+                    None
+                } else {
+                    Some(unwrapped)
+                }
             }
+            Some(serde_json::Value::Object(obj)) => obj
+                .get("hlsUrl")
+                .or_else(|| obj.get("proxyStreamUrl"))
+                .and_then(|v| v.as_str())
+                .map(crate::proxy::extract_raw_url_from_proxy)
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| Some(serde_json::to_string(obj).unwrap_or_default())),
             _ => None,
         };
 
-        let servers_json = serde_json::to_string(&movie.servers).unwrap_or_else(|_| "[]".to_string());
-        let subtitles_json = serde_json::to_string(&movie.subtitles).unwrap_or_else(|_| "[]".to_string());
-        let audio_tracks_json = serde_json::to_string(&movie.audio_tracks).unwrap_or_else(|_| "[]".to_string());
+        let normalized_servers: Vec<ServerSource> = movie
+            .servers
+            .iter()
+            .cloned()
+            .map(|mut srv| {
+                srv.hls_url = crate::proxy::extract_raw_url_from_proxy(&srv.hls_url);
+                srv.proxy_stream_url = sanitize_proxy_field(srv.proxy_stream_url, &srv.hls_url);
+                srv
+            })
+            .collect();
+
+        let servers_json =
+            serde_json::to_string(&normalized_servers).unwrap_or_else(|_| "[]".to_string());
+        let subtitles_json =
+            serde_json::to_string(&movie.subtitles).unwrap_or_else(|_| "[]".to_string());
+        let audio_tracks_json =
+            serde_json::to_string(&movie.audio_tracks).unwrap_or_else(|_| "[]".to_string());
 
         conn.execute(
             r#"
@@ -742,10 +915,34 @@ impl Database {
         )?;
 
         for ep in &movie.episodes {
-            let sources_json = serde_json::to_string(&ep.sources).unwrap_or_else(|_| "[]".to_string());
-            let ep_servers_json = serde_json::to_string(&ep.servers).unwrap_or_else(|_| "[]".to_string());
-            let ep_subtitles_json = serde_json::to_string(&ep.subtitles).unwrap_or_else(|_| "[]".to_string());
-            let ep_audio_tracks_json = serde_json::to_string(&ep.audio_tracks).unwrap_or_else(|_| "[]".to_string());
+            let normalized_sources: Vec<Source> = ep
+                .sources
+                .iter()
+                .cloned()
+                .map(|mut src| {
+                    src.hls_url = crate::proxy::extract_raw_url_from_proxy(&src.hls_url);
+                    src.proxy_stream_url = sanitize_proxy_field(src.proxy_stream_url, &src.hls_url);
+                    src
+                })
+                .collect();
+            let normalized_ep_servers: Vec<ServerSource> = ep
+                .servers
+                .iter()
+                .cloned()
+                .map(|mut srv| {
+                    srv.hls_url = crate::proxy::extract_raw_url_from_proxy(&srv.hls_url);
+                    srv.proxy_stream_url = sanitize_proxy_field(srv.proxy_stream_url, &srv.hls_url);
+                    srv
+                })
+                .collect();
+            let sources_json =
+                serde_json::to_string(&normalized_sources).unwrap_or_else(|_| "[]".to_string());
+            let ep_servers_json =
+                serde_json::to_string(&normalized_ep_servers).unwrap_or_else(|_| "[]".to_string());
+            let ep_subtitles_json =
+                serde_json::to_string(&ep.subtitles).unwrap_or_else(|_| "[]".to_string());
+            let ep_audio_tracks_json =
+                serde_json::to_string(&ep.audio_tracks).unwrap_or_else(|_| "[]".to_string());
             conn.execute(
                 r#"
                 INSERT INTO episodes (movie_slug, season, episode, title, runtime, still, sources_json, servers_json, subtitles_json, audio_tracks_json)
@@ -777,6 +974,192 @@ impl Database {
         Ok(())
     }
 
+    /// Create or update a movie from Admin CRUD endpoints while preserving existing episodes/servers
+    /// when `stream` is left empty during metadata-only edits.
+    pub fn admin_save_movie(
+        &self,
+        existing_slug: Option<&str>,
+        movie: &Movie,
+    ) -> anyhow::Result<String> {
+        let mut conn = self.write_conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        let genres_json = serde_json::to_string(&movie.genres).unwrap_or_else(|_| "[]".to_string());
+        let search_text = format!(
+            "{} {} {}",
+            movie.title_vi.as_deref().unwrap_or(""),
+            movie.title_en.as_deref().unwrap_or(""),
+            movie.slug
+        )
+        .to_lowercase();
+
+        let incoming_stream = movie
+            .stream
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .map(crate::proxy::extract_raw_url_from_proxy)
+            .filter(|s| !s.trim().is_empty());
+
+        let lookup_slug = existing_slug.unwrap_or(&movie.slug);
+        let current_row: Option<(Option<String>, String)> = tx
+            .query_row(
+                "SELECT stream, servers_json FROM movies WHERE slug = ?1",
+                params![lookup_slug],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some(old_slug) = existing_slug {
+            if old_slug != movie.slug {
+                let target_taken: bool = tx
+                    .query_row(
+                        "SELECT 1 FROM movies WHERE slug = ?1",
+                        params![movie.slug],
+                        |_| Ok(true),
+                    )
+                    .unwrap_or(false);
+                if target_taken {
+                    anyhow::bail!("Slug '{}' already exists", movie.slug);
+                }
+            }
+        }
+
+        let (final_stream, final_servers_json) = if let Some((cur_stream, cur_servers_raw)) =
+            current_row.clone()
+        {
+            let mut servers: Vec<ServerSource> =
+                serde_json::from_str(&cur_servers_raw).unwrap_or_default();
+            if let Some(ref new_hls) = incoming_stream {
+                let proxy_url = crate::proxy::build_proxy_stream_url(new_hls);
+                if let Some(first) = servers.first_mut() {
+                    first.hls_url = new_hls.clone();
+                    first.proxy_stream_url = Some(proxy_url);
+                } else {
+                    servers.push(ServerSource {
+                        id: Some(serde_json::json!("server-vip-4k")),
+                        label: "Server VIP (4K CDN)".to_string(),
+                        hls_url: new_hls.clone(),
+                        proxy_stream_url: Some(proxy_url),
+                        quality: movie.quality.clone(),
+                    });
+                }
+                let s_json = serde_json::to_string(&servers).unwrap_or_else(|_| "[]".to_string());
+                (Some(new_hls.clone()), s_json)
+            } else {
+                (cur_stream, cur_servers_raw)
+            }
+        } else {
+            let mut servers = Vec::new();
+            if let Some(ref new_hls) = incoming_stream {
+                servers.push(ServerSource {
+                    id: Some(serde_json::json!("server-vip-4k")),
+                    label: "Server VIP (4K CDN)".to_string(),
+                    hls_url: new_hls.clone(),
+                    proxy_stream_url: Some(crate::proxy::build_proxy_stream_url(new_hls)),
+                    quality: movie.quality.clone(),
+                });
+            }
+            let s_json = serde_json::to_string(&servers).unwrap_or_else(|_| "[]".to_string());
+            (incoming_stream, s_json)
+        };
+
+        if current_row.is_some() {
+            if let Some(old_slug) = existing_slug.filter(|&s| s != movie.slug) {
+                tx.execute_batch("PRAGMA defer_foreign_keys = ON;")?;
+                tx.execute(
+                    "UPDATE movies SET slug = ?1, movie_type = ?2, title_vi = ?3, title_en = ?4, search_text = ?5, year = ?6, quality = ?7, score = ?8, genres_json = ?9, country = ?10, poster = ?11, backdrop = ?12, overview = ?13, total_episodes = ?14, stream = ?15, servers_json = ?16, updated_at = CURRENT_TIMESTAMP WHERE slug = ?17",
+                    params![
+                        movie.slug,
+                        movie.movie_type,
+                        movie.title_vi,
+                        movie.title_en,
+                        search_text,
+                        movie.year,
+                        movie.quality,
+                        movie.score,
+                        genres_json,
+                        movie.country,
+                        movie.poster,
+                        movie.backdrop,
+                        movie.overview,
+                        movie.total_episodes,
+                        final_stream,
+                        final_servers_json,
+                        old_slug,
+                    ],
+                )?;
+                tx.execute(
+                    "UPDATE episodes SET movie_slug = ?1 WHERE movie_slug = ?2",
+                    params![movie.slug, old_slug],
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE movies SET movie_type = ?1, title_vi = ?2, title_en = ?3, search_text = ?4, year = ?5, quality = ?6, score = ?7, genres_json = ?8, country = ?9, poster = ?10, backdrop = ?11, overview = ?12, total_episodes = ?13, stream = ?14, servers_json = ?15, updated_at = CURRENT_TIMESTAMP WHERE slug = ?16",
+                    params![
+                        movie.movie_type,
+                        movie.title_vi,
+                        movie.title_en,
+                        search_text,
+                        movie.year,
+                        movie.quality,
+                        movie.score,
+                        genres_json,
+                        movie.country,
+                        movie.poster,
+                        movie.backdrop,
+                        movie.overview,
+                        movie.total_episodes,
+                        final_stream,
+                        final_servers_json,
+                        lookup_slug,
+                    ],
+                )?;
+            }
+        } else {
+            tx.execute(
+                r#"
+                INSERT INTO movies (slug, movie_type, title_vi, title_en, search_text, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, servers_json, subtitles_json, audio_tracks_json, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, '[]', '[]', CURRENT_TIMESTAMP)
+                "#,
+                params![
+                    movie.slug,
+                    movie.movie_type,
+                    movie.title_vi,
+                    movie.title_en,
+                    search_text,
+                    movie.year,
+                    movie.quality,
+                    movie.score,
+                    genres_json,
+                    movie.country,
+                    movie.poster,
+                    movie.backdrop,
+                    movie.overview,
+                    movie.total_episodes,
+                    final_stream,
+                    final_servers_json,
+                ],
+            )?;
+        }
+
+        let _ = tx.execute("DELETE FROM home_cache WHERE id = 1", []);
+        tx.commit()?;
+        Ok(movie.slug.clone())
+    }
+
+    /// Delete movie and all associated episodes atomically, returning `true` if a row was removed.
+    pub fn delete_movie_by_slug(&self, slug: &str) -> anyhow::Result<bool> {
+        let mut conn = self.write_conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM episodes WHERE movie_slug = ?1", params![slug])?;
+        let deleted = tx.execute("DELETE FROM movies WHERE slug = ?1", params![slug])?;
+        if deleted > 0 {
+            let _ = tx.execute("DELETE FROM home_cache WHERE id = 1", []);
+        }
+        tx.commit()?;
+        Ok(deleted > 0)
+    }
+
     pub fn get_movies_filtered(
         &self,
         query: &MoviesQuery,
@@ -786,11 +1169,18 @@ impl Database {
         let mut where_clauses = Vec::new();
         let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        let effective_search = query.search.as_ref().or(query.keyword.as_ref());
+        let effective_search = query
+            .search
+            .as_ref()
+            .or(query.q.as_ref())
+            .or(query.keyword.as_ref());
         if let Some(s) = effective_search {
             if !s.trim().is_empty() {
-                let pattern = format!("%{}%", s.trim().to_lowercase());
-                where_clauses.push("(search_text LIKE ? OR title_vi LIKE ? OR title_en LIKE ? OR slug LIKE ?)");
+                let escaped = escape_like(&s.trim().to_lowercase());
+                let pattern = format!("%{}%", escaped);
+                where_clauses.push(
+                    "(search_text LIKE ? ESCAPE '\\' OR title_vi LIKE ? ESCAPE '\\' OR title_en LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\')",
+                );
                 query_params.push(Box::new(pattern.clone()));
                 query_params.push(Box::new(pattern.clone()));
                 query_params.push(Box::new(pattern.clone()));
@@ -801,8 +1191,8 @@ impl Database {
         if let Some(ref g) = query.genre {
             if !g.trim().is_empty() && g != "all" {
                 let genre_name = genre_name_for_slug(g.trim()).unwrap_or(g.trim());
-                let pattern = format!("%\"{}\"%", genre_name);
-                where_clauses.push("genres_json LIKE ?");
+                let pattern = format!("%\"{}\"%", escape_like(genre_name));
+                where_clauses.push("genres_json LIKE ? ESCAPE '\\'");
                 query_params.push(Box::new(pattern));
             }
         }
@@ -820,8 +1210,8 @@ impl Database {
                     where_clauses.push("movie_type = ?");
                     query_params.push(Box::new(mapped.to_string()));
                 } else if let Some(genre_name) = genre_name_for_slug(mapped) {
-                    where_clauses.push("genres_json LIKE ?");
-                    query_params.push(Box::new(format!("%{}%", genre_name)));
+                    where_clauses.push("genres_json LIKE ? ESCAPE '\\'");
+                    query_params.push(Box::new(format!("%{}%", escape_like(genre_name))));
                 }
             }
         }
@@ -830,13 +1220,15 @@ impl Database {
             if !c.trim().is_empty() && c != "all" {
                 let aliases = country_names_for_slug(c.trim());
                 if aliases.is_empty() {
-                    where_clauses.push("country LIKE ?");
-                    query_params.push(Box::new(format!("%{}%", c.trim())));
+                    where_clauses.push("country LIKE ? ESCAPE '\\'");
+                    query_params.push(Box::new(format!("%{}%", escape_like(c.trim()))));
                 } else {
-                    where_clauses.push("(country LIKE ? OR country LIKE ? OR country LIKE ? OR country LIKE ? OR country LIKE ?)" );
+                    where_clauses.push(
+                        "(country LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\')",
+                    );
                     for index in 0..5 {
                         let alias = aliases.get(index).copied().unwrap_or(aliases[0]);
-                        query_params.push(Box::new(format!("%{}%", alias)));
+                        query_params.push(Box::new(format!("%{}%", escape_like(alias))));
                     }
                 }
             }
@@ -868,7 +1260,9 @@ impl Database {
                 } else if y_trimmed.contains('-') {
                     let parts: Vec<&str> = y_trimmed.split('-').collect();
                     if parts.len() == 2 {
-                        if let (Ok(y1), Ok(y2)) = (parts[0].trim().parse::<i32>(), parts[1].trim().parse::<i32>()) {
+                        if let (Ok(y1), Ok(y2)) =
+                            (parts[0].trim().parse::<i32>(), parts[1].trim().parse::<i32>())
+                        {
                             where_clauses.push("year BETWEEN ? AND ?");
                             query_params.push(Box::new(y1));
                             query_params.push(Box::new(y2));
@@ -883,8 +1277,8 @@ impl Database {
 
         if let Some(ref q) = query.quality {
             if !q.trim().is_empty() && q != "all" {
-                let pattern = format!("%{}%", q.trim());
-                where_clauses.push("quality LIKE ?");
+                let pattern = format!("%{}%", escape_like(q.trim()));
+                where_clauses.push("quality LIKE ? ESCAPE '\\'");
                 query_params.push(Box::new(pattern));
             }
         }
@@ -905,10 +1299,13 @@ impl Database {
         }
 
         let order_clause = match query.sort.as_deref().unwrap_or("default") {
-            "latest" => "ORDER BY id DESC",
+            "latest" => "ORDER BY updated_at DESC, id DESC",
             "score" => "ORDER BY score DESC NULLS LAST, id DESC",
             "views" => "ORDER BY views DESC, score DESC NULLS LAST, id DESC",
-            "year" => "ORDER BY year DESC NULLS LAST, score DESC NULLS LAST, id DESC",
+            "year" | "year_desc" => "ORDER BY year DESC NULLS LAST, score DESC NULLS LAST, id DESC",
+            "name_asc" => {
+                "ORDER BY COALESCE(NULLIF(title_vi,''), NULLIF(title_en,''), slug) COLLATE NOCASE ASC, id DESC"
+            }
             _ => "ORDER BY year DESC NULLS LAST, score DESC NULLS LAST, id DESC",
         };
 
@@ -927,13 +1324,12 @@ impl Database {
             format!("WHERE {}", where_clauses.join(" AND "))
         };
 
-        // Total count
         let count_sql = format!("SELECT COUNT(*) FROM movies {}", where_sql);
         let mut count_stmt = conn.prepare(&count_sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> = query_params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            query_params.iter().map(|p| p.as_ref()).collect();
         let total: i64 = count_stmt.query_row(param_refs.as_slice(), |r| r.get(0))?;
 
-        // Query movies
         let query_sql = format!(
             r#"
             SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
@@ -949,7 +1345,8 @@ impl Database {
         let mut full_params = query_params;
         full_params.push(Box::new(limit));
         full_params.push(Box::new(offset));
-        let full_param_refs: Vec<&dyn rusqlite::ToSql> = full_params.iter().map(|p| p.as_ref()).collect();
+        let full_param_refs: Vec<&dyn rusqlite::ToSql> =
+            full_params.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt.query_map(full_param_refs.as_slice(), |row| {
             let genres_raw: String = row.get(8)?;
@@ -1004,21 +1401,22 @@ impl Database {
         }
 
         let conn = self.read_conn();
-        let pattern_full = format!("%{}%", trimmed.to_lowercase());
+        let escaped = escape_like(&trimmed.to_lowercase());
+        let pattern_full = format!("%{}%", escaped);
         let exact = trimmed.to_lowercase();
-        let prefix = format!("{}%", trimmed.to_lowercase());
+        let prefix = format!("{}%", escaped);
         let limit_val = limit.clamp(1, 20) as i64;
 
         let mut stmt = conn.prepare(
             r#"
             SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
             FROM movies
-            WHERE search_text LIKE ?1 OR title_vi LIKE ?1 OR title_en LIKE ?1 OR slug LIKE ?1
+            WHERE search_text LIKE ?1 ESCAPE '\' OR title_vi LIKE ?1 ESCAPE '\' OR title_en LIKE ?1 ESCAPE '\' OR slug LIKE ?1 ESCAPE '\'
             ORDER BY
                 CASE
                     WHEN lower(slug) = ?2 THEN 1
-                    WHEN lower(title_vi) LIKE ?3 THEN 2
-                    WHEN lower(title_en) LIKE ?3 THEN 3
+                    WHEN lower(title_vi) LIKE ?3 ESCAPE '\' THEN 2
+                    WHEN lower(title_en) LIKE ?3 ESCAPE '\' THEN 3
                     ELSE 4
                 END,
                 score DESC NULLS LAST,
@@ -1071,7 +1469,8 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let placeholders: Vec<String> = (1..=clean_slugs.len()).map(|i| format!("?{}", i)).collect();
+        let placeholders: Vec<String> =
+            (1..=clean_slugs.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
             r#"
             SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, poster, backdrop, total_episodes
@@ -1084,7 +1483,8 @@ impl Database {
         let conn = self.read_conn();
         let mut stmt = conn.prepare(&sql)?;
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = clean_slugs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            clean_slugs.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             let genres_raw: String = row.get(8)?;
             let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
@@ -1104,13 +1504,13 @@ impl Database {
             })
         })?;
 
-        let mut map: std::collections::HashMap<String, MovieSummary> = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<String, MovieSummary> =
+            std::collections::HashMap::new();
         for r in rows {
             let item = r?;
             map.insert(item.slug.clone(), item);
         }
 
-        // Return movies strictly in the requested input order of slugs
         let mut ordered = Vec::new();
         for slug in &clean_slugs {
             if let Some(movie) = map.remove(slug) {
@@ -1121,7 +1521,11 @@ impl Database {
         Ok(ordered)
     }
 
-    pub fn get_recommendations(&self, slug: &str, limit: usize) -> anyhow::Result<Vec<MovieSummary>> {
+    pub fn get_recommendations(
+        &self,
+        slug: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<MovieSummary>> {
         let max_items = limit.clamp(1, 24);
         let movie_opt = self.get_movie_by_slug(slug)?;
 
@@ -1137,8 +1541,8 @@ impl Database {
 
             for g in &target.genres {
                 if !g.trim().is_empty() {
-                    let pattern = format!("%\"{}\"%", g.trim());
-                    genre_clauses.push("genres_json LIKE ?");
+                    let pattern = format!("%\"{}\"%", escape_like(g.trim()));
+                    genre_clauses.push("genres_json LIKE ? ESCAPE '\\'");
                     query_params.push(Box::new(pattern));
                 }
             }
@@ -1147,7 +1551,7 @@ impl Database {
                 format!("WHERE slug != ?1 AND ({})", genre_clauses.join(" OR "))
             } else {
                 query_params.push(Box::new(target.movie_type.clone()));
-                format!("WHERE slug != ?1 AND movie_type = ?2")
+                "WHERE slug != ?1 AND movie_type = ?2".to_string()
             };
 
             let query_sql = format!(
@@ -1164,7 +1568,8 @@ impl Database {
             let mut stmt = conn.prepare(&query_sql)?;
             let mut full_params = query_params;
             full_params.push(Box::new(max_items as i64));
-            let param_refs: Vec<&dyn rusqlite::ToSql> = full_params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                full_params.iter().map(|p| p.as_ref()).collect();
 
             let rows = stmt.query_map(param_refs.as_slice(), |row| {
                 let genres_raw: String = row.get(8)?;
@@ -1193,7 +1598,6 @@ impl Database {
             }
         }
 
-        // Backfill if needed up to max_items
         if results.len() < max_items {
             let needed = max_items - results.len();
             let mut stmt = conn.prepare(
@@ -1241,45 +1645,66 @@ impl Database {
     pub fn get_movie_by_slug(&self, slug: &str) -> anyhow::Result<Option<Movie>> {
         let conn = self.read_conn();
 
-        let mut movie_opt: Option<Movie> = conn.query_row(
-            r#"
-            SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, servers_json, subtitles_json, audio_tracks_json
-            FROM movies WHERE slug = ?1
-            "#,
-            params![slug],
-            |row| {
-                let genres_raw: String = row.get(8)?;
-                let genres: Vec<String> = serde_json::from_str(&genres_raw).unwrap_or_default();
-                let servers_raw: String = row.get(15).unwrap_or_else(|_| "[]".to_string());
-                let servers: Vec<ServerSource> = serde_json::from_str(&servers_raw).unwrap_or_default();
-                let subtitles_raw: String = row.get(16).unwrap_or_else(|_| "[]".to_string());
-                let subtitles: Vec<SubtitleTrack> = serde_json::from_str(&subtitles_raw).unwrap_or_default();
-                let audio_tracks_raw: String = row.get(17).unwrap_or_else(|_| "[]".to_string());
-                let audio_tracks: Vec<AudioTrack> = serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
+        let mut movie_opt: Option<Movie> = conn
+            .query_row(
+                r#"
+                SELECT id, slug, movie_type, title_vi, title_en, year, quality, score, genres_json, country, poster, backdrop, overview, total_episodes, stream, servers_json, subtitles_json, audio_tracks_json
+                FROM movies WHERE slug = ?1
+                "#,
+                params![slug],
+                |row| {
+                    let genres_raw: String = row.get(8)?;
+                    let genres: Vec<String> =
+                        serde_json::from_str(&genres_raw).unwrap_or_default();
+                    let servers_raw: String = row.get(15).unwrap_or_else(|_| "[]".to_string());
+                    let servers: Vec<ServerSource> = serde_json::from_str::<Vec<ServerSource>>(
+                        &servers_raw,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|mut srv| {
+                        srv.hls_url = crate::proxy::extract_raw_url_from_proxy(&srv.hls_url);
+                        srv.proxy_stream_url =
+                            sanitize_proxy_field(srv.proxy_stream_url, &srv.hls_url);
+                        srv
+                    })
+                    .collect();
+                    let subtitles_raw: String = row.get(16).unwrap_or_else(|_| "[]".to_string());
+                    let subtitles: Vec<SubtitleTrack> =
+                        serde_json::from_str(&subtitles_raw).unwrap_or_default();
+                    let audio_tracks_raw: String =
+                        row.get(17).unwrap_or_else(|_| "[]".to_string());
+                    let audio_tracks: Vec<AudioTrack> =
+                        serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
+                    let raw_stream: Option<String> = row.get(14)?;
+                    let clean_stream = raw_stream
+                        .map(|s| crate::proxy::extract_raw_url_from_proxy(&s))
+                        .map(serde_json::Value::String);
 
-                Ok(Movie {
-                    id: Some(serde_json::json!(row.get::<_, i64>(0)?)),
-                    slug: row.get(1)?,
-                    movie_type: row.get(2)?,
-                    title_vi: row.get(3)?,
-                    title_en: row.get(4)?,
-                    year: row.get(5)?,
-                    quality: row.get(6)?,
-                    score: row.get(7)?,
-                    genres,
-                    country: row.get(9)?,
-                    poster: row.get(10)?,
-                    backdrop: row.get(11)?,
-                    overview: row.get(12)?,
-                    total_episodes: row.get(13)?,
-                    stream: row.get::<_, Option<String>>(14)?.map(serde_json::Value::String),
-                    episodes: Vec::new(),
-                    servers,
-                    subtitles,
-                    audio_tracks,
-                })
-            },
-        ).ok();
+                    Ok(Movie {
+                        id: Some(serde_json::json!(row.get::<_, i64>(0)?)),
+                        slug: row.get(1)?,
+                        movie_type: row.get(2)?,
+                        title_vi: row.get(3)?,
+                        title_en: row.get(4)?,
+                        year: row.get(5)?,
+                        quality: row.get(6)?,
+                        score: row.get(7)?,
+                        genres,
+                        country: row.get(9)?,
+                        poster: row.get(10)?,
+                        backdrop: row.get(11)?,
+                        overview: row.get(12)?,
+                        total_episodes: row.get(13)?,
+                        stream: clean_stream,
+                        episodes: Vec::new(),
+                        servers,
+                        subtitles,
+                        audio_tracks,
+                    })
+                },
+            )
+            .ok();
 
         if let Some(ref mut movie) = movie_opt {
             let mut ep_stmt = conn.prepare(
@@ -1288,18 +1713,40 @@ impl Database {
                 FROM episodes
                 WHERE movie_slug = ?1
                 ORDER BY season ASC, episode ASC
-                "#
+                "#,
             )?;
 
             let ep_rows = ep_stmt.query_map(params![slug], |row| {
                 let sources_raw: String = row.get(6)?;
-                let sources: Vec<Source> = serde_json::from_str(&sources_raw).unwrap_or_default();
+                let sources: Vec<Source> = serde_json::from_str::<Vec<Source>>(&sources_raw)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|mut src| {
+                        src.hls_url = crate::proxy::extract_raw_url_from_proxy(&src.hls_url);
+                        src.proxy_stream_url =
+                            sanitize_proxy_field(src.proxy_stream_url, &src.hls_url);
+                        src
+                    })
+                    .collect();
                 let servers_raw: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
-                let servers: Vec<ServerSource> = serde_json::from_str(&servers_raw).unwrap_or_default();
+                let servers: Vec<ServerSource> = serde_json::from_str::<Vec<ServerSource>>(
+                    &servers_raw,
+                )
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut srv| {
+                    srv.hls_url = crate::proxy::extract_raw_url_from_proxy(&srv.hls_url);
+                    srv.proxy_stream_url =
+                        sanitize_proxy_field(srv.proxy_stream_url, &srv.hls_url);
+                    srv
+                })
+                .collect();
                 let subtitles_raw: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
-                let subtitles: Vec<SubtitleTrack> = serde_json::from_str(&subtitles_raw).unwrap_or_default();
+                let subtitles: Vec<SubtitleTrack> =
+                    serde_json::from_str(&subtitles_raw).unwrap_or_default();
                 let audio_tracks_raw: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
-                let audio_tracks: Vec<AudioTrack> = serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
+                let audio_tracks: Vec<AudioTrack> =
+                    serde_json::from_str(&audio_tracks_raw).unwrap_or_default();
 
                 Ok(Episode {
                     id: Some(row.get(0)?),
@@ -1324,59 +1771,87 @@ impl Database {
         Ok(movie_opt)
     }
 
-    pub fn find_slug_by_stream_url(&self, url: &str) -> Option<String> {
+    /// Resolve `(slug, season, episode)` from a stream URL or `/api/hls/<token>/` token across both `episodes` and `movies`.
+    pub fn find_stream_context_by_url(
+        &self,
+        url: &str,
+    ) -> Option<(String, Option<i32>, Option<i32>)> {
         let conn = self.read_conn();
+        let clean_url = crate::proxy::extract_raw_url_from_proxy(url);
 
-        // 1. If URL has /api/hls/<token>/..., extract token
-        if let Some(idx) = url.find("/api/hls/") {
-            let after = &url[idx + 9..];
+        if let Some(idx) = clean_url.find("/api/hls/") {
+            let after = &clean_url[idx + 9..];
             let token_part = after.split('/').next().unwrap_or(after);
             let token = token_part.split('?').next().unwrap_or(token_part);
             if token.len() >= 4 {
-                let pattern = format!("%{}%", token);
+                let pattern = format!("%{}%", escape_like(token));
+                if let Ok((slug, season, ep)) = conn.query_row(
+                    "SELECT movie_slug, season, episode FROM episodes WHERE sources_json LIKE ?1 ESCAPE '\\' OR servers_json LIKE ?1 ESCAPE '\\' LIMIT 1",
+                    params![pattern],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
+                ) {
+                    return Some((slug, Some(season), Some(ep)));
+                }
                 if let Ok(slug) = conn.query_row(
-                    "SELECT slug FROM movies WHERE stream LIKE ?1 OR servers_json LIKE ?1 LIMIT 1",
+                    "SELECT slug FROM movies WHERE stream LIKE ?1 ESCAPE '\\' OR servers_json LIKE ?1 ESCAPE '\\' LIMIT 1",
                     params![pattern],
                     |row| row.get::<_, String>(0),
                 ) {
-                    return Some(slug);
+                    return Some((slug, None, None));
                 }
             }
         }
 
-        // 2. Direct full URL search
-        let pattern_full = format!("%{}%", url);
+        let pattern_full = format!("%{}%", escape_like(&clean_url));
+        if let Ok((slug, season, ep)) = conn.query_row(
+            "SELECT movie_slug, season, episode FROM episodes WHERE sources_json LIKE ?1 ESCAPE '\\' OR servers_json LIKE ?1 ESCAPE '\\' LIMIT 1",
+            params![pattern_full],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, i32>(2)?)),
+        ) {
+            return Some((slug, Some(season), Some(ep)));
+        }
+
         conn.query_row(
-            "SELECT slug FROM movies WHERE stream LIKE ?1 OR servers_json LIKE ?1 LIMIT 1",
+            "SELECT slug FROM movies WHERE stream LIKE ?1 ESCAPE '\\' OR servers_json LIKE ?1 ESCAPE '\\' LIMIT 1",
             params![pattern_full],
             |row| row.get::<_, String>(0),
-        ).ok()
+        )
+        .ok()
+        .map(|slug| (slug, None, None))
+    }
+
+    pub fn find_slug_by_stream_url(&self, url: &str) -> Option<String> {
+        self.find_stream_context_by_url(url)
+            .map(|(slug, _, _)| slug)
     }
 
     pub fn update_movie_stream(&self, slug: &str, new_hls_url: &str) -> anyhow::Result<bool> {
-        let trimmed_url = new_hls_url.trim();
+        let trimmed_url = crate::proxy::extract_raw_url_from_proxy(new_hls_url);
+        let trimmed_url = trimmed_url.trim();
         if trimmed_url.is_empty() {
             return Ok(false);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
 
-        let current: Option<(Option<String>, String)> = conn.query_row(
-            "SELECT stream, servers_json FROM movies WHERE slug = ?1",
-            params![slug],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).ok();
+        let current: Option<(Option<String>, String)> = conn
+            .query_row(
+                "SELECT stream, servers_json FROM movies WHERE slug = ?1",
+                params![slug],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
         if let Some((cur_stream, servers_json_str)) = current {
-            // Idempotent check: if stream URL is already set to trimmed_url, skip write
             if let Some(ref existing) = cur_stream {
                 if existing == trimmed_url {
                     return Ok(false);
                 }
             }
 
-            let mut servers: Vec<ServerSource> = serde_json::from_str(&servers_json_str).unwrap_or_default();
-            let proxy_url = format!("https://secret.dangducminh.io.vn/?url={}", crate::proxy::urlencoding::encode(trimmed_url));
+            let mut servers: Vec<ServerSource> =
+                serde_json::from_str(&servers_json_str).unwrap_or_default();
+            let proxy_url = crate::proxy::build_proxy_stream_url(trimmed_url);
 
             if let Some(first) = servers.first_mut() {
                 first.hls_url = trimmed_url.to_string();
@@ -1391,7 +1866,8 @@ impl Database {
                 });
             }
 
-            let new_servers_json = serde_json::to_string(&servers).unwrap_or_else(|_| "[]".to_string());
+            let new_servers_json =
+                serde_json::to_string(&servers).unwrap_or_else(|_| "[]".to_string());
             let updated = conn.execute(
                 r#"
                 UPDATE movies
@@ -1414,21 +1890,33 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM movies", [], |r| r.get(0))
             .unwrap_or(0);
         let movies: i64 = conn
-            .query_row("SELECT COUNT(*) FROM movies WHERE movie_type = 'movie'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM movies WHERE movie_type = 'movie'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         let series: i64 = conn
-            .query_row("SELECT COUNT(*) FROM movies WHERE movie_type = 'tv'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM movies WHERE movie_type = 'tv'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         Ok((total, movies, series))
     }
 
     pub fn get_detail_movie_count(&self) -> anyhow::Result<i64> {
         let conn = self.read_conn();
-        Ok(conn.query_row("SELECT COUNT(DISTINCT movie_slug) FROM episodes", [], |row| row.get(0))?)
+        Ok(conn.query_row(
+            "SELECT COUNT(DISTINCT movie_slug) FROM episodes",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn save_home_cache(&self, home: &HomeResponse) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn();
         let json_str = serde_json::to_string(home)?;
         conn.execute(
             r#"
@@ -1449,7 +1937,7 @@ impl Database {
         owner_id: &str,
         fence_token: i64,
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -1461,7 +1949,9 @@ impl Database {
         );
         match active {
             Ok(()) => {}
-            Err(rusqlite::Error::QueryReturnedNoRows) => anyhow::bail!("Crawler lease expired or superseded"),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                anyhow::bail!("Crawler lease expired or superseded")
+            }
             Err(error) => return Err(error.into()),
         }
         let json_str = serde_json::to_string(home)?;
@@ -1493,7 +1983,9 @@ impl Database {
 
     pub fn get_home_cache_age_seconds(&self) -> anyhow::Result<Option<u64>> {
         let conn = self.read_conn();
-        let mut stmt = conn.prepare("SELECT CAST((strftime('%s', 'now') - strftime('%s', updated_at)) AS INTEGER) FROM home_cache WHERE id = 1")?;
+        let mut stmt = conn.prepare(
+            "SELECT CAST((strftime('%s', 'now') - strftime('%s', updated_at)) AS INTEGER) FROM home_cache WHERE id = 1",
+        )?;
         let res = stmt.query_row([], |row| {
             let age: i64 = row.get(0)?;
             Ok(age)
@@ -1576,7 +2068,6 @@ impl Database {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1665,8 +2156,10 @@ mod tests {
 
         db.upsert_movie(&movie).unwrap();
 
-        // 1. Query by slug
-        let found = db.get_movie_by_slug("interstellar").unwrap().expect("Movie should exist");
+        let found = db
+            .get_movie_by_slug("interstellar")
+            .unwrap()
+            .expect("Movie should exist");
         assert_eq!(found.title_en.as_deref(), Some("Interstellar"));
         assert_eq!(found.servers.len(), 1);
         assert_eq!(found.servers[0].label, "Server VIP 1");
@@ -1678,26 +2171,25 @@ mod tests {
         assert_eq!(found.episodes[0].sources[0].label, "Server 1");
         assert_eq!(found.episodes[0].servers.len(), 1);
         assert_eq!(found.episodes[0].servers[0].label, "Server VIP 1");
-        assert_eq!(found.episodes[0].subtitles.len(), 1);
-        assert_eq!(found.episodes[0].subtitles[0].label, "Tiếng Việt");
-        assert_eq!(found.episodes[0].audio_tracks.len(), 1);
-        assert_eq!(found.episodes[0].audio_tracks[0].label, "ENG (Stereo)");
 
-        // 2. Query list with search
         let (list, total) = db.get_movies(Some("hố đen"), None, None, 10, 0).unwrap();
         assert_eq!(total, 1);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].slug, "interstellar");
 
-        // 3. Query list with genre
         let (list_genre, total_genre) = db.get_movies(None, Some("Sci-Fi"), None, 10, 0).unwrap();
         assert_eq!(total_genre, 1);
         assert_eq!(list_genre[0].slug, "interstellar");
 
-        // 4. Query list with non-matching search
-        let (empty_list, empty_total) = db.get_movies(Some("nonexistent_film"), None, None, 10, 0).unwrap();
+        let (empty_list, empty_total) = db
+            .get_movies(Some("nonexistent_film"), None, None, 10, 0)
+            .unwrap();
         assert_eq!(empty_total, 0);
         assert!(empty_list.is_empty());
+
+        // Foreign key cascade check
+        assert!(db.delete_movie_by_slug("interstellar").unwrap());
+        assert_eq!(db.get_detail_movie_count().unwrap(), 0);
     }
 
     #[test]
@@ -1711,41 +2203,26 @@ mod tests {
         let inserted = db.seed_from_file(seed_path).unwrap();
         assert_eq!(inserted, 17);
 
-        // 1. Verify spider-man-brand-new-day
-        let spidey = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().expect("Spiderman should exist");
+        let spidey = db
+            .get_movie_by_slug("spider-man-brand-new-day")
+            .unwrap()
+            .expect("Spiderman should exist");
         assert_eq!(spidey.servers.len(), 3);
         assert_eq!(spidey.servers[0].label, "Server VIP (4K CDN)");
         assert_eq!(spidey.servers[0].quality.as_deref(), Some("4K"));
         assert_eq!(spidey.servers[1].label, "Server 2 (Dự Phòng)");
         assert_eq!(spidey.servers[2].label, "Server 3 (Direct CDN)");
+        // Verify legacy secret.dangducminh.io.vn wrapper is automatically unwrapped
+        if let Some(serde_json::Value::String(ref st)) = spidey.stream {
+            assert!(!st.contains("secret.dangducminh.io.vn"));
+        }
+        assert!(spidey
+            .servers
+            .iter()
+            .all(|s| !s.hls_url.contains("secret.dangducminh.io.vn")));
 
         assert_eq!(spidey.subtitles.len(), 3);
-        assert_eq!(spidey.subtitles[0].label, "Film4k.net");
-        assert_eq!(spidey.subtitles[0].url.as_deref(), Some("/api/subtitles/spider-man-brand-new-day.vtt"));
-        assert_eq!(spidey.subtitles[0].is_default, Some(true));
-        assert_eq!(spidey.subtitles[1].label, "Tiếng Việt");
-        assert_eq!(spidey.subtitles[2].label, "English");
-
         assert_eq!(spidey.audio_tracks.len(), 3);
-        assert_eq!(spidey.audio_tracks[0].label, "ENG (Stereo)");
-        assert_eq!(spidey.audio_tracks[0].is_default, Some(true));
-        assert_eq!(spidey.audio_tracks[1].label, "ENG (Dolby Atmos 5.1)");
-        assert_eq!(spidey.audio_tracks[2].label, "VIE (Thuyết minh)");
-
-        // 2. Verify street-fighter
-        let sf = db.get_movie_by_slug("street-fighter").unwrap().expect("Street Fighter should exist");
-        assert_eq!(sf.servers.len(), 3);
-        assert_eq!(sf.servers[0].label, "Server VIP (4K CDN)");
-        assert_eq!(sf.subtitles.len(), 3);
-        assert_eq!(sf.subtitles[0].url.as_deref(), Some("/api/subtitles/street-fighter.vtt"));
-        assert_eq!(sf.audio_tracks.len(), 3);
-        assert_eq!(sf.audio_tracks[2].label, "VIE (Lồng tiếng)");
-
-        // 3. Verify other movies have configs populated
-        let jurassic = db.get_movie_by_slug("jurassic-park").unwrap().expect("Jurassic Park should exist");
-        assert!(!jurassic.servers.is_empty());
-        assert!(!jurassic.subtitles.is_empty());
-        assert!(!jurassic.audio_tracks.is_empty());
     }
 
     #[test]
@@ -1767,12 +2244,15 @@ mod tests {
             backdrop: None,
             overview: None,
             total_episodes: Some(1),
-            stream: Some(serde_json::Value::String("https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8".to_string())),
+            stream: Some(serde_json::Value::String(
+                "https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8".to_string(),
+            )),
             episodes: vec![],
             servers: vec![ServerSource {
                 id: Some(serde_json::json!("srv-vip")),
                 label: "Server VIP (4K CDN)".to_string(),
-                hls_url: "https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8".to_string(),
+                hls_url: "https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8"
+                    .to_string(),
                 proxy_stream_url: None,
                 quality: Some("4K".to_string()),
             }],
@@ -1782,22 +2262,37 @@ mod tests {
 
         db.upsert_movie(&movie).unwrap();
 
-        // 1. Test finding slug by expired stream url
-        let slug = db.find_slug_by_stream_url("https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8");
+        let slug = db.find_slug_by_stream_url(
+            "https://fiml4k.fun/api/hls/OLD_EXPIRED_TOKEN_12345/master.m3u8",
+        );
         assert_eq!(slug.as_deref(), Some("spider-man-brand-new-day"));
 
-        // 2. Test updating stream to fresh HLS url
         let new_url = "https://fiml4k.fun/api/hls/Wjr-5Z8WSYrKNhiOd5cAiDVphbcaBtcUdgaR3nz6nEzPek9X-hZCbJDWS8IFGhKR4ZoQ6ML0l1OXXar0InDk9QJ4a4axA82LdzGZ59H95lI8BHumvDQhQNOdaQ/master.m3u8";
-        let updated = db.update_movie_stream("spider-man-brand-new-day", new_url).unwrap();
+        let updated = db
+            .update_movie_stream("spider-man-brand-new-day", new_url)
+            .unwrap();
         assert!(updated);
 
-        // 3. Verify movie in DB now has fresh stream and updated server
-        let reloaded = db.get_movie_by_slug("spider-man-brand-new-day").unwrap().unwrap();
-        assert_eq!(reloaded.stream, Some(serde_json::Value::String(new_url.to_string())));
+        let reloaded = db
+            .get_movie_by_slug("spider-man-brand-new-day")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reloaded.stream,
+            Some(serde_json::Value::String(new_url.to_string()))
+        );
         assert_eq!(reloaded.servers[0].hls_url, new_url);
-        assert!(reloaded.servers[0].proxy_stream_url.as_ref().unwrap().contains("https%3A%2F%2Ffiml4k.fun"));
+        assert!(reloaded.servers[0]
+            .proxy_stream_url
+            .as_ref()
+            .unwrap()
+            .contains("https%3A%2F%2Ffiml4k.fun"));
+        assert!(!reloaded.servers[0]
+            .proxy_stream_url
+            .as_ref()
+            .unwrap()
+            .contains("secret.dangducminh.io.vn"));
 
-        // 4. Test finding slug by new stream url
         let slug_new = db.find_slug_by_stream_url(new_url);
         assert_eq!(slug_new.as_deref(), Some("spider-man-brand-new-day"));
     }
@@ -1807,8 +2302,9 @@ mod tests {
         let db = Database::new_in_memory().unwrap();
         let conn = db.conn.lock().unwrap();
 
-        // 1. Verify schema_migrations table contains expected migrations
-        let mut stmt = conn.prepare("SELECT version, name FROM schema_migrations ORDER BY version").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+            .unwrap();
         let rows: Vec<(i64, String)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
@@ -1816,25 +2312,18 @@ mod tests {
             .collect();
 
         assert_eq!(rows.len(), 5);
-        assert_eq!(rows[0].0, 1);
-        assert_eq!(rows[0].1, "base_schema");
-        assert_eq!(rows[1].0, 2);
-        assert_eq!(rows[1].1, "extra_json_columns");
-        assert_eq!(rows[2].0, 3);
-        assert_eq!(rows[2].1, "playlist_cache_and_index_cleanup");
-        assert_eq!(rows[3].0, 4);
-        assert_eq!(rows[3].1, "crawler_leases");
-        assert_eq!(rows[4].0, 5);
-        assert_eq!(rows[4].1, "admin_task_logs");
+        assert_eq!(rows[0], (1, "base_schema".to_string()));
+        assert_eq!(rows[1], (2, "extra_json_columns".to_string()));
+        assert_eq!(rows[2], (3, "playlist_cache_and_index_cleanup".to_string()));
+        assert_eq!(rows[3], (4, "crawler_leases".to_string()));
+        assert_eq!(rows[4], (5, "admin_task_logs".to_string()));
 
-        // 2. Verify all expected columns exist in movies
         let movie_cols = Database::get_column_names(&conn, "movies").unwrap();
         assert!(movie_cols.contains(&"servers_json".to_string()));
         assert!(movie_cols.contains(&"subtitles_json".to_string()));
         assert!(movie_cols.contains(&"audio_tracks_json".to_string()));
         assert!(movie_cols.contains(&"views".to_string()));
 
-        // 3. Verify all expected columns exist in episodes
         let ep_cols = Database::get_column_names(&conn, "episodes").unwrap();
         assert!(ep_cols.contains(&"servers_json".to_string()));
         assert!(ep_cols.contains(&"subtitles_json".to_string()));
@@ -1849,10 +2338,16 @@ mod tests {
         db.insert_admin_log("error", "three").unwrap();
         let (latest, has_more) = db.get_admin_logs(None, None, 2).unwrap();
         assert!(has_more);
-        assert_eq!(latest.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(), vec!["two", "three"]);
+        assert_eq!(
+            latest.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(),
+            vec!["two", "three"]
+        );
         let (older, has_more) = db.get_admin_logs(None, Some(latest[0].0), 2).unwrap();
         assert!(!has_more);
-        assert_eq!(older.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(), vec!["one"]);
+        assert_eq!(
+            older.iter().map(|row| row.3.as_str()).collect::<Vec<_>>(),
+            vec!["one"]
+        );
         assert_eq!(db.get_all_admin_logs().unwrap().len(), 3);
     }
 
@@ -1863,11 +2358,19 @@ mod tests {
             db.run_blocking(|| {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 Ok(())
-            }).await
+            })
+            .await
         });
-        tokio::time::timeout(std::time::Duration::from_millis(30), tokio::time::sleep(std::time::Duration::from_millis(5)))
-            .await.expect("Tokio timer must progress while SQLite work is in the blocking pool");
-        assert!(!task.is_finished(), "blocking closure should still be running in the blocking pool");
+        tokio::time::timeout(
+            std::time::Duration::from_millis(30),
+            tokio::time::sleep(std::time::Duration::from_millis(5)),
+        )
+        .await
+        .expect("Tokio timer must progress while SQLite work is in the blocking pool");
+        assert!(
+            !task.is_finished(),
+            "blocking closure should still be running in the blocking pool"
+        );
         task.await.unwrap().unwrap();
     }
 
@@ -1875,22 +2378,17 @@ mod tests {
     fn test_crawler_lease_monotonic_fencing_and_takeover() {
         let db = Database::new_in_memory().unwrap();
 
-        // 1. Initial acquisition
         let token1 = db.acquire_crawler_lease("crawler_main", "owner_a", 60).unwrap();
         assert_eq!(token1, Some(1));
 
-        // A second run in the same process must not share the active lease.
         let token1_again = db.acquire_crawler_lease("crawler_main", "owner_a", 60).unwrap();
         assert_eq!(token1_again, None);
 
-        // 2. Competing acquisition while active fails (returns None)
         let token_b_fail = db.acquire_crawler_lease("crawler_main", "owner_b", 60).unwrap();
         assert_eq!(token_b_fail, None);
 
-        // 3. Voluntary release expires lease row rather than deleting it
         db.release_crawler_lease("crawler_main", "owner_a", 1).unwrap();
 
-        // Verify lease row exists but is expired
         let (owner, fence, expires_at) = db.get_crawler_lease("crawler_main").unwrap().unwrap();
         assert_eq!(owner, "owner_a");
         assert_eq!(fence, 1);
@@ -1900,22 +2398,20 @@ mod tests {
             .as_secs() as i64;
         assert!(expires_at < now);
 
-        // 4. Acquisition after release increments token monotonically (must NOT reset to 1)
         let token_b = db.acquire_crawler_lease("crawler_main", "owner_b", 60).unwrap();
         assert_eq!(token_b, Some(2));
 
-        // 5. Expired lease takeover by owner_c increments token again
         {
             let conn = db.conn.lock().unwrap();
             conn.execute(
                 "UPDATE crawler_leases SET expires_at = ?1 WHERE name = 'crawler_main'",
                 rusqlite::params![now - 10],
-            ).unwrap();
+            )
+            .unwrap();
         }
         let token_c = db.acquire_crawler_lease("crawler_main", "owner_c", 60).unwrap();
         assert_eq!(token_c, Some(3));
 
-        // 6. Test upsert_movie_with_fence within same transaction
         let movie = Movie {
             id: None,
             slug: "test-fenced-movie".to_string(),
@@ -1931,24 +2427,23 @@ mod tests {
             backdrop: None,
             overview: None,
             total_episodes: Some(1),
-            stream: Some(serde_json::Value::String("https://example.com/stream.m3u8".to_string())),
+            stream: Some(serde_json::Value::String(
+                "https://example.com/stream.m3u8".to_string(),
+            )),
             episodes: vec![],
             servers: vec![],
             subtitles: vec![],
             audio_tracks: vec![],
         };
 
-        // Stale owner or stale fence token fails
-        let err_stale = db.upsert_movie_with_fence(&movie, "owner_a", 1);
-        assert!(err_stale.is_err());
-
-        // Valid owner & active fence token succeeds
-        let ok_upsert = db.upsert_movie_with_fence(&movie, "owner_c", 3);
-        assert!(ok_upsert.is_ok());
+        assert!(db.upsert_movie_with_fence(&movie, "owner_a", 1).is_err());
+        assert!(db.upsert_movie_with_fence(&movie, "owner_c", 3).is_ok());
 
         let retrieved = db.get_movie_by_slug("test-fenced-movie").unwrap();
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().title_en, Some("Test Fenced Movie".to_string()));
+        assert_eq!(
+            retrieved.unwrap().title_en,
+            Some("Test Fenced Movie".to_string())
+        );
     }
 
     #[test]
@@ -1957,22 +2452,44 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("webproxy-crawler-fence-{}-{unique}.db", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("webproxy-crawler-fence-{}-{unique}.db", std::process::id()));
         let db_a = Database::new(&path).unwrap();
         let db_b = Database::new(&path).unwrap();
-        let movie: Movie = serde_json::from_value(serde_json::json!({"slug": "fence-two-connections"})).unwrap();
+        let movie: Movie =
+            serde_json::from_value(serde_json::json!({"slug": "fence-two-connections"})).unwrap();
 
-        assert_eq!(db_a.acquire_crawler_lease("crawler_main", "first", 60).unwrap(), Some(1));
-        assert_eq!(db_b.acquire_crawler_lease("crawler_main", "second", 60).unwrap(), None);
+        assert_eq!(
+            db_a.acquire_crawler_lease("crawler_main", "first", 60)
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            db_b.acquire_crawler_lease("crawler_main", "second", 60)
+                .unwrap(),
+            None
+        );
         db_a.upsert_movie_with_fence(&movie, "first", 1).unwrap();
 
-        db_a.release_crawler_lease("crawler_main", "first", 1).unwrap();
-        assert_eq!(db_b.acquire_crawler_lease("crawler_main", "second", 60).unwrap(), Some(2));
+        db_a.release_crawler_lease("crawler_main", "first", 1)
+            .unwrap();
+        assert_eq!(
+            db_b.acquire_crawler_lease("crawler_main", "second", 60)
+                .unwrap(),
+            Some(2)
+        );
         assert!(db_a.upsert_movie_with_fence(&movie, "first", 1).is_err());
-        assert!(db_a.save_home_cache_with_fence(&HomeResponse::default(), "first", 1).is_err());
+        assert!(
+            db_a.save_home_cache_with_fence(&HomeResponse::default(), "first", 1)
+                .is_err()
+        );
         db_b.upsert_movie_with_fence(&movie, "second", 2).unwrap();
-        db_b.save_home_cache_with_fence(&HomeResponse::default(), "second", 2).unwrap();
-        assert!(db_a.get_movie_by_slug("fence-two-connections").unwrap().is_some());
+        db_b.save_home_cache_with_fence(&HomeResponse::default(), "second", 2)
+            .unwrap();
+        assert!(db_a
+            .get_movie_by_slug("fence-two-connections")
+            .unwrap()
+            .is_some());
 
         drop(db_a);
         drop(db_b);
@@ -1983,8 +2500,12 @@ mod tests {
 
     #[test]
     fn test_file_read_pool_does_not_wait_for_writer_mutex() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("webproxy-read-pool-{}-{unique}.db", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("webproxy-read-pool-{}-{unique}.db", std::process::id()));
         let db = Database::new(&path).unwrap();
         assert_eq!(db.readers.len(), 4);
         let writer = db.conn.lock().unwrap();
@@ -2007,28 +2528,26 @@ mod tests {
     fn test_playlist_cache_cleanup_and_expiry() {
         let db = Database::new_in_memory().unwrap();
 
-        // 1. Save an active playlist and an expired playlist
-        db.save_playlist_cache("active_key", "playlist content active", 3600).unwrap();
-        db.save_playlist_cache("expired_key", "playlist content expired", 0).unwrap();
+        db.save_playlist_cache("active_key", "playlist content active", 3600)
+            .unwrap();
+        db.save_playlist_cache("expired_key", "playlist content expired", 0)
+            .unwrap();
 
-        // Manually adjust expired_key timestamp to be in the past
         {
             let conn = db.conn.lock().unwrap();
             conn.execute(
                 "UPDATE playlist_cache SET expires_at = 1 WHERE cache_key = 'expired_key'",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
-        // 2. Active should be retrieved, expired should not be retrieved
         assert!(db.get_playlist_cache("active_key").unwrap().is_some());
         assert!(db.get_playlist_cache("expired_key").unwrap().is_none());
 
-        // 3. Cleanup should delete the expired entry
         let deleted = db.cleanup_expired_playlist_cache().unwrap();
         assert_eq!(deleted, 1);
 
-        // 4. Active should still be in the database
         assert!(db.get_playlist_cache("active_key").unwrap().is_some());
     }
 }

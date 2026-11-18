@@ -4,20 +4,22 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
+use bytes::Bytes;
+use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
+use std::error::Error as StdError;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use bytes::Bytes;
-use futures_util::StreamExt;
 use tracing::{error, info, warn};
 use url::Url;
 
 use crate::AppState;
 
-static URI_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"URI="([^"]+)""#).unwrap());
+static URI_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"URI="([^"]+)""#).expect("valid URI regex"));
 
 /// Maximum allowed playlist body size (5 MB) to prevent resource exhaustion
 pub const MAX_PLAYLIST_BYTES: usize = 5 * 1024 * 1024;
@@ -29,6 +31,111 @@ pub const MAX_STREAM_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 /// Maximum allowed upstream title JSON response size (2 MB)
 pub const MAX_TITLE_JSON_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum allowed upstream XML sitemap response size (10 MB)
+pub const MAX_SITEMAP_XML_BYTES: usize = 10 * 1024 * 1024;
+
+/// Custom DNS resolver enforcing non-private/non-loopback/non-link-local IP checks on every lookup.
+/// Preserves HTTP/2 multiplexing and TLS keep-alive connection pooling while preventing DNS rebinding.
+#[derive(Debug, Clone, Default)]
+pub struct SafeDnsResolver;
+
+impl reqwest::dns::Resolve for SafeDnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            if let Some(ip) = parse_ip_literal(&host) {
+                if is_blocked_ip(ip) {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Access to internal host is denied",
+                    )) as Box<dyn StdError + Send + Sync>);
+                }
+                if !is_explicitly_allowlisted_ip(&ip, &host) {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Access to IP literal is not permitted by proxy policy",
+                    )) as Box<dyn StdError + Send + Sync>);
+                }
+                let iter: reqwest::dns::Addrs = Box::new(std::iter::once(SocketAddr::new(ip, 443)));
+                return Ok(iter);
+            }
+
+            let addrs = tokio::net::lookup_host((host.as_str(), 443))
+                .await
+                .map_err(|_| {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Failed to resolve host via DNS",
+                    )) as Box<dyn StdError + Send + Sync>
+                })?;
+
+            let mut valid = Vec::new();
+            for addr in addrs {
+                if is_blocked_ip(addr.ip()) {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Access to internal host is denied",
+                    )) as Box<dyn StdError + Send + Sync>);
+                }
+                valid.push(addr);
+            }
+
+            if valid.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "No DNS addresses resolved for host",
+                )) as Box<dyn StdError + Send + Sync>);
+            }
+
+            let iter: reqwest::dns::Addrs = Box::new(valid.into_iter());
+            Ok(iter)
+        })
+    }
+}
+
+pub fn build_safe_http_client(timeout_secs: u64) -> Client {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .dns_resolver(Arc::new(SafeDnsResolver))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
+static SHARED_SAFE_CLIENT: LazyLock<Client> = LazyLock::new(|| build_safe_http_client(15));
+
+pub fn shared_safe_http_client() -> &'static Client {
+    &SHARED_SAFE_CLIENT
+}
+
+fn classify_reqwest_error(err: &reqwest::Error) -> (StatusCode, &'static str) {
+    let mut current: Option<&(dyn StdError + 'static)> = Some(err);
+    while let Some(cause) = current {
+        let msg = cause.to_string();
+        if msg.contains("Access to internal host is denied") {
+            return (StatusCode::FORBIDDEN, "Access to internal host is denied");
+        }
+        if msg.contains("Access to IP literal is not permitted by proxy policy") {
+            return (
+                StatusCode::FORBIDDEN,
+                "Access to IP literal is not permitted by proxy policy",
+            );
+        }
+        if msg.contains("No DNS addresses resolved for host") {
+            return (StatusCode::FORBIDDEN, "No DNS addresses resolved for host");
+        }
+        if msg.contains("Failed to resolve host via DNS") {
+            return (StatusCode::FORBIDDEN, "Failed to resolve host via DNS");
+        }
+        current = cause.source();
+    }
+    (
+        StatusCode::BAD_GATEWAY,
+        "Failed to connect to upstream service",
+    )
+}
 
 /// Read response body chunk-by-chunk with a strict maximum byte limit.
 /// Fails closed with 413 Payload Too Large if Content-Length exceeds max_bytes or if chunked stream exceeds max_bytes,
@@ -49,7 +156,10 @@ pub async fn read_body_with_cap(
     let mut buf = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| {
         warn!("Error reading body chunk from upstream: {}", e);
-        (StatusCode::BAD_GATEWAY, "Failed reading response chunk from upstream")
+        (
+            StatusCode::BAD_GATEWAY,
+            "Failed reading response chunk from upstream",
+        )
     })? {
         if chunk.len() > max_bytes.saturating_sub(buf.len()) {
             return Err((
@@ -62,9 +172,10 @@ pub async fn read_body_with_cap(
     Ok(buf)
 }
 
-/// Rate limit map to debounce stream token refresh per slug (max 1 refresh per 60s per slug)
-static REFRESH_RATE_LIMIT: LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
-    LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+/// Rate limit map to debounce stream token refresh per stream key (max 1 refresh per 60s per key)
+static REFRESH_RATE_LIMIT: LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Permitted upstream origins for video streaming and metadata
 pub const ALLOWED_DOMAINS: &[&str] = &[
@@ -120,13 +231,20 @@ pub fn add_security_headers(headers: &mut HeaderMap) {
     );
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ProxyQuery {
+    #[serde(default)]
     pub url: String,
     #[serde(default)]
     pub keep_cdn: Option<String>,
     #[serde(default)]
     pub slug: Option<String>,
+    #[serde(default)]
+    pub ep: Option<i32>,
+    #[serde(default)]
+    pub season: Option<i32>,
+    #[serde(default)]
+    pub server: Option<usize>,
 }
 
 /// Check if an IP address belongs to internal, private, loopback, or link-local ranges.
@@ -134,30 +252,19 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
             let o = ipv4.octets();
-            // Loopback (127.0.0.0/8)
             ipv4.is_loopback()
-            // Private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-            || ipv4.is_private()
-            // Link-local (169.254.0.0/16)
-            || ipv4.is_link_local()
-            // Broadcast (255.255.255.255)
-            || ipv4.is_broadcast()
-            // Unspecified / 0.0.0.0/8
-            || o[0] == 0
-            // Multicast (224.0.0.0/4)
-            || ipv4.is_multicast()
-            // Shared address space / CGNAT (100.64.0.0/10)
-            || (o[0] == 100 && (o[1] & 0xc0) == 64)
-            // IETF assignments (192.0.0.0/24)
-            || (o[0] == 192 && o[1] == 0 && o[2] == 0)
-            // Documentation (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
-            || (o[0] == 192 && o[1] == 0 && o[2] == 2)
-            || (o[0] == 198 && o[1] == 51 && o[2] == 100)
-            || (o[0] == 203 && o[1] == 0 && o[2] == 113)
-            // Benchmarking (198.18.0.0/15)
-            || (o[0] == 198 && (o[1] & 0xfe) == 18)
-            // Reserved for future use (240.0.0.0/4)
-            || o[0] >= 240
+                || ipv4.is_private()
+                || ipv4.is_link_local()
+                || ipv4.is_broadcast()
+                || o[0] == 0
+                || ipv4.is_multicast()
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 2)
+                || (o[0] == 198 && o[1] == 51 && o[2] == 100)
+                || (o[0] == 203 && o[1] == 0 && o[2] == 113)
+                || (o[0] == 198 && (o[1] & 0xfe) == 18)
+                || o[0] >= 240
         }
         IpAddr::V6(ipv6) => {
             if ipv6.is_loopback() || ipv6.is_unspecified() || ipv6.is_multicast() {
@@ -167,12 +274,9 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
                 return is_blocked_ip(IpAddr::V4(mapped));
             }
             let seg = ipv6.segments();
-            // Unique local (fc00::/7)
             (seg[0] & 0xfe00) == 0xfc00
-            // Link-local unicast (fe80::/10)
-            || (seg[0] & 0xffc0) == 0xfe80
-            // Documentation (2001:db8::/32)
-            || (seg[0] == 0x2001 && seg[1] == 0x0db8)
+                || (seg[0] & 0xffc0) == 0xfe80
+                || (seg[0] == 0x2001 && seg[1] == 0x0db8)
         }
     }
 }
@@ -214,7 +318,6 @@ pub fn is_allowed_origin(host: &str) -> bool {
     let host_lower = host.to_lowercase();
     let host_trimmed = host_lower.trim_end_matches('.');
 
-    // IP literals must NEVER match via wildcard or domain suffix
     if let Some(ip) = parse_ip_literal(host_trimmed) {
         return is_explicitly_allowlisted_ip(&ip, host_trimmed);
     }
@@ -241,8 +344,19 @@ pub fn is_allowed_origin(host: &str) -> bool {
 pub fn redact_url_secrets(raw_url: &str) -> String {
     if let Ok(mut parsed) = Url::parse(raw_url) {
         let sensitive_params = [
-            "token", "sig", "signature", "x-signature", "x-expires", "expires",
-            "key", "auth", "lk3s", "secret", "pass", "password", "api_key",
+            "token",
+            "sig",
+            "signature",
+            "x-signature",
+            "x-expires",
+            "expires",
+            "key",
+            "auth",
+            "lk3s",
+            "secret",
+            "pass",
+            "password",
+            "api_key",
         ];
         let pairs: Vec<(String, String)> = parsed
             .query_pairs()
@@ -252,7 +366,10 @@ pub fn redact_url_secrets(raw_url: &str) -> String {
             let mut new_pairs = Vec::new();
             for (k, v) in pairs {
                 let k_lower = k.to_lowercase();
-                if sensitive_params.iter().any(|&s| k_lower == s || k_lower.contains(s)) {
+                if sensitive_params
+                    .iter()
+                    .any(|&s| k_lower == s || k_lower.contains(s))
+                {
                     new_pairs.push((k, "[REDACTED]".to_string()));
                 } else {
                     new_pairs.push((k, v));
@@ -299,7 +416,6 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
         return Err("Access to internal host is denied");
     }
 
-    // Reject IP literals unless explicitly allowlisted by exact policy
     if let Some(ip) = parse_ip_literal(&host_lower) {
         if is_blocked_ip(ip) {
             return Err("Access to internal host is denied");
@@ -314,7 +430,6 @@ pub fn is_valid_remote_url(target: &str) -> Result<Url, &'static str> {
         return Err("Only https scheme is supported");
     }
 
-    // Check port: standard https port 443 only
     if let Some(port) = parsed.port() {
         if port != 443 {
             return Err("Access to internal host is denied");
@@ -406,25 +521,70 @@ pub fn validate_redirect_target(url: &Url) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Extract the raw upstream target URL from a proxied URL parameter accurately using URL parsing
-/// instead of naive substring search.
+/// Extract the raw upstream target URL from legacy (`https://secret.dangducminh.io.vn/?url=...`)
+/// or local (`/api/proxy/stream?url=...` / `/?url=...`) proxy wrappers accurately using URL parsing.
 pub fn extract_raw_url_from_proxy(url_str: &str) -> String {
-    let parsed = if url_str.starts_with('/') {
-        Url::parse(&format!("http://localhost{}", url_str)).ok()
-    } else {
-        Url::parse(url_str).ok()
-    };
+    let mut current = url_str.trim().to_string();
+    for _ in 0..3 {
+        let parsed = if current.starts_with('/') {
+            Url::parse(&format!("http://localhost{}", current)).ok()
+        } else {
+            Url::parse(&current).ok()
+        };
 
-    if let Some(p) = parsed {
-        if p.path().contains("/proxy/stream") {
-            for (k, v) in p.query_pairs() {
-                if k == "url" && !v.trim().is_empty() {
-                    return v.into_owned();
+        let Some(p) = parsed else {
+            break;
+        };
+
+        let host_lower = p.host_str().unwrap_or("").to_ascii_lowercase();
+        let is_legacy_wrapper = host_lower == "secret.dangducminh.io.vn";
+        let is_local_proxy_path = p.path().contains("/proxy/stream") || p.path() == "/";
+
+        if is_legacy_wrapper || is_local_proxy_path {
+            if let Some((_, v)) = p.query_pairs().find(|(k, v)| k == "url" && !v.trim().is_empty()) {
+                let unwrapped = v.trim().to_string();
+                if is_legacy_wrapper
+                    || p.path().contains("/proxy/stream")
+                    || unwrapped.starts_with("https://")
+                    || unwrapped.starts_with("http://")
+                    || unwrapped.starts_with("/api/hls/")
+                {
+                    current = unwrapped;
+                    continue;
                 }
             }
         }
+        break;
     }
-    url_str.to_string()
+    current
+}
+
+/// Unwrap legacy proxy wrappers and expand root-relative `/api/hls/...` paths to full upstream HTTPS URLs.
+pub fn normalize_upstream_hls_url(url_str: &str) -> String {
+    let unwrapped = extract_raw_url_from_proxy(url_str);
+    if unwrapped.starts_with("/api/hls/") || unwrapped.starts_with("/api/subs/") {
+        let api_base =
+            std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
+        format!("{}{}", api_base.trim_end_matches('/'), unwrapped)
+    } else {
+        unwrapped
+    }
+}
+
+/// Build a clean local (or configured public) proxy stream URL without hardcoded personal domains.
+pub fn build_proxy_stream_url(raw_hls: &str) -> String {
+    let clean_hls = normalize_upstream_hls_url(raw_hls);
+    let base = std::env::var("PUBLIC_PROXY_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "/api/proxy/stream".to_string());
+    let sep = if base.contains('?') { "&" } else { "?" };
+    format!(
+        "{}{}url={}",
+        base.trim_end_matches('&').trim_end_matches('?'),
+        sep,
+        urlencoding::encode(&clean_hls)
+    )
 }
 
 pub fn resolve_relative_url(base: &Url, rel: &str) -> String {
@@ -437,20 +597,15 @@ pub fn resolve_relative_url(base: &Url, rel: &str) -> String {
     }
 }
 
-/// Helper to identify direct CDN segment media URLs that should be loaded directly
-/// by the player client instead of routed through the Axum proxy when keep_cdn is enabled.
-/// Matches .image chunks or domains containing 'cdn.' or 'cdn-'.
+/// Identify direct CDN segment media URLs loaded directly by the player client when `keep_cdn` is enabled.
 pub fn is_cdn_segment(url: &str) -> bool {
     let lower = url.to_lowercase();
-    // Playlists (.m3u8) must always be rewritten/proxied so inner streams stay valid
     if lower.contains(".m3u8") {
         return false;
     }
-    // Direct image-encoded video segments (.image)
     if lower.contains(".image") {
         return true;
     }
-    // Direct CDN edge domains containing "cdn." or "cdn-"
     if let Ok(parsed) = Url::parse(url) {
         if let Some(host) = parsed.host_str() {
             let host_lower = host.to_lowercase();
@@ -463,6 +618,41 @@ pub fn is_cdn_segment(url: &str) -> bool {
 }
 
 pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn: bool) -> String {
+    rewrite_m3u8_with_context(content, source_url, proxy_base, keep_cdn, None, None, None, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn rewrite_m3u8_with_context(
+    content: &str,
+    source_url: &Url,
+    proxy_base: &str,
+    keep_cdn: bool,
+    slug: Option<&str>,
+    season: Option<i32>,
+    ep: Option<i32>,
+    server: Option<usize>,
+) -> String {
+    let append_ctx = |proxy_url: &mut String, target: &str| {
+        if keep_cdn {
+            proxy_url.push_str("&keep_cdn=1");
+        }
+        if target.to_ascii_lowercase().contains(".m3u8") {
+            if let Some(s) = slug.filter(|s| !s.is_empty()) {
+                proxy_url.push_str("&slug=");
+                proxy_url.push_str(&urlencoding::encode(s));
+            }
+            if let Some(se) = season.filter(|&se| se > 0) {
+                proxy_url.push_str(&format!("&season={}", se));
+            }
+            if let Some(e) = ep.filter(|&e| e > 0) {
+                proxy_url.push_str(&format!("&ep={}", e));
+            }
+            if let Some(srv) = server.filter(|&srv| srv > 0) {
+                proxy_url.push_str(&format!("&server={}", srv));
+            }
+        }
+    };
+
     let mut new_lines = Vec::new();
 
     for line in content.lines() {
@@ -482,9 +672,7 @@ pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn:
                     } else {
                         let encoded = urlencoding::encode(&full);
                         let mut proxy_url = format!("{}?url={}", proxy_base, encoded);
-                        if keep_cdn {
-                            proxy_url.push_str("&keep_cdn=1");
-                        }
+                        append_ctx(&mut proxy_url, &full);
                         format!("URI=\"{}\"", proxy_url)
                     }
                 });
@@ -499,9 +687,7 @@ pub fn rewrite_m3u8(content: &str, source_url: &Url, proxy_base: &str, keep_cdn:
             } else {
                 let encoded = urlencoding::encode(&full);
                 let mut proxy_url = format!("{}?url={}", proxy_base, encoded);
-                if keep_cdn {
-                    proxy_url.push_str("&keep_cdn=1");
-                }
+                append_ctx(&mut proxy_url, &full);
                 new_lines.push(proxy_url);
             }
         }
@@ -537,15 +723,9 @@ pub fn create_m3u8_response(rewritten: String) -> Response {
     resp
 }
 
-/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug using a shared client
+/// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug using shared safe client
 pub async fn fetch_upstream_title_hls(slug: &str) -> Option<String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()?;
-    fetch_upstream_title_hls_with_client(&client, slug).await
+    fetch_upstream_title_hls_with_client(shared_safe_http_client(), slug).await
 }
 
 /// Fetch fresh HLS stream URL from upstream fiml4k.fun API for a given movie slug with provided HTTP client
@@ -553,66 +733,124 @@ pub async fn fetch_upstream_title_hls_with_client(client: &Client, slug: &str) -
     fetch_upstream_title_hls_with_episode(client, slug, None).await
 }
 
-pub async fn fetch_upstream_title_hls_for_season_episode(slug: &str, episode: i32, season: Option<i32>) -> Option<String> {
-    let client = Client::builder().timeout(Duration::from_secs(10)).no_proxy()
-        .redirect(reqwest::redirect::Policy::none()).build().ok()?;
-    fetch_upstream_title_hls_with_season_episode(&client, slug, Some(episode), season).await
+pub async fn fetch_upstream_title_hls_for_season_episode(
+    slug: &str,
+    episode: i32,
+    season: Option<i32>,
+) -> Option<String> {
+    fetch_upstream_title_hls_with_season_episode_server(
+        shared_safe_http_client(),
+        slug,
+        Some(episode),
+        season,
+        None,
+    )
+    .await
+}
+
+pub async fn fetch_upstream_title_hls_for_season_episode_server(
+    slug: &str,
+    episode: Option<i32>,
+    season: Option<i32>,
+    server: Option<usize>,
+) -> Option<String> {
+    fetch_upstream_title_hls_with_season_episode_server(
+        shared_safe_http_client(),
+        slug,
+        episode,
+        season,
+        server,
+    )
+    .await
 }
 
 pub async fn fetch_upstream_title_hls_for_episode(slug: &str, episode: i32) -> Option<String> {
     fetch_upstream_title_hls_for_season_episode(slug, episode, None).await
 }
 
-async fn fetch_upstream_title_hls_with_episode(client: &Client, slug: &str, episode: Option<i32>) -> Option<String> {
-    fetch_upstream_title_hls_with_season_episode(client, slug, episode, None).await
+async fn fetch_upstream_title_hls_with_episode(
+    client: &Client,
+    slug: &str,
+    episode: Option<i32>,
+) -> Option<String> {
+    fetch_upstream_title_hls_with_season_episode_server(client, slug, episode, None, None).await
 }
 
-async fn fetch_upstream_title_hls_with_season_episode(client: &Client, slug: &str, episode: Option<i32>, season: Option<i32>) -> Option<String> {
-    let api_base = std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
-    let title_api_url = format!("{}/api/title/{}", api_base.trim_end_matches('/'), slug);
+pub async fn fetch_upstream_title_hls_with_season_episode_server(
+    client: &Client,
+    slug: &str,
+    episode: Option<i32>,
+    season: Option<i32>,
+    server: Option<usize>,
+) -> Option<String> {
+    let primary_base =
+        std::env::var("FIML4K_API_BASE").unwrap_or_else(|_| "https://fiml4k.fun".to_string());
+    let candidate_bases = [primary_base, "https://film4k.net".to_string()];
 
-    // Pre-fetch SSRF validation on upstream title endpoint
-    let title_url = match is_valid_remote_url(&title_api_url) {
-        Ok(u) => u,
-        Err(err) => {
-            warn!("SSRF validation rejected upstream title API URL: {} ({})", title_api_url, err);
-            return None;
+    let mut json_val: Option<serde_json::Value> = None;
+    let mut active_base = "https://fiml4k.fun".to_string();
+
+    for base in &candidate_bases {
+        let trimmed_base = base.trim_end_matches('/');
+        let title_api_url = format!("{}/api/title/{}", trimmed_base, slug);
+        let Ok(title_url) = is_valid_remote_url(&title_api_url) else {
+            warn!(
+                "Outbound host validation rejected upstream title API URL: {}",
+                title_api_url
+            );
+            continue;
+        };
+
+        let referer = format!("{}/", trimmed_base);
+        let (resp, _) =
+            match fetch_stream_with_client_and_referer(client, &title_url, None, 3, Some(&referer))
+                .await
+            {
+                Ok(r) => r,
+                Err((code, msg)) => {
+                    warn!(
+                        "Failed to fetch upstream title API for slug {} (status: {}, {}): {}",
+                        slug,
+                        code,
+                        msg,
+                        redact_url_secrets(&title_api_url)
+                    );
+                    continue;
+                }
+            };
+
+        if !resp.status().is_success() {
+            warn!(
+                "Upstream title API returned status {} for slug {}",
+                resp.status(),
+                slug
+            );
+            continue;
         }
-    };
 
-    // Route through validated DNS, pinned socket, no_proxy, and redirect validation
-    let (resp, _) = match fetch_stream_with_client(client, &title_url, None, 3).await {
-        Ok(r) => r,
-        Err((code, msg)) => {
-            warn!("Failed to fetch upstream title API for slug {} (status: {}, {}): {}", slug, code, msg, redact_url_secrets(&title_api_url));
-            return None;
+        if let Ok(json_bytes) = read_body_with_cap(resp, MAX_TITLE_JSON_BYTES).await {
+            if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&json_bytes) {
+                active_base = trimmed_base.to_string();
+                json_val = Some(parsed);
+                break;
+            }
         }
-    };
-
-    if !resp.status().is_success() {
-        warn!("Upstream title API returned status {} for slug {}", resp.status(), slug);
-        return None;
     }
 
-    let json_bytes = match read_body_with_cap(resp, MAX_TITLE_JSON_BYTES).await {
-        Ok(b) => b,
-        Err((code, msg)) => {
-            warn!("Failed reading title API response body (status: {}): {}", code, msg);
-            return None;
-        }
-    };
-    let json_val: serde_json::Value = serde_json::from_slice(&json_bytes).ok()?;
-    let hls_path = title_hls_url_with_season(&json_val, episode, season)?;
+    let json_val = json_val?;
+    let hls_path = title_hls_url_with_season_server(&json_val, episode, season, server)?;
 
     let full_hls = if hls_path.starts_with('/') {
-        format!("https://fiml4k.fun{}", hls_path)
+        format!("{}{}", active_base, hls_path)
     } else {
-        hls_path.to_string()
+        extract_raw_url_from_proxy(hls_path)
     };
 
-    // Issue #5: Validate extracted upstream HLS URL before returning to caller
     if is_valid_remote_url(&full_hls).is_err() {
-        warn!("SSRF validation rejected extracted upstream HLS URL for slug {}", slug);
+        warn!(
+            "Outbound host validation rejected extracted upstream HLS URL for slug {}",
+            slug
+        );
         return None;
     }
 
@@ -624,68 +862,186 @@ fn title_hls_url(value: &serde_json::Value, episode: Option<i32>) -> Option<&str
     title_hls_url_with_season(value, episode, None)
 }
 
-fn title_hls_url_with_season(value: &serde_json::Value, episode: Option<i32>, season: Option<i32>) -> Option<&str> {
-    if let Some(wanted) = episode {
-        let ep_array = value.get("episodes")?.as_array()?;
-        let matched_ep = if let Some(s) = season {
-            ep_array.iter().find(|ep| {
-                let ep_season = ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
-                let number = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
-                ep_season == s && number == wanted
-            }).or_else(|| {
-                if (1..=ep_array.len()).contains(&(wanted as usize)) {
-                    let candidate = &ep_array[wanted as usize - 1];
-                    let ep_season = candidate.get("season").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
-                    if ep_season == s { Some(candidate) } else { None }
-                } else {
-                    None
-                }
+fn title_hls_url_with_season(
+    value: &serde_json::Value,
+    episode: Option<i32>,
+    season: Option<i32>,
+) -> Option<&str> {
+    title_hls_url_with_season_server(value, episode, season, None)
+}
+
+fn pick_source_at(ep_or_root: &serde_json::Value, server: Option<usize>) -> Option<&str> {
+    let idx = server.unwrap_or(0);
+    if let Some(sources) = ep_or_root.get("sources").and_then(|v| v.as_array()) {
+        if let Some(s) = sources
+            .get(idx)
+            .or_else(|| sources.first())
+            .and_then(|source| {
+                source
+                    .get("url")
+                    .or_else(|| source.get("hlsUrl"))
+                    .and_then(|u| u.as_str())
             })
-        } else {
-            let has_multi = ep_array.iter().any(|ep| ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) > 1);
-            if has_multi && (1..=ep_array.len()).contains(&(wanted as usize)) {
-                let candidate = &ep_array[wanted as usize - 1];
-                let number = candidate.get("episode").or_else(|| candidate.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
-                if number != wanted {
-                    Some(candidate)
+            .filter(|u| !u.trim().is_empty())
+        {
+            return Some(s);
+        }
+    }
+    if let Some(servers) = ep_or_root.get("servers").and_then(|v| v.as_array()) {
+        if let Some(s) = servers
+            .get(idx)
+            .or_else(|| servers.first())
+            .and_then(|source| {
+                source
+                    .get("hlsUrl")
+                    .or_else(|| source.get("hls_url"))
+                    .or_else(|| source.get("url"))
+                    .and_then(|u| u.as_str())
+            })
+            .filter(|u| !u.trim().is_empty())
+        {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn title_hls_url_with_season_server(
+    value: &serde_json::Value,
+    episode: Option<i32>,
+    season: Option<i32>,
+    server: Option<usize>,
+) -> Option<&str> {
+    let media_type = value
+        .get("movie")
+        .and_then(|m| m.get("mediaType").or_else(|| m.get("type")))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    let ep_array_opt = value.get("episodes").and_then(|v| v.as_array());
+    let has_episodes = ep_array_opt.is_some_and(|arr| !arr.is_empty());
+
+    if let Some(wanted) = episode {
+        if has_episodes {
+            let ep_array = ep_array_opt?;
+            let matched_ep = if let Some(s) = season {
+                ep_array
+                    .iter()
+                    .find(|ep| {
+                        let ep_season =
+                            ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                        let number = ep
+                            .get("episode")
+                            .or_else(|| ep.get("episodeNumber"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1) as i32;
+                        ep_season == s && number == wanted
+                    })
+                    .or_else(|| {
+                        if (1..=ep_array.len()).contains(&(wanted as usize)) {
+                            let candidate = &ep_array[wanted as usize - 1];
+                            let ep_season = candidate
+                                .get("season")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(1) as i32;
+                            if ep_season == s {
+                                Some(candidate)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                let has_multi = ep_array
+                    .iter()
+                    .any(|ep| ep.get("season").and_then(|v| v.as_i64()).unwrap_or(1) > 1);
+                if has_multi && (1..=ep_array.len()).contains(&(wanted as usize)) {
+                    let candidate = &ep_array[wanted as usize - 1];
+                    let number = candidate
+                        .get("episode")
+                        .or_else(|| candidate.get("episodeNumber"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1) as i32;
+                    if number != wanted {
+                        Some(candidate)
+                    } else {
+                        ep_array.iter().find(|ep| {
+                            let num = ep
+                                .get("episode")
+                                .or_else(|| ep.get("episodeNumber"))
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(1) as i32;
+                            num == wanted
+                        })
+                    }
                 } else {
                     ep_array.iter().find(|ep| {
-                        let num = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                        let num = ep
+                            .get("episode")
+                            .or_else(|| ep.get("episodeNumber"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1) as i32;
                         num == wanted
                     })
                 }
-            } else {
-                ep_array.iter().find(|ep| {
-                    let num = ep.get("episode").or_else(|| ep.get("episodeNumber")).and_then(|v| v.as_i64()).unwrap_or(1) as i32;
-                    num == wanted
-                })
-            }
-        };
+            };
 
-        if let Some(ep) = matched_ep {
-            return ep.get("sources")?.as_array()?.iter().find_map(|source| source.get("url").and_then(|url| url.as_str()))
-                .or_else(|| ep.get("servers")?.as_array()?.iter().find_map(|source| {
-                    source.get("hlsUrl").or_else(|| source.get("hls_url")).or_else(|| source.get("url")).and_then(|url| url.as_str())
-                }));
+            if let Some(ep) = matched_ep {
+                return pick_source_at(ep, server);
+            }
+            return None;
         }
-        return None;
+
+        // Single movies have `episodes: []` in upstream `/api/title/:slug` while storing `movie.hlsUrl`.
+        // Only fall through when episode == 1 and season <= 1 for non-TV titles; never fall back for episode > 1!
+        if wanted != 1 || season.unwrap_or(1) > 1 || media_type.eq_ignore_ascii_case("tv") {
+            return None;
+        }
     }
-    value.get("movie").and_then(|m| m.get("hlsUrl")).and_then(|h| h.as_str())
-        .or_else(|| value.get("episodes")?.as_array()?.first()?.get("sources")?.as_array()?.first()?.get("url")?.as_str())
-        .or_else(|| value.get("sources")?.as_array()?.first()?.get("url")?.as_str())
+
+    value
+        .get("movie")
+        .and_then(|m| m.get("hlsUrl"))
+        .and_then(|h| h.as_str())
+        .filter(|u| !u.trim().is_empty())
+        .or_else(|| {
+            ep_array_opt
+                .and_then(|arr| arr.first())
+                .and_then(|ep| pick_source_at(ep, server))
+        })
+        .or_else(|| pick_source_at(value, server))
 }
 
-/// Perform an HTTP GET request with DNS validation and manual fail-closed redirect following using the provided HTTP client
+/// Perform an HTTP GET request reusing a shared `SafeDnsResolver`-backed `reqwest::Client`
+/// with manual fail-closed redirect validation.
 pub async fn fetch_stream_with_client(
-    _client: &Client,
+    client: &Client,
     target_url: &Url,
     range: Option<&HeaderValue>,
     max_hops: usize,
 ) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
-    fetch_stream_with_referer(target_url, range, max_hops, None).await
+    fetch_stream_with_client_and_referer(client, target_url, range, max_hops, None).await
 }
 
 pub async fn fetch_stream_with_referer(
+    target_url: &Url,
+    range: Option<&HeaderValue>,
+    max_hops: usize,
+    referer_override: Option<&str>,
+) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
+    fetch_stream_with_client_and_referer(
+        shared_safe_http_client(),
+        target_url,
+        range,
+        max_hops,
+        referer_override,
+    )
+    .await
+}
+
+pub async fn fetch_stream_with_client_and_referer(
+    client: &Client,
     target_url: &Url,
     range: Option<&HeaderValue>,
     max_hops: usize,
@@ -695,30 +1051,19 @@ pub async fn fetch_stream_with_referer(
     let mut hops = 0;
 
     loop {
+        is_valid_remote_url(current_url.as_str()).map_err(|err| (StatusCode::FORBIDDEN, err))?;
+
         let host = current_url
             .host_str()
             .ok_or((StatusCode::BAD_REQUEST, "Missing host in URL"))?;
-        let port = current_url.port_or_known_default().unwrap_or(443);
 
-        // Fail-closed DNS resolution & blocked IP validation
-        let resolved_addr = resolve_and_validate_host(host, port)
-            .await
-            .map_err(|err| (StatusCode::FORBIDDEN, err))?;
-
-        // DNS Pinning: bind socket connection directly to resolved_addr for host, disable proxy and auto-redirects
-        let hop_client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .resolve(host, resolved_addr)
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create pinned HTTP client"))?;
-
-        let mut req = hop_client.get(current_url.as_str());
+        let mut req = client.get(current_url.as_str());
         if let Some(r) = range {
             req = req.header(header::RANGE, r);
         }
-        let referer = referer_override.map(str::to_owned).unwrap_or_else(|| format!("https://{}/", host));
+        let referer = referer_override
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("https://{}/", host));
         req = req
             .header(header::REFERER, referer)
             .header(
@@ -727,10 +1072,13 @@ pub async fn fetch_stream_with_referer(
             )
             .header(header::ACCEPT, "*/*");
 
-        let resp = req.send().await.map_err(|_| {
-            let redacted = redact_url_secrets(current_url.as_str());
-            error!("Upstream fetch error for {}", redacted);
-            (StatusCode::BAD_GATEWAY, "Failed to connect to upstream service")
+        let resp = req.send().await.map_err(|err| {
+            let (status, reason) = classify_reqwest_error(&err);
+            if status == StatusCode::BAD_GATEWAY {
+                let redacted = redact_url_secrets(current_url.as_str());
+                error!("Upstream fetch error for {}", redacted);
+            }
+            (status, reason)
         })?;
 
         if resp.status().is_redirection() {
@@ -743,15 +1091,16 @@ pub async fn fetch_stream_with_referer(
                 .headers()
                 .get(header::LOCATION)
                 .and_then(|l| l.to_str().ok())
-                .ok_or((StatusCode::BAD_GATEWAY, "Missing or invalid redirect Location header"))?;
+                .ok_or((
+                    StatusCode::BAD_GATEWAY,
+                    "Missing or invalid redirect Location header",
+                ))?;
 
             let next_url = current_url
                 .join(loc)
                 .map_err(|_| (StatusCode::BAD_GATEWAY, "Invalid redirect destination URL"))?;
 
-            // Validate redirect destination (checks scheme, port, reject IP literals, origin policy)
-            is_valid_remote_url(next_url.as_str())
-                .map_err(|err| (StatusCode::FORBIDDEN, err))?;
+            is_valid_remote_url(next_url.as_str()).map_err(|err| (StatusCode::FORBIDDEN, err))?;
 
             current_url = next_url;
             continue;
@@ -761,18 +1110,76 @@ pub async fn fetch_stream_with_referer(
     }
 }
 
-/// Perform an HTTP GET request with DNS pinning and manual fail-closed redirect following
+/// Perform an HTTP GET request with DNS validation and manual fail-closed redirect following
 pub async fn fetch_pinned_stream(
     target_url: &Url,
     range: Option<&HeaderValue>,
     max_hops: usize,
 ) -> Result<(reqwest::Response, Url), (StatusCode, &'static str)> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client"))?;
-    fetch_stream_with_client(&client, target_url, range, max_hops).await
+    fetch_stream_with_client(shared_safe_http_client(), target_url, range, max_hops).await
+}
+
+fn parse_context_from_referer(
+    referer: &str,
+) -> (Option<String>, Option<i32>, Option<i32>, Option<usize>) {
+    let mut slug = None;
+    let mut ep = None;
+    let mut season = None;
+    let mut server = None;
+
+    for prefix in ["/watch/", "/xem-phim/", "/movie/", "/phim/"] {
+        if let Some(pos) = referer.find(prefix) {
+            let rest = &referer[pos + prefix.len()..];
+            let path_part = rest.split('?').next().unwrap_or(rest).split('#').next().unwrap_or("");
+            let mut segs = path_part.split('/').filter(|s| !s.is_empty());
+            if let Some(s) = segs.next() {
+                slug = Some(s.to_string());
+                if (prefix == "/watch/" || prefix == "/xem-phim/") && ep.is_none() {
+                    if let Some(ep_seg) = segs.next() {
+                        let cleaned = ep_seg
+                            .strip_prefix("tap-")
+                            .or_else(|| ep_seg.strip_prefix("ep-"))
+                            .unwrap_or(ep_seg);
+                        if let Ok(parsed_ep) = cleaned.parse::<i32>() {
+                            if parsed_ep > 0 {
+                                ep = Some(parsed_ep);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if let Ok(parsed_ref) = Url::parse(referer) {
+        for (k, v) in parsed_ref.query_pairs() {
+            match k.as_ref() {
+                "ep" if ep.is_none() => {
+                    if let Ok(n) = v.parse::<i32>() {
+                        if n > 0 {
+                            ep = Some(n);
+                        }
+                    }
+                }
+                "season" if season.is_none() => {
+                    if let Ok(n) = v.parse::<i32>() {
+                        if n > 0 {
+                            season = Some(n);
+                        }
+                    }
+                }
+                "server" if server.is_none() => {
+                    if let Ok(n) = v.parse::<usize>() {
+                        server = Some(n);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    (slug, season, ep, server)
 }
 
 pub async fn handle_stream_proxy(
@@ -780,10 +1187,13 @@ pub async fn handle_stream_proxy(
     Query(query): Query<ProxyQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let target_str = query.url.trim();
-    if target_str.is_empty() {
+    let raw_input = query.url.trim();
+    if raw_input.is_empty() {
         return (StatusCode::BAD_REQUEST, "Missing 'url' query parameter").into_response();
     }
+
+    let unwrapped_target = normalize_upstream_hls_url(raw_input);
+    let target_str = unwrapped_target.as_str();
 
     let parsed_url = match is_valid_remote_url(target_str) {
         Ok(u) => u,
@@ -794,31 +1204,57 @@ pub async fn handle_stream_proxy(
         .keep_cdn
         .as_deref()
         .map(|v| v == "1" || v == "true")
-        .unwrap_or(true); // Default to keep_cdn=true for high speed direct CDN
+        .unwrap_or(true);
 
-    let detected_slug: Option<String> = query.slug.clone().or_else(|| {
-        // 1. From Referer header: e.g. /watch/{slug} or /movie/{slug}
-        if let Some(ref_val) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) {
-            if let Some(pos) = ref_val.find("/watch/") {
-                let rest = &ref_val[pos + 7..];
-                let slug_candidate = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or("");
-                if !slug_candidate.is_empty() {
-                    return Some(slug_candidate.to_string());
-                }
-            } else if let Some(pos) = ref_val.find("/movie/") {
-                let rest = &ref_val[pos + 7..];
-                let slug_candidate = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or("");
-                if !slug_candidate.is_empty() {
-                    return Some(slug_candidate.to_string());
-                }
+    let (ref_slug, ref_season, ref_ep, ref_server) = headers
+        .get(header::REFERER)
+        .and_then(|v| v.to_str().ok())
+        .map(parse_context_from_referer)
+        .unwrap_or((None, None, None, None));
+
+    let mut detected_slug = query.slug.clone().or(ref_slug);
+    let mut detected_season = query.season.or(ref_season);
+    let mut detected_ep = query.ep.or(ref_ep);
+    let detected_server = query.server.or(ref_server);
+
+    if detected_slug.is_none() || detected_ep.is_none() {
+        let lookup_db = state.db.clone();
+        let lookup_url = target_str.to_string();
+        if let Ok(Some((db_slug, db_season, db_ep))) = state
+            .db
+            .run_read_blocking(move || Ok(lookup_db.find_stream_context_by_url(&lookup_url)))
+            .await
+        {
+            if detected_slug.is_none() {
+                detected_slug = Some(db_slug);
+            }
+            if detected_season.is_none() {
+                detected_season = db_season;
+            }
+            if detected_ep.is_none() {
+                detected_ep = db_ep;
             }
         }
-        // 2. From Database search by token / stream URL
-        state.db.find_slug_by_stream_url(target_str)
-    });
+    }
 
-    // Execute request with fail-closed DNS resolution and secure redirect handling using shared http_client
-    let (upstream_resp, final_url) = match fetch_stream_with_client(&state.http_client, &parsed_url, headers.get(header::RANGE), 5).await {
+    let upstream_referer = if parsed_url
+        .host_str()
+        .is_some_and(|h| h.ends_with("fiml4k.fun") || h.ends_with("film4k.net"))
+    {
+        Some("https://fiml4k.fun/")
+    } else {
+        None
+    };
+
+    let (upstream_resp, final_url) = match fetch_stream_with_client_and_referer(
+        &state.http_client,
+        &parsed_url,
+        headers.get(header::RANGE),
+        5,
+        upstream_referer,
+    )
+    .await
+    {
         Ok(res) => res,
         Err((code, msg)) => return (code, msg).into_response(),
     };
@@ -831,10 +1267,13 @@ pub async fn handle_stream_proxy(
         .unwrap_or("")
         .to_string();
 
-    // Reject active MIME types (HTML, SVG, XML, JS) to prevent stored or reflected XSS
     if is_disallowed_stream_mime(&content_type) {
-        warn!("Upstream stream returned disallowed active MIME type: '{}'", content_type);
-        let mut resp = (StatusCode::BAD_GATEWAY, "Upstream returned disallowed media type").into_response();
+        warn!(
+            "Upstream stream returned disallowed active MIME type: '{}'",
+            content_type
+        );
+        let mut resp =
+            (StatusCode::BAD_GATEWAY, "Upstream returned disallowed media type").into_response();
         add_security_headers(resp.headers_mut());
         return resp;
     }
@@ -843,8 +1282,12 @@ pub async fn handle_stream_proxy(
         || content_type.contains("mpegurl")
         || content_type.contains("application/x-mpegURL")
         || content_type.contains("vnd.apple.mpegurl");
+    let is_recoverable_status = matches!(
+        status,
+        StatusCode::FORBIDDEN | StatusCode::NOT_FOUND | StatusCode::GONE
+    );
 
-    if is_m3u8 || status == StatusCode::FORBIDDEN {
+    if is_m3u8 || is_recoverable_status {
         if let Some(cl) = upstream_resp.content_length() {
             if cl > MAX_PLAYLIST_BYTES as u64 {
                 let mut resp = (
@@ -859,81 +1302,135 @@ pub async fn handle_stream_proxy(
         match read_body_with_cap(upstream_resp, MAX_PLAYLIST_BYTES).await {
             Ok(bytes) => {
                 let body_text = String::from_utf8_lossy(&bytes).to_string();
-                let is_expired = status == StatusCode::FORBIDDEN
+                let is_expired = is_recoverable_status
                     || body_text.contains("Invalid or expired token")
                     || body_text.contains("expired token");
 
                 if is_expired {
                     let redacted_target = redact_url_secrets(target_str);
                     warn!(
-                        "Upstream stream token expired (status: {}, slug: {:?}, url: {}). Auto-refreshing...",
-                        status, detected_slug, redacted_target
+                        "Upstream stream token expired (status: {}, slug: {:?}, season: {:?}, ep: {:?}, server: {:?}, url: {}). Refreshing...",
+                        status,
+                        detected_slug,
+                        detected_season,
+                        detected_ep,
+                        detected_server,
+                        redacted_target
                     );
                     if let Some(ref slug) = detected_slug {
-                        // Issue #2: Only refresh if slug genuinely exists in database
-                        let slug_exists = state.db.get_movie_by_slug(slug).ok().flatten().is_some();
-                        if slug_exists {
-                            // Debounce refresh attempts: at most one refresh attempt per slug every 60s
-                            let should_refresh = {
-                                let mut map = REFRESH_RATE_LIMIT.lock().unwrap();
-                                let now = std::time::Instant::now();
-                                if let Some(last) = map.get(slug) {
-                                    if now.duration_since(*last) < Duration::from_secs(60) {
+                        let check_db = state.db.clone();
+                        let slug_owned = slug.clone();
+                        let movie_opt = state
+                            .db
+                            .run_read_blocking(move || check_db.get_movie_by_slug(&slug_owned))
+                            .await
+                            .ok()
+                            .flatten();
+
+                        if let Some(movie) = movie_opt {
+                            // Never guess Episode 1 if a multi-episode TV series has no episode context
+                            let can_refresh =
+                                !(movie.movie_type == "tv" && !movie.episodes.is_empty() && detected_ep.is_none());
+
+                            if can_refresh {
+                                let rate_key = format!(
+                                    "{}:{:?}:{:?}:{:?}",
+                                    slug, detected_season, detected_ep, detected_server
+                                );
+                                let should_refresh = {
+                                    let mut map = REFRESH_RATE_LIMIT
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner());
+                                    let now = std::time::Instant::now();
+                                    map.retain(|_, ts| now.duration_since(*ts) < Duration::from_secs(60));
+                                    if map.contains_key(&rate_key) {
                                         false
                                     } else {
-                                        map.insert(slug.to_string(), now);
+                                        if map.len() >= 4096 {
+                                            map.clear();
+                                        }
+                                        map.insert(rate_key, now);
                                         true
                                     }
-                                } else {
-                                    map.insert(slug.to_string(), now);
-                                    true
-                                }
-                            };
+                                };
 
-                            if should_refresh {
-                                if let Some(fresh_hls) = fetch_upstream_title_hls_with_client(&state.http_client, slug).await {
-                                    if fresh_hls != target_str {
-                                        // Validate fresh HLS URL against SSRF policy before DB write
-                                        if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
-                                            info!(
-                                                "Successfully retrieved fresh stream token in memory for slug: {}",
-                                                slug
-                                            );
-                                            // Issue #2: Public GET proxy must NEVER write to database!
-                                            // DB stream updates are strictly limited to authenticated administrative or crawler jobs.
-
-                                            if let Ok((retry_resp, final_fresh_url)) = fetch_stream_with_client(&state.http_client, &fresh_url, headers.get(header::RANGE), 5).await {
-                                                if retry_resp.status().is_success() {
-                                                    if let Ok(fresh_bytes) = read_body_with_cap(retry_resp, MAX_PLAYLIST_BYTES).await {
-                                                            let fresh_body = String::from_utf8_lossy(&fresh_bytes).to_string();
-                                                            let rewritten = rewrite_m3u8(
+                                if should_refresh {
+                                    if let Some(fresh_hls) =
+                                        fetch_upstream_title_hls_with_season_episode_server(
+                                            &state.http_client,
+                                            slug,
+                                            detected_ep,
+                                            detected_season,
+                                            detected_server,
+                                        )
+                                        .await
+                                    {
+                                        if fresh_hls != target_str {
+                                            if let Ok(fresh_url) = is_valid_remote_url(&fresh_hls) {
+                                                info!(
+                                                    "Retrieved fresh stream token in memory for slug '{}' (season: {:?}, ep: {:?}, server: {:?})",
+                                                    slug, detected_season, detected_ep, detected_server
+                                                );
+                                                if let Ok((retry_resp, final_fresh_url)) =
+                                                    fetch_stream_with_client_and_referer(
+                                                        &state.http_client,
+                                                        &fresh_url,
+                                                        headers.get(header::RANGE),
+                                                        5,
+                                                        Some("https://fiml4k.fun/"),
+                                                    )
+                                                    .await
+                                                {
+                                                    if retry_resp.status().is_success() {
+                                                        if let Ok(fresh_bytes) =
+                                                            read_body_with_cap(retry_resp, MAX_PLAYLIST_BYTES)
+                                                                .await
+                                                        {
+                                                            let fresh_body =
+                                                                String::from_utf8_lossy(&fresh_bytes)
+                                                                    .to_string();
+                                                            let rewritten = rewrite_m3u8_with_context(
                                                                 &fresh_body,
                                                                 &final_fresh_url,
                                                                 "/api/proxy/stream",
                                                                 keep_cdn,
+                                                                Some(slug.as_str()),
+                                                                detected_season,
+                                                                detected_ep,
+                                                                detected_server,
                                                             );
                                                             return create_m3u8_response(rewritten);
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                } else {
+                                    warn!("Debounced stream refresh for slug {}", slug);
                                 }
-                            } else {
-                                warn!("Debounced stream refresh for slug {}", slug);
                             }
                         }
                     }
 
-                    if status == StatusCode::FORBIDDEN {
-                        let mut resp = (StatusCode::FORBIDDEN, body_text).into_response();
+                    if !status.is_success() {
+                        let mut resp = (status, body_text).into_response();
                         add_security_headers(resp.headers_mut());
                         return resp;
                     }
                 }
 
                 if is_m3u8 && status.is_success() {
-                    let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
+                    let rewritten = rewrite_m3u8_with_context(
+                        &body_text,
+                        &final_url,
+                        "/api/proxy/stream",
+                        keep_cdn,
+                        detected_slug.as_deref(),
+                        detected_season,
+                        detected_ep,
+                        detected_server,
+                    );
                     return create_m3u8_response(rewritten);
                 } else if !status.is_success() {
                     let mut resp = (status, body_text).into_response();
@@ -941,7 +1438,16 @@ pub async fn handle_stream_proxy(
                     return resp;
                 }
 
-                let rewritten = rewrite_m3u8(&body_text, &final_url, "/api/proxy/stream", keep_cdn);
+                let rewritten = rewrite_m3u8_with_context(
+                    &body_text,
+                    &final_url,
+                    "/api/proxy/stream",
+                    keep_cdn,
+                    detected_slug.as_deref(),
+                    detected_season,
+                    detected_ep,
+                    detected_server,
+                );
                 create_m3u8_response(rewritten)
             }
             Err((status, message)) => {
@@ -951,10 +1457,13 @@ pub async fn handle_stream_proxy(
             }
         }
     } else {
-        // Binary chunk stream (video/audio chunk)
         if let Some(cl) = upstream_resp.content_length() {
             if cl > MAX_STREAM_BYTES {
-                let mut resp = (StatusCode::PAYLOAD_TOO_LARGE, "Stream segment exceeds maximum allowed size (50MB)").into_response();
+                let mut resp = (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Stream segment exceeds maximum allowed size (50MB)",
+                )
+                    .into_response();
                 add_security_headers(resp.headers_mut());
                 return resp;
             }
@@ -977,21 +1486,28 @@ pub async fn handle_stream_proxy(
             .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
             .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
             .header("X-Content-Type-Options", "nosniff")
-            .header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; sandbox")
+            .header(
+                "Content-Security-Policy",
+                "default-src 'none'; frame-ancestors 'none'; sandbox",
+            )
             .header("X-Frame-Options", "DENY");
 
         let stream = capped_stream(upstream_resp.bytes_stream(), MAX_STREAM_BYTES);
         resp_builder
             .body(Body::from_stream(stream))
             .unwrap_or_else(|_| {
-                let mut err_resp = (StatusCode::INTERNAL_SERVER_ERROR, "Stream error").into_response();
+                let mut err_resp =
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Stream error").into_response();
                 add_security_headers(err_resp.headers_mut());
                 err_resp
             })
     }
 }
 
-fn capped_stream<S, E>(stream: S, max_bytes: u64) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
+fn capped_stream<S, E>(
+    stream: S,
+    max_bytes: u64,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
 where
     S: futures_util::Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
@@ -1000,12 +1516,15 @@ where
         match stream.next().await {
             Some(Ok(chunk)) => {
                 if chunk.len() as u64 > max_bytes.saturating_sub(total) {
-                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "upstream stream exceeds configured byte limit"));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "upstream stream exceeds configured byte limit",
+                    ));
                 }
                 total += chunk.len() as u64;
                 Ok(Some((chunk, (stream, total))))
             }
-            Some(Err(error)) => Err(std::io::Error::new(std::io::ErrorKind::Other, error.to_string())),
+            Some(Err(error)) => Err(std::io::Error::other(error.to_string())),
             None => Ok(None),
         }
     })
@@ -1017,6 +1536,7 @@ pub struct ImageProxyQuery {
 }
 
 pub async fn handle_image_proxy(
+    State(state): State<AppState>,
     Query(query): Query<ImageProxyQuery>,
 ) -> Response {
     let target_str = query.url.trim();
@@ -1043,45 +1563,19 @@ pub async fn handle_image_proxy(
             return r;
         }
     };
-    let port = parsed_url.port_or_known_default().unwrap_or(443);
 
-    let resolved_addr = match resolve_and_validate_host(host, port).await {
-        Ok(addr) => addr,
-        Err(err) => {
-            let mut r = (StatusCode::FORBIDDEN, err).into_response();
-            add_security_headers(r.headers_mut());
-            return r;
-        }
-    };
-
-    let hop_client = match Client::builder()
-        .timeout(Duration::from_secs(12))
-        .resolve(host, resolved_addr)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => {
-            let mut r = (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create HTTP client").into_response();
-            add_security_headers(r.headers_mut());
-            return r;
-        }
-    };
-
-    let resp = match hop_client
-        .get(parsed_url.as_str())
-        .header(header::REFERER, format!("https://{}/", host))
-        .header(header::USER_AGENT, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        .header(header::ACCEPT, "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-        .send()
-        .await
+    let (resp, _) = match fetch_stream_with_client_and_referer(
+        &state.http_client,
+        &parsed_url,
+        None,
+        3,
+        Some(&format!("https://{}/", host)),
+    )
+    .await
     {
         Ok(r) => r,
-        Err(_) => {
-            let redacted = redact_url_secrets(parsed_url.as_str());
-            warn!("Image fetch error for {}", redacted);
-            let mut r = (StatusCode::BAD_GATEWAY, "Failed to connect to image upstream").into_response();
+        Err((status, msg)) => {
+            let mut r = (status, msg).into_response();
             add_security_headers(r.headers_mut());
             return r;
         }
@@ -1096,7 +1590,11 @@ pub async fn handle_image_proxy(
 
     if let Some(cl) = resp.content_length() {
         if cl > MAX_IMAGE_BYTES as u64 {
-            let mut r = (StatusCode::PAYLOAD_TOO_LARGE, "Image exceeds maximum allowed size (10MB)").into_response();
+            let mut r = (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Image exceeds maximum allowed size (10MB)",
+            )
+                .into_response();
             add_security_headers(r.headers_mut());
             return r;
         }
@@ -1109,10 +1607,16 @@ pub async fn handle_image_proxy(
         .unwrap_or("")
         .to_string();
 
-    // Whitelist check: only raster images allowed, no SVG, HTML, or scripts
     if !is_allowed_image_mime(&content_type) {
-        warn!("Image proxy rejected disallowed MIME type: '{}'", content_type);
-        let mut r = (StatusCode::UNSUPPORTED_MEDIA_TYPE, "Disallowed image media type (only raster images supported)").into_response();
+        warn!(
+            "Image proxy rejected disallowed MIME type: '{}'",
+            content_type
+        );
+        let mut r = (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Disallowed image media type (only raster images supported)",
+        )
+            .into_response();
         add_security_headers(r.headers_mut());
         return r;
     }
@@ -1145,13 +1649,11 @@ pub async fn handle_image_proxy(
     response
 }
 
-// Module for simple urlencoding
 pub mod urlencoding {
     pub fn encode(data: &str) -> String {
         url::form_urlencoded::byte_serialize(data.as_bytes()).collect()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1179,18 +1681,15 @@ mod tests {
         assert!(is_valid_remote_url("file:///etc/passwd").is_err());
         assert!(is_valid_remote_url("ftp://example.com/test").is_err());
 
-        // IPv6 loopback, link-local, unique-local, mapped
         assert!(is_valid_remote_url("http://[::1]/status").is_err());
         assert!(is_valid_remote_url("http://[fe80::1]/status").is_err());
         assert!(is_valid_remote_url("http://[fc00::1]/status").is_err());
         assert!(is_valid_remote_url("http://[::ffff:127.0.0.1]/status").is_err());
 
-        // Non-standard port
         assert!(is_valid_remote_url("https://film4k.net:22/master.m3u8").is_err());
         assert!(is_valid_remote_url("https://film4k.net:8080/master.m3u8").is_err());
 
-        // Unpermitted upstream domain
-        assert!(is_valid_remote_url("https://evil-attacker.com/exploit.m3u8").is_err());
+        assert!(is_valid_remote_url("https://evil-attacker.com/unpermitted.m3u8").is_err());
     }
 
     #[test]
@@ -1219,17 +1718,16 @@ segment02.ts
         let base_url = Url::parse("https://film4k.net/api/hls/master.m3u8").unwrap();
         let rewritten = rewrite_m3u8(sample_m3u8, &base_url, "/api/proxy/stream", true);
 
-        // 1. Audio URI should be proxied
-        assert!(rewritten.contains(r#"URI="/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Faudio%2Feng.m3u8&keep_cdn=1""#));
-
-        // 2. Child playlist 4k.m3u8 should be proxied
-        assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fvideo%2F4k.m3u8&keep_cdn=1"));
-
-        // 3. Direct CDN segment chunk should be KEPT DIRECT!
+        assert!(rewritten.contains(
+            r#"URI="/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Faudio%2Feng.m3u8&keep_cdn=1""#
+        ));
+        assert!(rewritten.contains(
+            "/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fvideo%2F4k.m3u8&keep_cdn=1"
+        ));
         assert!(rewritten.contains("https://v16m-default.akamaicdn.net/chunk01.image"));
-
-        // 4. Non-CDN relative segment should be proxied
-        assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fsegment02.ts&keep_cdn=1"));
+        assert!(rewritten.contains(
+            "/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fapi%2Fhls%2Fsegment02.ts&keep_cdn=1"
+        ));
     }
 
     #[test]
@@ -1241,31 +1739,28 @@ https://v16m-default.akamaicdn.net/chunk01.image
         let base_url = Url::parse("https://film4k.net/api/hls/master.m3u8").unwrap();
         let rewritten = rewrite_m3u8(sample_m3u8, &base_url, "/api/proxy/stream", false);
 
-        // When keep_cdn=false, even CDN chunks must go through proxy
-        assert!(rewritten.contains("/api/proxy/stream?url=https%3A%2F%2Fv16m-default.akamaicdn.net%2Fchunk01.image"));
+        assert!(rewritten.contains(
+            "/api/proxy/stream?url=https%3A%2F%2Fv16m-default.akamaicdn.net%2Fchunk01.image"
+        ));
     }
 
     #[test]
     fn test_reject_all_unallowlisted_ip_literals() {
-        // Public IPv4
         let err1 = is_valid_remote_url("https://1.1.1.1/master.m3u8").unwrap_err();
         assert_eq!(err1, "Access to IP literal is not permitted by proxy policy");
 
         let err2 = is_valid_remote_url("https://8.8.8.8/chunk.ts").unwrap_err();
         assert_eq!(err2, "Access to IP literal is not permitted by proxy policy");
 
-        // Public IPv6
         let err3 = is_valid_remote_url("https://[2606:4700:4700::1111]/master.m3u8").unwrap_err();
         assert_eq!(err3, "Access to IP literal is not permitted by proxy policy");
 
-        // Private / loopback IPv4
         let err4 = is_valid_remote_url("https://127.0.0.1:8090/status").unwrap_err();
         assert_eq!(err4, "Access to internal host is denied");
 
         let err5 = is_valid_remote_url("https://192.168.1.1/admin").unwrap_err();
         assert_eq!(err5, "Access to internal host is denied");
 
-        // Loopback IPv6
         let err6 = is_valid_remote_url("https://[::1]/status").unwrap_err();
         assert_eq!(err6, "Access to internal host is denied");
     }
@@ -1307,12 +1802,33 @@ https://v16m-default.akamaicdn.net/chunk01.image
     }
 
     #[test]
-    fn test_extract_raw_url_from_proxy() {
+    fn test_extract_raw_url_from_proxy_and_legacy_wrapper() {
         let proxied = "/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fvideo.m3u8&keep_cdn=1";
-        assert_eq!(extract_raw_url_from_proxy(proxied), "https://film4k.net/video.m3u8");
+        assert_eq!(
+            extract_raw_url_from_proxy(proxied),
+            "https://film4k.net/video.m3u8"
+        );
 
-        let full_proxied = "https://mysite.com/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fvideo.m3u8";
-        assert_eq!(extract_raw_url_from_proxy(full_proxied), "https://film4k.net/video.m3u8");
+        let full_proxied =
+            "https://mysite.com/api/proxy/stream?url=https%3A%2F%2Ffilm4k.net%2Fvideo.m3u8";
+        assert_eq!(
+            extract_raw_url_from_proxy(full_proxied),
+            "https://film4k.net/video.m3u8"
+        );
+
+        let legacy_wrapped =
+            "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FTOKEN%2Fmaster.m3u8";
+        assert_eq!(
+            extract_raw_url_from_proxy(legacy_wrapped),
+            "https://fiml4k.fun/api/hls/TOKEN/master.m3u8"
+        );
+
+        let root_query_wrapped =
+            "/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FTOKEN%2Fmaster.m3u8";
+        assert_eq!(
+            extract_raw_url_from_proxy(root_query_wrapped),
+            "https://fiml4k.fun/api/hls/TOKEN/master.m3u8"
+        );
 
         let direct = "https://film4k.net/direct.m3u8";
         assert_eq!(extract_raw_url_from_proxy(direct), direct);
@@ -1326,7 +1842,6 @@ https://v16m-default.akamaicdn.net/chunk01.image
 
     #[test]
     fn test_mime_validation() {
-        // Disallowed stream MIME types (HTML, SVG, XML, JS)
         assert!(is_disallowed_stream_mime("text/html"));
         assert!(is_disallowed_stream_mime("text/html; charset=utf-8"));
         assert!(is_disallowed_stream_mime("image/svg+xml"));
@@ -1339,7 +1854,6 @@ https://v16m-default.akamaicdn.net/chunk01.image
         assert!(!is_disallowed_stream_mime("video/mp2t"));
         assert!(!is_disallowed_stream_mime("application/octet-stream"));
 
-        // Allowed image MIME types (raster only)
         assert!(is_allowed_image_mime("image/jpeg"));
         assert!(is_allowed_image_mime("image/png"));
         assert!(is_allowed_image_mime("image/webp"));
@@ -1358,9 +1872,30 @@ https://v16m-default.akamaicdn.net/chunk01.image
                 {"episode": 2, "sources": [{"url": "/api/hls/ep2/master.m3u8"}]}
             ]
         });
-        assert_eq!(title_hls_url(&title, Some(2)), Some("/api/hls/ep2/master.m3u8"));
+        assert_eq!(
+            title_hls_url(&title, Some(2)),
+            Some("/api/hls/ep2/master.m3u8")
+        );
         assert_eq!(title_hls_url(&title, Some(3)), None);
         assert_eq!(title_hls_url(&title, None), Some("/api/hls/ep1/master.m3u8"));
+
+        // Single movie with empty episodes array resolves movie.hlsUrl for ep 1 / None, fails closed for ep 2
+        let single_title = serde_json::json!({
+            "movie": {
+                "mediaType": "movie",
+                "hlsUrl": "/api/hls/single_movie_fresh/master.m3u8"
+            },
+            "episodes": []
+        });
+        assert_eq!(
+            title_hls_url(&single_title, Some(1)),
+            Some("/api/hls/single_movie_fresh/master.m3u8")
+        );
+        assert_eq!(
+            title_hls_url(&single_title, None),
+            Some("/api/hls/single_movie_fresh/master.m3u8")
+        );
+        assert_eq!(title_hls_url(&single_title, Some(2)), None);
     }
 
     #[test]
@@ -1372,14 +1907,26 @@ https://v16m-default.akamaicdn.net/chunk01.image
                 {"season": 2, "episode": 5, "sources": [{"url": "/api/hls/s2e5/master.m3u8"}]}
             ]
         });
-        // 1. Season + episode exact match
-        assert_eq!(title_hls_url_with_season(&title, Some(1), Some(2)), Some("/api/hls/s2e1/master.m3u8"));
-        assert_eq!(title_hls_url_with_season(&title, Some(5), Some(1)), Some("/api/hls/s1e5/master.m3u8"));
-        assert_eq!(title_hls_url_with_season(&title, Some(5), Some(2)), Some("/api/hls/s2e5/master.m3u8"));
-        // 2. Global index fallback when season provided: ep=2, season=2 -> index 2 is S2E1
-        assert_eq!(title_hls_url_with_season(&title, Some(2), Some(2)), Some("/api/hls/s2e1/master.m3u8"));
-        // 3. Fallback when season=None but multi-season array present: ep=2 -> index 2
-        assert_eq!(title_hls_url_with_season(&title, Some(2), None), Some("/api/hls/s2e1/master.m3u8"));
+        assert_eq!(
+            title_hls_url_with_season(&title, Some(1), Some(2)),
+            Some("/api/hls/s2e1/master.m3u8")
+        );
+        assert_eq!(
+            title_hls_url_with_season(&title, Some(5), Some(1)),
+            Some("/api/hls/s1e5/master.m3u8")
+        );
+        assert_eq!(
+            title_hls_url_with_season(&title, Some(5), Some(2)),
+            Some("/api/hls/s2e5/master.m3u8")
+        );
+        assert_eq!(
+            title_hls_url_with_season(&title, Some(2), Some(2)),
+            Some("/api/hls/s2e1/master.m3u8")
+        );
+        assert_eq!(
+            title_hls_url_with_season(&title, Some(2), None),
+            Some("/api/hls/s2e1/master.m3u8")
+        );
     }
 
     #[tokio::test]
@@ -1391,6 +1938,9 @@ https://v16m-default.akamaicdn.net/chunk01.image
         let collected = capped_stream(chunks, 6).collect::<Vec<_>>().await;
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[0].as_ref().unwrap(), &Bytes::from_static(b"1234"));
-        assert_eq!(collected[1].as_ref().unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            collected[1].as_ref().unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 }

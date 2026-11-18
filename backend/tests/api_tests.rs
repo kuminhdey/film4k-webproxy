@@ -13,6 +13,22 @@ use webproxy_backend::{
 };
 
 async fn spawn_test_server() -> (String, Database) {
+    let (base_url, db, _cache_dir) = spawn_test_server_isolated().await;
+    (base_url, db)
+}
+
+async fn spawn_test_server_isolated() -> (String, Database, std::path::PathBuf) {
+    static TEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let seq = TEST_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let cache_dir = std::env::temp_dir().join(format!(
+        "webproxy_api_test_playlists_{}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        seq
+    ));
     let db = Database::new_in_memory().expect("Failed to create in-memory database");
 
     // Seed test movies
@@ -228,9 +244,12 @@ async fn spawn_test_server() -> (String, Database) {
         db.upsert_movie(m).expect("Failed to insert seed movie");
     }
 
-    let crawler = CrawlerService::new(db.clone());
+    let playlist_cache = webproxy_backend::PlaylistCacheService::new(&cache_dir);
+    let crawler = CrawlerService::new(db.clone()).with_playlist_cache(playlist_cache.clone());
     let admin = AdminService::with_password("test-admin-secret-key-42");
-    let state = AppState::new(db.clone(), crawler).with_admin(admin);
+    let state = AppState::new(db.clone(), crawler)
+        .with_playlist_cache(playlist_cache)
+        .with_admin(admin);
 
     let app = create_app(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -244,7 +263,7 @@ async fn spawn_test_server() -> (String, Database) {
             .expect("Server terminated unexpectedly");
     });
 
-    (format!("http://{}", addr), db)
+    (format!("http://{}", addr), db, cache_dir)
 }
 
 async fn login_admin(client: &Client, base_url: &str) -> String {
@@ -623,11 +642,11 @@ async fn test_api_proxy_stream_expired_token_auto_refresh() {
 
 #[tokio::test]
 async fn test_local_playlist_cache_and_bytedance_direct_cdn() {
-    let (base_url, _) = spawn_test_server().await;
+    let (base_url, _, cache_base) = spawn_test_server_isolated().await;
     let client = Client::new();
 
     let test_slug = "test-cached-movie";
-    let playlist_dir = std::path::PathBuf::from("data/playlists").join(test_slug);
+    let playlist_dir = cache_base.join(test_slug);
     tokio::fs::create_dir_all(&playlist_dir).await.unwrap();
 
     let master_content = r#"#EXTM3U
@@ -822,7 +841,7 @@ async fn test_admin_login_and_auth_middleware() {
     assert!(stats_val["disk_usage"]["human_readable"].is_string());
 
     let admin_movies = client.get(format!("{}/api/admin/movies?limit=5", base_url))
-        .bearer_auth(&token).send().await.unwrap();
+        .bearer_auth(token).send().await.unwrap();
     assert_eq!(admin_movies.status(), StatusCode::OK);
 
     let unauth_logs = client.get(format!("{}/api/admin/logs", base_url)).send().await.unwrap();
@@ -976,7 +995,7 @@ async fn test_admin_crawler_control_and_stop() {
 
 #[tokio::test]
 async fn test_admin_cache_clear() {
-    let (base_url, _) = spawn_test_server().await;
+    let (base_url, _, cache_base) = spawn_test_server_isolated().await;
     let client = Client::new();
     let token = login_admin(&client, &base_url).await;
 
@@ -991,7 +1010,7 @@ async fn test_admin_cache_clear() {
     assert_eq!(traversal_resp.status(), StatusCode::BAD_REQUEST);
 
     // Prepare mock cache directory
-    let cache_dir = std::path::PathBuf::from("data/playlists/test-admin-clear");
+    let cache_dir = cache_base.join("test-admin-clear");
     tokio::fs::create_dir_all(&cache_dir).await.unwrap();
     tokio::fs::write(cache_dir.join("master.m3u8"), "#EXTM3U\n").await.unwrap();
     assert!(cache_dir.exists());
@@ -1012,7 +1031,7 @@ async fn test_admin_cache_clear() {
     assert!(!cache_dir.exists());
 
     // 1b. Test clear via URL parameter /api/admin/cache/clear/:slug
-    let path_cache_dir = std::path::PathBuf::from("data/playlists/test-admin-path-clear");
+    let path_cache_dir = cache_base.join("test-admin-path-clear");
     tokio::fs::create_dir_all(&path_cache_dir).await.unwrap();
     tokio::fs::write(path_cache_dir.join("master.m3u8"), "#EXTM3U\n").await.unwrap();
     assert!(path_cache_dir.exists());
@@ -1031,7 +1050,7 @@ async fn test_admin_cache_clear() {
     assert!(!path_cache_dir.exists());
 
     // 2. Clear all cache
-    let cache_all_dir = std::path::PathBuf::from("data/playlists/all-test-clear");
+    let cache_all_dir = cache_base.join("all-test-clear");
     tokio::fs::create_dir_all(&cache_all_dir).await.unwrap();
     tokio::fs::write(cache_all_dir.join("v0.m3u8"), "#EXTINF\n").await.unwrap();
 
@@ -1047,6 +1066,7 @@ async fn test_admin_cache_clear() {
     let clear_all_val: serde_json::Value = clear_all_resp.json().await.unwrap();
     assert_eq!(clear_all_val["success"], true);
     assert!(!cache_all_dir.exists());
+    let _ = tokio::fs::remove_dir_all(&cache_base).await;
 }
 
 #[tokio::test]
@@ -1425,7 +1445,7 @@ async fn test_api_movies_by_slugs() {
 
 #[tokio::test]
 async fn test_api_stream_episode_routing_and_validation() {
-    let (base_url, _db) = spawn_test_server().await;
+    let (base_url, _db, cache_base) = spawn_test_server_isolated().await;
     let client = Client::new();
 
     // 1. Invalid episode <= 0 returns 400 Bad Request
@@ -1459,7 +1479,7 @@ async fn test_api_stream_episode_routing_and_validation() {
     assert_eq!(resp_unsafe_file.status(), StatusCode::BAD_REQUEST);
 
     // 3. Cache simulation for episode 2:
-    let ep2_dir = std::path::PathBuf::from("data/playlists/breaking-bad_ep2");
+    let ep2_dir = cache_base.join("breaking-bad_ep2");
     tokio::fs::create_dir_all(&ep2_dir).await.unwrap();
     let sample_master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nv0.m3u8\n";
     let sample_sub = "#EXTM3U\n#EXTINF:10.0,\nhttps://cdn.example.com/ep2_chunk01.ts\n";
@@ -1560,17 +1580,17 @@ async fn test_api_proxy_stream_rejects_ip_literals_and_fails_closed_dns() {
 
 #[tokio::test]
 async fn test_api_stream_sub_endpoint_and_caching() {
-    let (base_url, _db) = spawn_test_server().await;
+    let (base_url, _db, cache_base) = spawn_test_server_isolated().await;
     let client = Client::new();
 
-    let movie_sub_dir = std::path::PathBuf::from("data/playlists/sub-test-movie/sub");
+    let movie_sub_dir = cache_base.join("sub-test-movie/sub");
     tokio::fs::create_dir_all(&movie_sub_dir).await.unwrap();
     let movie_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nBreaking Bad Movie Sub\n";
     tokio::fs::write(movie_sub_dir.join("vietnamese.vtt"), movie_vtt)
         .await
         .unwrap();
 
-    let ep2_sub_dir = std::path::PathBuf::from("data/playlists/sub-test-movie_ep2/sub");
+    let ep2_sub_dir = cache_base.join("sub-test-movie_ep2/sub");
     tokio::fs::create_dir_all(&ep2_sub_dir).await.unwrap();
     let ep2_vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nBreaking Bad Ep 2 Sub\n";
     tokio::fs::write(ep2_sub_dir.join("vietnamese_ep2.vtt"), ep2_vtt)
@@ -1658,13 +1678,12 @@ async fn test_api_stream_sub_endpoint_and_caching() {
     assert_eq!(resp_invalid_ep0.status(), StatusCode::BAD_REQUEST);
 
     // Clean up
-    let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie").await;
-    let _ = tokio::fs::remove_dir_all("data/playlists/sub-test-movie_ep2").await;
+    let _ = tokio::fs::remove_dir_all(&cache_base).await;
 }
 
 #[tokio::test]
 async fn test_multi_season_friends_stream_endpoints() {
-    let (base_url, db) = spawn_test_server().await;
+    let (base_url, db, base_playlists_dir) = spawn_test_server_isolated().await;
     let client = Client::new();
 
     // 1. Seed friends with Season 1 and Season 2 episodes in SQLite
@@ -1738,7 +1757,6 @@ async fn test_multi_season_friends_stream_endpoints() {
     db.upsert_movie(&friends_movie).expect("Failed to upsert friends movie");
 
     // 2. Pre-populate mock cache for S1E5, S2E1 (ep 25, season 2), and S2E5 (ep 29, season 2)
-    let base_playlists_dir = std::path::PathBuf::from("data/playlists");
     let s1e5_dir = base_playlists_dir.join("friends_ep5");
     let s2e1_dir = base_playlists_dir.join("friends_s2_ep25");
     let s2e5_dir = base_playlists_dir.join("friends_s2_ep29");
@@ -1837,7 +1855,247 @@ async fn test_multi_season_friends_stream_endpoints() {
     assert!(body_sub.contains("Ross's New Girlfriend Sub"));
 
     // Clean up
-    let _ = tokio::fs::remove_dir_all(&s1e5_dir).await;
-    let _ = tokio::fs::remove_dir_all(&s2e1_dir).await;
-    let _ = tokio::fs::remove_dir_all(&s2e5_dir).await;
+    let _ = tokio::fs::remove_dir_all(&base_playlists_dir).await;
+}
+
+#[tokio::test]
+async fn test_admin_cookie_auth_crud_and_shared_contracts() {
+    let (base_url, db, cache_base) = spawn_test_server_isolated().await;
+    let client = Client::new();
+
+    // 1. Login returns HttpOnly SameSite=Strict session cookie AND Bearer token
+    let login_resp = client
+        .post(format!("{}/api/admin/login", base_url))
+        .json(&serde_json::json!({ "password": "test-admin-secret-key-42" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let set_cookie = login_resp
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .expect("Set-Cookie header should be present")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(set_cookie.contains("bofilm_admin_session=adm_"));
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(set_cookie.contains("Path=/api/admin"));
+    let cookie_pair = set_cookie.split(';').next().unwrap().to_string();
+
+    // 2. Authenticate to /api/admin/stats using ONLY the session Cookie (no Authorization header)
+    let stats_via_cookie = client
+        .get(format!("{}/api/admin/stats", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stats_via_cookie.status(), StatusCode::OK);
+
+    // 3. Public /api/crawler/status omits recent_logs and current_slug
+    let pub_status: serde_json::Value = client
+        .get(format!("{}/api/crawler/status", base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        pub_status
+            .get("recent_logs")
+            .and_then(|v| v.as_array())
+            .is_none_or(|a| a.is_empty())
+    );
+    assert!(pub_status["current_slug"].is_null());
+
+    // 4. Unknown crawler mode returns 400 Bad Request
+    let bad_mode = client
+        .post(format!("{}/api/admin/crawler/trigger", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .json(&serde_json::json!({ "mode": "stage1_catalog" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_mode.status(), StatusCode::BAD_REQUEST);
+    let bad_mode_json: serde_json::Value = bad_mode.json().await.unwrap();
+    assert_eq!(bad_mode_json["success"], false);
+    assert_eq!(bad_mode_json["error"], "Unsupported crawler mode");
+
+    // 5. GET /api/admin/movies includes has_cached_m3u8 + supports q & sort=name_asc
+    let cached_interstellar = cache_base.join("interstellar");
+    tokio::fs::create_dir_all(&cached_interstellar).await.unwrap();
+    tokio::fs::write(cached_interstellar.join("master.m3u8"), "#EXTM3U\n")
+        .await
+        .unwrap();
+
+    let sorted_resp: serde_json::Value = client
+        .get(format!("{}/api/admin/movies?sort=name_asc&limit=20", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = sorted_resp["movies"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    // "Biến Chất" < "Hố Đen Tử Thần" < "Kẻ Đánh Cắp Giấc Mơ" < "Oppenheimer"
+    assert_eq!(items[0]["slug"], "breaking-bad");
+    assert_eq!(items[0]["has_cached_m3u8"], false);
+    let interstellar_item = items.iter().find(|m| m["slug"] == "interstellar").unwrap();
+    assert_eq!(interstellar_item["has_cached_m3u8"], true);
+
+    let q_resp: serde_json::Value = client
+        .get(format!("{}/api/admin/movies?q=Oppenheimer", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(q_resp["total"], 1);
+    assert_eq!(q_resp["movies"][0]["slug"], "oppenheimer");
+
+    // 6. Admin Movie CRUD: POST create, invalid slug rejection, PUT update, DELETE purge
+    let bad_slug_create = client
+        .post(format!("{}/api/admin/movies", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .json(&serde_json::json!({
+            "slug": "Invalid_Slug!",
+            "title_vi": "Phim Lỗi"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_slug_create.status(), StatusCode::BAD_REQUEST);
+
+    let create_resp = client
+        .post(format!("{}/api/admin/movies", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .json(&serde_json::json!({
+            "slug": "dune-part-two",
+            "title_vi": "Hành Tinh Cát: Phần Hai",
+            "title_en": "Dune: Part Two",
+            "movie_type": "movie",
+            "year": 2024,
+            "quality": "4K",
+            "score": 8.8,
+            "country": "Mỹ",
+            "genres": ["Khoa Học Viễn Tưởng", "Phiêu Lưu"],
+            "poster": "https://image.tmdb.org/t/p/w500/dune2.jpg",
+            "backdrop": "https://image.tmdb.org/t/p/w1280/dune2_bg.jpg",
+            "overview": "Paul Atreides unites with Chani and the Fremen.",
+            "total_episodes": 1,
+            "stream": "https://secret.dangducminh.io.vn/?url=https%3A%2F%2Ffiml4k.fun%2Fapi%2Fhls%2FDUNE2_TOKEN%2Fmaster.m3u8"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let create_json: serde_json::Value = create_resp.json().await.unwrap();
+    assert_eq!(create_json["success"], true);
+    assert_eq!(create_json["slug"], "dune-part-two");
+
+    // Verify legacy wrapper was unwrapped when stored/fetched
+    let fetched_dune = db.get_movie_by_slug("dune-part-two").unwrap().unwrap();
+    assert_eq!(
+        fetched_dune.stream,
+        Some(serde_json::Value::String(
+            "https://fiml4k.fun/api/hls/DUNE2_TOKEN/master.m3u8".to_string()
+        ))
+    );
+
+    // PUT metadata edit with empty stream preserves existing stream
+    let update_resp = client
+        .put(format!("{}/api/admin/movies/dune-part-two", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .json(&serde_json::json!({
+            "slug": "dune-part-two",
+            "title_vi": "Hành Tinh Cát 2 (IMAX)",
+            "title_en": "Dune: Part Two",
+            "movie_type": "movie",
+            "year": 2024,
+            "quality": "4K IMAX",
+            "score": 9.0,
+            "country": "Mỹ",
+            "genres": ["Khoa Học Viễn Tưởng"],
+            "poster": "https://image.tmdb.org/t/p/w500/dune2.jpg",
+            "backdrop": "https://image.tmdb.org/t/p/w1280/dune2_bg.jpg",
+            "overview": "Updated overview",
+            "total_episodes": 1,
+            "stream": ""
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(update_resp.status(), StatusCode::OK);
+    let updated_dune = db.get_movie_by_slug("dune-part-two").unwrap().unwrap();
+    assert_eq!(updated_dune.title_vi.as_deref(), Some("Hành Tinh Cát 2 (IMAX)"));
+    assert_eq!(
+        updated_dune.stream,
+        Some(serde_json::Value::String(
+            "https://fiml4k.fun/api/hls/DUNE2_TOKEN/master.m3u8".to_string()
+        ))
+    );
+
+    // Seed playlist cache dir for dune-part-two and verify DELETE purges both DB row and cache dir
+    let dune_cache = cache_base.join("dune-part-two");
+    tokio::fs::create_dir_all(&dune_cache).await.unwrap();
+    tokio::fs::write(dune_cache.join("master.m3u8"), "#EXTM3U\n")
+        .await
+        .unwrap();
+
+    let del_resp = client
+        .delete(format!("{}/api/admin/movies/dune-part-two", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_resp.status(), StatusCode::OK);
+    let del_json: serde_json::Value = del_resp.json().await.unwrap();
+    assert_eq!(del_json["success"], true);
+    assert_eq!(del_json["deleted"], "dune-part-two");
+    assert!(db.get_movie_by_slug("dune-part-two").unwrap().is_none());
+    assert!(!dune_cache.exists());
+
+    // 7. Query-param episode route /api/stream/:slug/master.m3u8?ep=2 preserves ?ep=2 on child playlists
+    let bb_ep2_dir = cache_base.join("breaking-bad_ep2");
+    tokio::fs::create_dir_all(&bb_ep2_dir).await.unwrap();
+    tokio::fs::write(
+        bb_ep2_dir.join("master.m3u8"),
+        "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"EN\",URI=\"a0.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=3000000\nv0.m3u8\n",
+    )
+    .await
+    .unwrap();
+    let master_ep2_q = client
+        .get(format!("{}/api/stream/breaking-bad/master.m3u8?ep=2", base_url))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(master_ep2_q.contains("URI=\"a0.m3u8?ep=2\""));
+    assert!(master_ep2_q.contains("\nv0.m3u8?ep=2"));
+
+    // 8. Logout invalidates cookie session
+    let logout = client
+        .post(format!("{}/api/admin/logout", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+    let after_logout = client
+        .get(format!("{}/api/admin/stats", base_url))
+        .header(reqwest::header::COOKIE, &cookie_pair)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after_logout.status(), StatusCode::UNAUTHORIZED);
+
+    let _ = tokio::fs::remove_dir_all(&cache_base).await;
 }

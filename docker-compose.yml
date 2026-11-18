@@ -8,6 +8,16 @@ services:
     image: film4k-webproxy:${IMAGE_TAG:?IMAGE_TAG environment variable is required (e.g. commit SHA or release tag)}
     container_name: film4k-webproxy
     restart: always
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
@@ -16,6 +26,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8090
       - DATABASE_PATH=/app/data/movies.db
+      - PLAYLISTS_DIR=/app/data/playlists
       - RUST_LOG=info
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       - BUILD_COMMIT=${BUILD_COMMIT:?BUILD_COMMIT is required}

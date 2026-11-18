@@ -127,17 +127,19 @@ impl Movie {
     pub fn get_primary_hls_url(&self) -> Option<String> {
         self.servers
             .first()
-            .map(|s| s.hls_url.clone())
+            .map(|s| crate::proxy::extract_raw_url_from_proxy(&s.hls_url))
+            .filter(|s| !s.trim().is_empty())
             .or_else(|| {
                 self.stream.as_ref().and_then(|st| match st {
-                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::String(s) => Some(crate::proxy::extract_raw_url_from_proxy(s)),
                     serde_json::Value::Object(obj) => obj
                         .get("hlsUrl")
                         .or_else(|| obj.get("proxyStreamUrl"))
                         .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                        .map(crate::proxy::extract_raw_url_from_proxy),
                     _ => None,
                 })
+                .filter(|s| !s.trim().is_empty())
             })
     }
 }
@@ -150,6 +152,8 @@ fn default_movie_type() -> String {
 pub struct MoviesQuery {
     #[serde(default)]
     pub search: Option<String>,
+    #[serde(default)]
+    pub q: Option<String>,
     pub keyword: Option<String>,
     pub genre: Option<String>,
     #[serde(rename = "type", alias = "movie_type")]
@@ -193,6 +197,21 @@ pub struct BySlugsResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MoviesResponse {
     pub movies: Vec<MovieSummary>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminMovieItem {
+    #[serde(flatten)]
+    pub summary: MovieSummary,
+    pub has_cached_m3u8: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminMoviesResponse {
+    pub movies: Vec<AdminMovieItem>,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
