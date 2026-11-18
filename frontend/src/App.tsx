@@ -139,7 +139,7 @@ function buildFiltersFromRoute(r: RouteState): FilterOptions {
 // Hoisted route loading fallback component (`MED-11`: never declare inside App render)
 function PageLoadingFallback({ label = 'Đang tải nội dung...' }: { label?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[calc(100svh-3.5rem)] py-16 px-4">
+    <div className="flex flex-col items-center justify-center min-h-[125svh] py-16 px-4">
       <div className="relative flex items-center justify-center">
         <div className="w-12 h-12 rounded-full border-2 border-lime-500/20 border-t-lime-400 animate-spin" />
         <Film className="w-5 h-5 text-lime-400 absolute" />

@@ -3510,7 +3510,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchCancel}
-          className={`relative z-10 aspect-video w-full bg-black rounded-none sm:rounded-b-2xl overflow-hidden border-x-0 sm:border border-lime-500/25 shadow-[0_10px_45px_rgba(0,0,0,0.85)] group select-none touch-none ${
+          className={`relative ${
+            showSettingsMenu ? 'z-40' : 'z-10'
+          } aspect-video w-full bg-black rounded-none sm:rounded-b-2xl overflow-hidden border-x-0 sm:border border-lime-500/25 shadow-[0_10px_45px_rgba(0,0,0,0.85)] group select-none touch-none ${
             !showControls && isPlaying ? 'cursor-none' : ''
           }`}
         >

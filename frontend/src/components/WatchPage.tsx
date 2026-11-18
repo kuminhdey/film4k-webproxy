@@ -266,11 +266,18 @@ export const WatchPage: React.FC<WatchPageProps> = ({
 
   if (loading) {
     return (
-      <div className="min-h-[calc(100svh-3.5rem)] py-24 flex flex-col items-center justify-center text-center">
-        <Loader2 className="w-12 h-12 text-lime-400 animate-spin mb-3" />
-        <p className="text-sm font-semibold text-[#9ab395]">
-          Đang khởi tạo phòng chiếu Bơ Film...
-        </p>
+      <div className="space-y-6 min-h-[125svh]">
+        <div className="h-[44px] w-40 rounded-xl bg-[#071307] border border-lime-500/15" />
+        <div className="w-full">
+          <div className="h-[52px] rounded-t-2xl bg-[#09150a] border border-b-0 border-lime-500/20" />
+          <div className="aspect-video w-full rounded-b-2xl bg-[#050a05] border border-lime-500/20 flex flex-col items-center justify-center text-center">
+            <Loader2 className="w-12 h-12 text-lime-400 animate-spin mb-3" />
+            <p className="text-sm font-semibold text-[#9ab395]">
+              Đang khởi tạo phòng chiếu Bơ Film...
+            </p>
+          </div>
+        </div>
+        <div className="h-64 rounded-2xl bg-[#071307]/60 border border-lime-500/15" />
       </div>
     );
   }
