@@ -31,6 +31,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       - BUILD_COMMIT=${BUILD_COMMIT:?BUILD_COMMIT is required}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:?TRUSTED_PROXIES is required}
+      - UPSTREAM_PROXY_URL=${UPSTREAM_PROXY_URL:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8090/health/ready >/dev/null || exit 1"]
       interval: 30s

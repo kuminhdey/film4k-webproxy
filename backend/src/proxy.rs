@@ -94,14 +94,28 @@ impl reqwest::dns::Resolve for SafeDnsResolver {
 }
 
 pub fn build_safe_http_client(timeout_secs: u64) -> Client {
-    Client::builder()
+    let mut builder = Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .pool_idle_timeout(Duration::from_secs(90))
-        .dns_resolver(Arc::new(SafeDnsResolver))
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap_or_else(|_| Client::new())
+        .redirect(reqwest::redirect::Policy::none());
+
+    if let Ok(proxy_val) = std::env::var("UPSTREAM_PROXY_URL") {
+        let trimmed = proxy_val.trim();
+        if !trimmed.is_empty() {
+            if let Ok(proxy) = reqwest::Proxy::all(trimmed) {
+                builder = builder.proxy(proxy);
+            } else {
+                warn!("Invalid UPSTREAM_PROXY_URL provided, falling back to direct safe client");
+                builder = builder.dns_resolver(Arc::new(SafeDnsResolver)).no_proxy();
+            }
+        } else {
+            builder = builder.dns_resolver(Arc::new(SafeDnsResolver)).no_proxy();
+        }
+    } else {
+        builder = builder.dns_resolver(Arc::new(SafeDnsResolver)).no_proxy();
+    }
+
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 static SHARED_SAFE_CLIENT: LazyLock<Client> = LazyLock::new(|| build_safe_http_client(15));
