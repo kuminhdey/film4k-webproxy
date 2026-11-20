@@ -1,0 +1,550 @@
+{
+  "startedAt": "2026-11-18T07:07:06.945Z",
+  "port": 18092,
+  "dbBefore": {
+    "moviesDb": {
+      "exists": true,
+      "size": 475136,
+      "mtimeMs": 1793161156612.8342,
+      "sha256": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76"
+    },
+    "film4kDb": {
+      "exists": true,
+      "size": 0,
+      "mtimeMs": 1792900304734.5708,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "authAndCookieChecks": {
+    "loginSetCookieHeader": null,
+    "cookieHttpOnly": true,
+    "cookieSameSite": "Strict",
+    "cookiePath": "/api/admin",
+    "storageCheck": {
+      "rawBearerTokenInSessionStorage": null,
+      "rawBearerTokenInLocalStorage": null,
+      "sessionFlag": "1"
+    },
+    "pwInputAudit": {
+      "name": "password",
+      "autoComplete": "current-password",
+      "hasHiddenUsernameInput": true,
+      "width": 374,
+      "height": 48,
+      "borderColor": "rgba(163, 230, 53, 0.2)",
+      "outlineStyle": "solid"
+    },
+    "eyeToggleBox": {
+      "x": 859,
+      "y": 468.125,
+      "width": 44,
+      "height": 44
+    },
+    "persistedViaCookie": true,
+    "postLogout401Count": 0
+  },
+  "crawlerContractAndErrorChecks": {
+    "invalidModeCheck": {
+      "status": 400,
+      "body": {
+        "error": "Unsupported crawler mode",
+        "success": false
+      }
+    },
+    "crawlerCalls": [
+      {
+        "pathname": "/api/admin/crawler/trigger",
+        "status": 200,
+        "reqBody": {
+          "mode": "latest"
+        },
+        "resBody": {
+          "message": "Crawler started in 'latest' mode",
+          "mode": "latest",
+          "success": true
+        }
+      },
+      {
+        "pathname": "/api/admin/crawler/trigger",
+        "status": 200,
+        "reqBody": {
+          "mode": "force"
+        },
+        "resBody": {
+          "message": "Crawler started in 'force' mode",
+          "mode": "force",
+          "success": true
+        }
+      },
+      {
+        "pathname": "/api/admin/crawler/warmup",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "message": "Đang làm nóng cache M3U8 cho các phim thịnh hành nhất",
+          "mode": "prewarm",
+          "success": true
+        }
+      },
+      {
+        "pathname": "/api/admin/crawler/start",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "message": "Đã kích hoạt quét toàn bộ danh sách phim",
+          "mode": "full",
+          "success": true
+        }
+      }
+    ],
+    "toastGeometry": {
+      "headerBottom": 64,
+      "toastTop": 80,
+      "overlapsHeader": false
+    },
+    "errorToastAudit": {
+      "role": "alert",
+      "ariaLive": "assertive",
+      "text": "Simulated upstream disk failure 500",
+      "className": "fixed top-20 right-4 z-50 max-w-[min(420px,calc(100vw-2rem))] rounded-xl border px-4 py-2.5 shadow-2xl backdrop-blur-md flex items-center gap-3 text-sm font-medium transition-opacity motion-reduce:transition-none bg-[#170a0a]/95 border-red-400/45 text-[#f4fbf0]"
+    },
+    "globalClearAllCacheStatus": 200
+  },
+  "crudAndTelemetryChecks": {
+    "databaseBytes": 685288,
+    "diskHumanReadable": "669.32 KB",
+    "cachedPlaylistsCount": 1,
+    "visionquestCachedBadgeVisible": true,
+    "createValidationErrorVisible": true,
+    "createMovieStatus": 200,
+    "createdRowVisible": true,
+    "editMovieStatus": 200,
+    "updatedRowVisible": true,
+    "deleteMovieStatus": 200,
+    "deletedMovieEmptySearch": true,
+    "firstTitleSortedAZ": "Công Viên Kỷ JuraJurassic Park • jurassic-park",
+    "urlAfterSort": "http://127.0.0.1:18092/admin?sort=name_asc",
+    "sortPreservedAfterBack": "true"
+  },
+  "viewportsAndA11y": {
+    "loginDesktop1440": {
+      "viewportLabel": "login_1440x900",
+      "innerWidth": 1440,
+      "innerHeight": 900,
+      "scrollWidth": 1440,
+      "scrollHeight": 900,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "BơFilmAdmin"
+        }
+      ],
+      "interactiveCount": 4,
+      "undersizedTargetCount": 0,
+      "undersizedTargets": [],
+      "unlabeledControlCount": 0,
+      "unlabeledControls": [],
+      "inlineStyleCount": 2,
+      "sub12PxCount": 0,
+      "violetCount": 0,
+      "violetUsages": [],
+      "contrastFailureCount": 0,
+      "contrastFailures": [],
+      "card1OverflowRightPx": 0,
+      "headerOverflowBottomPx": 0,
+      "rootBg": "rgb(6, 11, 5)",
+      "rootFont": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif"
+    },
+    "dashboardDesktop1440": {
+      "viewportLabel": "dashboard_1440x900",
+      "innerWidth": 1440,
+      "innerHeight": 900,
+      "scrollWidth": 1440,
+      "scrollHeight": 3469,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "Bảng Điều Khiển Quản Trị"
+        },
+        {
+          "tag": "h2",
+          "text": "Tiến Trình Job Crawler"
+        },
+        {
+          "tag": "h2",
+          "text": "Trung Tâm Điều Khiển Crawler & Cache M3U8"
+        },
+        {
+          "tag": "h2",
+          "text": "Nhật Ký Tác Vụ Máy Chủ (SQLite History)"
+        },
+        {
+          "tag": "h2",
+          "text": "Quản Lý Danh Sách Phim & Cache M3U8"
+        },
+        {
+          "tag": "h3",
+          "text": "Công Viên Kỷ Jura"
+        },
+        {
+          "tag": "h3",
+          "text": "Ham Muốn Cháy Bỏng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hope: Vùng Tử Địa"
+        },
+        {
+          "tag": "h3",
+          "text": "Hoán Vũ"
+        },
+        {
+          "tag": "h3",
+          "text": "Hãy Để Tôi Tỏa Sáng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hậu Cung Chân Hoàn Truyện"
+        },
+        {
+          "tag": "h3",
+          "text": "Hắc Dạ Cáo Bạch"
+        },
+        {
+          "tag": "h3",
+          "text": "Học Viện Quân Sự Liệt Hỏa"
+        },
+        {
+          "tag": "h3",
+          "text": "Người Nhện: Khởi Đầu Mới"
+        },
+        {
+          "tag": "h3",
+          "text": "The Odyssey"
+        },
+        {
+          "tag": "h3",
+          "text": "Thế Giới Khủng Long"
+        },
+        {
+          "tag": "h3",
+          "text": "Thủy Long Ngâm"
+        },
+        {
+          "tag": "h3",
+          "text": "Trái Tim Quái Thú"
+        },
+        {
+          "tag": "h3",
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "h3",
+          "text": "Võ Sĩ Đường Phố"
+        },
+        {
+          "tag": "h3",
+          "text": "Vùng Đất Quỷ Dữ"
+        },
+        {
+          "tag": "h3",
+          "text": "Điềm Báo"
+        }
+      ],
+      "interactiveCount": 102,
+      "undersizedTargetCount": 0,
+      "undersizedTargets": [],
+      "unlabeledControlCount": 0,
+      "unlabeledControls": [],
+      "inlineStyleCount": 1,
+      "sub12PxCount": 0,
+      "violetCount": 0,
+      "violetUsages": [],
+      "contrastFailureCount": 0,
+      "contrastFailures": [],
+      "card1OverflowRightPx": 0,
+      "headerOverflowBottomPx": 0,
+      "rootBg": "rgb(6, 11, 5)",
+      "rootFont": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif"
+    },
+    "dashboardTablet768": {
+      "viewportLabel": "dashboard_768x1024",
+      "innerWidth": 768,
+      "innerHeight": 1024,
+      "scrollWidth": 768,
+      "scrollHeight": 5191,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "Bảng Điều Khiển Quản Trị"
+        },
+        {
+          "tag": "h2",
+          "text": "Tiến Trình Job Crawler"
+        },
+        {
+          "tag": "h2",
+          "text": "Trung Tâm Điều Khiển Crawler & Cache M3U8"
+        },
+        {
+          "tag": "h2",
+          "text": "Nhật Ký Tác Vụ Máy Chủ (SQLite History)"
+        },
+        {
+          "tag": "h2",
+          "text": "Quản Lý Danh Sách Phim & Cache M3U8"
+        },
+        {
+          "tag": "h3",
+          "text": "Công Viên Kỷ Jura"
+        },
+        {
+          "tag": "h3",
+          "text": "Ham Muốn Cháy Bỏng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hope: Vùng Tử Địa"
+        },
+        {
+          "tag": "h3",
+          "text": "Hoán Vũ"
+        },
+        {
+          "tag": "h3",
+          "text": "Hãy Để Tôi Tỏa Sáng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hậu Cung Chân Hoàn Truyện"
+        },
+        {
+          "tag": "h3",
+          "text": "Hắc Dạ Cáo Bạch"
+        },
+        {
+          "tag": "h3",
+          "text": "Học Viện Quân Sự Liệt Hỏa"
+        },
+        {
+          "tag": "h3",
+          "text": "Người Nhện: Khởi Đầu Mới"
+        },
+        {
+          "tag": "h3",
+          "text": "The Odyssey"
+        },
+        {
+          "tag": "h3",
+          "text": "Thế Giới Khủng Long"
+        },
+        {
+          "tag": "h3",
+          "text": "Thủy Long Ngâm"
+        },
+        {
+          "tag": "h3",
+          "text": "Trái Tim Quái Thú"
+        },
+        {
+          "tag": "h3",
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "h3",
+          "text": "Võ Sĩ Đường Phố"
+        },
+        {
+          "tag": "h3",
+          "text": "Vùng Đất Quỷ Dữ"
+        },
+        {
+          "tag": "h3",
+          "text": "Điềm Báo"
+        }
+      ],
+      "interactiveCount": 102,
+      "undersizedTargetCount": 0,
+      "undersizedTargets": [],
+      "unlabeledControlCount": 0,
+      "unlabeledControls": [],
+      "inlineStyleCount": 3,
+      "sub12PxCount": 0,
+      "violetCount": 0,
+      "violetUsages": [],
+      "contrastFailureCount": 0,
+      "contrastFailures": [],
+      "card1OverflowRightPx": 0,
+      "headerOverflowBottomPx": 0,
+      "rootBg": "rgb(6, 11, 5)",
+      "rootFont": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif"
+    },
+    "dashboardMobile390": {
+      "viewportLabel": "dashboard_390x844",
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "scrollWidth": 390,
+      "scrollHeight": 7850,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "Bảng Điều Khiển Quản Trị"
+        },
+        {
+          "tag": "h2",
+          "text": "Tiến Trình Job Crawler"
+        },
+        {
+          "tag": "h2",
+          "text": "Trung Tâm Điều Khiển Crawler & Cache M3U8"
+        },
+        {
+          "tag": "h2",
+          "text": "Nhật Ký Tác Vụ Máy Chủ (SQLite History)"
+        },
+        {
+          "tag": "h2",
+          "text": "Quản Lý Danh Sách Phim & Cache M3U8"
+        },
+        {
+          "tag": "h3",
+          "text": "Công Viên Kỷ Jura"
+        },
+        {
+          "tag": "h3",
+          "text": "Ham Muốn Cháy Bỏng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hope: Vùng Tử Địa"
+        },
+        {
+          "tag": "h3",
+          "text": "Hoán Vũ"
+        },
+        {
+          "tag": "h3",
+          "text": "Hãy Để Tôi Tỏa Sáng"
+        },
+        {
+          "tag": "h3",
+          "text": "Hậu Cung Chân Hoàn Truyện"
+        },
+        {
+          "tag": "h3",
+          "text": "Hắc Dạ Cáo Bạch"
+        },
+        {
+          "tag": "h3",
+          "text": "Học Viện Quân Sự Liệt Hỏa"
+        },
+        {
+          "tag": "h3",
+          "text": "Người Nhện: Khởi Đầu Mới"
+        },
+        {
+          "tag": "h3",
+          "text": "The Odyssey"
+        },
+        {
+          "tag": "h3",
+          "text": "Thế Giới Khủng Long"
+        },
+        {
+          "tag": "h3",
+          "text": "Thủy Long Ngâm"
+        },
+        {
+          "tag": "h3",
+          "text": "Trái Tim Quái Thú"
+        },
+        {
+          "tag": "h3",
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "h3",
+          "text": "Võ Sĩ Đường Phố"
+        },
+        {
+          "tag": "h3",
+          "text": "Vùng Đất Quỷ Dữ"
+        },
+        {
+          "tag": "h3",
+          "text": "Điềm Báo"
+        }
+      ],
+      "interactiveCount": 99,
+      "undersizedTargetCount": 0,
+      "undersizedTargets": [],
+      "unlabeledControlCount": 0,
+      "unlabeledControls": [],
+      "inlineStyleCount": 3,
+      "sub12PxCount": 0,
+      "violetCount": 0,
+      "violetUsages": [],
+      "contrastFailureCount": 0,
+      "contrastFailures": [],
+      "card1OverflowRightPx": 0,
+      "headerOverflowBottomPx": 0,
+      "rootBg": "rgb(6, 11, 5)",
+      "rootFont": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif"
+    },
+    "reducedMotionRulesPresent": true,
+    "loginMobile390": {
+      "viewportLabel": "login_390x844",
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "scrollWidth": 390,
+      "scrollHeight": 844,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "BơFilmAdmin"
+        }
+      ],
+      "interactiveCount": 4,
+      "undersizedTargetCount": 0,
+      "undersizedTargets": [],
+      "unlabeledControlCount": 0,
+      "unlabeledControls": [],
+      "inlineStyleCount": 2,
+      "sub12PxCount": 0,
+      "violetCount": 0,
+      "violetUsages": [],
+      "contrastFailureCount": 0,
+      "contrastFailures": [],
+      "card1OverflowRightPx": 0,
+      "headerOverflowBottomPx": 0,
+      "rootBg": "rgb(6, 11, 5)",
+      "rootFont": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif"
+    }
+  },
+  "assetWeights": {
+    "logo64Bytes": 3917,
+    "logoPngBytes": 6291
+  },
+  "postLogout401Count": 0,
+  "dbAfter": {
+    "moviesDb": {
+      "exists": true,
+      "size": 475136,
+      "mtimeMs": 1793161156612.8342,
+      "sha256": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76"
+    },
+    "film4kDb": {
+      "exists": true,
+      "size": 0,
+      "mtimeMs": 1792900304734.5708,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "zeroRealDbMutation": true,
+  "completedAt": "2026-11-18T07:07:26.491Z"
+}

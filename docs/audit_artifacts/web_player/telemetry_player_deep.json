@@ -1,0 +1,81 @@
+{
+  "catalogSortCheck": {
+    "titlesDefault": [
+      "Godzilla Trừ Không",
+      "Người Nhện: Khởi Đầu Mới",
+      "The Odyssey",
+      "Bát Tiên!",
+      "Trái Tim Quái Thú",
+      "Vùng Đất Quỷ Dữ",
+      "Heumann: Hành Trình Bản Lĩnh - Being Heumann",
+      "Hope: Vùng Tử Địa",
+      "Bara till jul",
+      "Phim Street Fighter",
+      "Đội Bóng Nữ Túc",
+      "Doraemon: Nobita và Cuộc Phiêu Lưu Vào Thế Giới Trong Tranh",
+      "Shin - Cậu Bé Bút Chì 33: Nóng Bỏng Tay! Những Vũ Công Siêu Cay Kasukabe",
+      "Út Lan: Oán Linh Giữ Của",
+      "The Stranger in My Home",
+      "Địa Đạo Cá Sấu Tử Thần",
+      "Tên Cậu Là Gì?",
+      "Thế Giới Khủng Long",
+      "Thân Phận Đặc Biệt",
+      "Ham Muốn Cháy Bỏng",
+      "Đảo Kinh Hoàng",
+      "Cuộc Khổ Nạn Của Chúa Giêsu",
+      "Thần Bài 3: Thiếu Niên Thần Bài",
+      "忠臣蔵外伝 四谷怪談"
+    ],
+    "titlesNameAsc": [
+      "Godzilla Trừ Không",
+      "Người Nhện: Khởi Đầu Mới",
+      "The Odyssey",
+      "Bát Tiên!",
+      "Trái Tim Quái Thú",
+      "Vùng Đất Quỷ Dữ",
+      "Heumann: Hành Trình Bản Lĩnh - Being Heumann",
+      "Hope: Vùng Tử Địa",
+      "Bara till jul",
+      "Phim Street Fighter",
+      "Đội Bóng Nữ Túc",
+      "Doraemon: Nobita và Cuộc Phiêu Lưu Vào Thế Giới Trong Tranh",
+      "Shin - Cậu Bé Bút Chì 33: Nóng Bỏng Tay! Những Vũ Công Siêu Cay Kasukabe",
+      "Út Lan: Oán Linh Giữ Của",
+      "The Stranger in My Home",
+      "Địa Đạo Cá Sấu Tử Thần",
+      "Tên Cậu Là Gì?",
+      "Thế Giới Khủng Long",
+      "Thân Phận Đặc Biệt",
+      "Ham Muốn Cháy Bỏng",
+      "Đảo Kinh Hoàng",
+      "Cuộc Khổ Nạn Của Chúa Giêsu",
+      "Thần Bài 3: Thiếu Niên Thần Bài",
+      "忠臣蔵外伝 四谷怪談"
+    ],
+    "identicalOrderWhenSortedByNameAsc": true
+  },
+  "tvShowsCategoryCount": 24,
+  "heroWatchCtaRoute": {
+    "heroH1": "Phim Street Fighter",
+    "landedUrl": "http://127.0.0.1:18082/xem-phim/street-fighter/tap-1"
+  },
+  "errorStateAfterRetries": {
+    "alertText": "Không thể phát video từ nguồn này.\n\nThử lại",
+    "hasServerSwitcherOnPage": false
+  },
+  "realSeekbarTest": {
+    "currentTimeAfterSeek": 7.208715,
+    "duration": 12.027912,
+    "timestampDisplayComputed": "none"
+  },
+  "volumeAndMuteTest": {
+    "mutedAfterClick": true,
+    "volAfterSlider": 0.32
+  },
+  "settingsMenuContents": "CHẤT LƯỢNG\nTự động\n(1080p)\n1080p\nHD\n3.2 Mbps\n720p\n1.4 Mbps\nPHỤ ĐỀ (SUBTITLES)\nPhụ đề có sẵn:\nTắt phụ đề\nTiếng Việt\nTải lên tệp phụ đề…\nTỰ ĐỘNG CHUYỂN TẬP\nĐang bật\nTỐC ĐỘ PHÁT\n0.5x\n0.75x\nChuẩn (1x)\n1.25x\n1.5x\n2x\nTINH CHỈNH\n1x\nGiữ cao độ giọng (pitch)\nTIẾT KIỆM DỮ LIỆU (CHỈ AUDIO)\nChỉ nghe âm thanh\n\nẨn hình ảnh để tiết kiệm pin & băng thông, hiển thị sóng âm động. Bấm nút khôi phục để xem lại video.\n\nKHUẾCH ĐẠI ÂM THANH\n100% (Chuẩn)\n125%\n150%\n200%\n100%\nÂM THANH BAN ĐÊM\nChuẩn hóa âm thanh\n\nNén dải động qua Web Audio, phù hợp xem phim ban đêm mà không đánh thức người khác.\n\nBỘ CHỈNH ÂM (EQUALIZER)\nPhẳng (Flat)\nTăng trầm (Bass Boost)\nNổi thoại (Vocal Clarity)\nVây kín (Virtual Surround)\n\nChỉnh dải trầm, thoại và cao qua Web Audio, ưu tiên này được lưu tự động.\n\nBỘ LỌC HÌNH ẢNH\nĐặt lại\nĐỘ SÁNG\n100%\nTƯƠNG PHẢN\n100%\nĐỘ BÃO HÒA\n100%\nChuẩn\nĐiện ảnh (Cinema)\nRực rỡ (Vivid)\nẤm áp (Warm)\nXem đêm (Night)\n\nTinh chỉnh màu video trực tiếp trên trình duyệt, cài đặt được lưu tự động.\n\nHÀO QUANG ĐIỆN ẢNH\nĐã tắt\n\nThêm ánh sáng bloom đổi màu động phía sau trình phát.",
+  "afterQualityAndSpeedSwitch": {
+    "playbackRate": 1.5,
+    "savedQuality": "0",
+    "savedSpeed": "1.5"
+  }
+}

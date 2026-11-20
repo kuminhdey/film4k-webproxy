@@ -1,0 +1,8 @@
+{"id":1,"level":"info","message":"Lệnh: Bắt đầu Crawl Mở Rộng số lượng chưa đối chiếu ...","timestamp":"2026-11-18 04:54:40"}
+{"id":2,"level":"success","message":"Đã kích hoạt quét toàn bộ danh sách phim","timestamp":"2026-11-18 04:54:40"}
+{"id":3,"level":"info","message":"Lệnh: Làm nóng cache M3U8 (Stage 3 Scanner)...","timestamp":"2026-11-18 04:54:42"}
+{"id":4,"level":"success","message":"Crawler started in 'latest' mode","timestamp":"2026-11-18 04:54:42"}
+{"id":5,"level":"info","message":"Lệnh: Quét Cập Nhật Phim Mới & Tập Mới...","timestamp":"2026-11-18 04:54:45"}
+{"id":6,"level":"success","message":"Đang quét cập nhật các phim mới","timestamp":"2026-11-18 04:54:45"}
+{"id":7,"level":"info","message":"Đang xóa cache M3U8 của phim: visionquest...","timestamp":"2026-11-18 04:54:46"}
+{"id":8,"level":"success","message":"Đã xóa cache M3U8 cho phim: visionquest","timestamp":"2026-11-18 04:54:46"}

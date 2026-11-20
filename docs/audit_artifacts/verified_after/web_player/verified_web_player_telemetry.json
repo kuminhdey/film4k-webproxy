@@ -1,0 +1,394 @@
+{
+  "verifiedAt": "2026-11-18T07:32:48.730Z",
+  "port": 18091,
+  "dbShaBefore": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76",
+  "checks": {
+    "staticAssetSizesBytes": {
+      "logo.png": 6291,
+      "logo-64.png": 3917,
+      "favicon-32.png": 2015,
+      "favicon.ico": 4388,
+      "favicon.png": 2886
+    },
+    "desktopHome": {
+      "cls": 0.0011,
+      "lcpMs": 384,
+      "scrollWidth": 1440,
+      "vw": 1440,
+      "vh": 900,
+      "heroBottomY": 892,
+      "firstShelfH2TopY": 950,
+      "heroFillsFirstScreenCleanly": true,
+      "headerAnchors": [
+        {
+          "text": "Trang Chủ",
+          "href": "/",
+          "ariaCurrent": "page"
+        },
+        {
+          "text": "Phim Bộ",
+          "href": "/danh-sach/phim-bo",
+          "ariaCurrent": null
+        },
+        {
+          "text": "Phim Lẻ",
+          "href": "/danh-sach/phim-le",
+          "ariaCurrent": null
+        },
+        {
+          "text": "TV Shows",
+          "href": "/danh-sach/tv-shows",
+          "ariaCurrent": null
+        }
+      ],
+      "skipLink": true,
+      "shelves": [
+        {
+          "title": "",
+          "items": []
+        },
+        {
+          "title": "PHIM MỚI CẬP NHẬT",
+          "items": [
+            "Người Nhện: Khởi Đầu Mới",
+            "Ham Muốn Cháy Bỏng",
+            "The Odyssey",
+            "VisionQuest",
+            "Hope: Vùng Tử Địa",
+            "Godzilla Trừ Không",
+            "Trái Tim Quái Thú",
+            "Đội Bóng Nữ Túc",
+            "Đèn Lồng",
+            "Phim Street Fighter"
+          ]
+        },
+        {
+          "title": "PHIM BỘ ĐANG HOT",
+          "items": [
+            "Dữ Tấn Trường An",
+            "Thần Y",
+            "Chiết Xuân Uy",
+            "Cunk nói về điện ảnh",
+            "Triều Tuyết Lục",
+            "GIFT",
+            "VisionQuest",
+            "Đèn Lồng",
+            "Thượng Công Chúa"
+          ]
+        },
+        {
+          "title": "PHIM LẺ CHIẾU RẠP",
+          "items": [
+            "Bara till jul",
+            "忠臣蔵外伝 四谷怪談",
+            "Địa Đạo Cá Sấu Tử Thần",
+            "Heumann: Hành Trình Bản Lĩnh - Being Heumann",
+            "Đảo Kinh Hoàng",
+            "Thân Phận Đặc Biệt",
+            "Thần Bài",
+            "Thần Bài 3: Thiếu Niên Thần Bài",
+            "Thánh Bài 2: Đao Tử",
+            "Út Lan: Oán Linh Giữ Của",
+            "The Stranger in My Home",
+            "Người Nhện: Khởi Đầu Mới"
+          ]
+        },
+        {
+          "title": "HOẠT HÌNH & ANIME ĐẶC SẮC",
+          "items": [
+            "Biến tấu Grimm",
+            "Shin - Cậu Bé Bút Chì 33: Nóng Bỏng Tay! Những Vũ Công Siêu Cay Kasukabe",
+            "Tên Cậu Là Gì?",
+            "Doraemon: Nobita và Cuộc Phiêu Lưu Vào Thế Giới Trong Tranh",
+            "Nhật Ký Thường Ngày Của Tiên Vương",
+            "Phàm Nhân Tu Tiên",
+            "Bát Tiên!"
+          ]
+        }
+      ],
+      "imagesTotal": 41,
+      "imagesMissingDimsAndRatio": 0
+    },
+    "catalogSortNameAsc": {
+      "beforeFirst5": [
+        "The Stranger in My Home",
+        "Út Lan: Oán Linh Giữ Của",
+        "Doraemon: Nobita và Cuộc Phiêu Lưu Vào Thế Giới Trong Tranh",
+        "Đảo Kinh Hoàng",
+        "Tên Cậu Là Gì?"
+      ],
+      "afterFirst5": [
+        "Bara till jul",
+        "Bát Tiên!",
+        "Công Viên Kỷ Jura",
+        "Doraemon: Nobita và Cuộc Phiêu Lưu Vào Thế Giới Trong Tranh",
+        "Godzilla Trừ Không"
+      ],
+      "orderChanged": true
+    },
+    "searchEmptyState": {
+      "hasSearchSpecificHeading": true,
+      "hasResetButton": true,
+      "resetButtonText": "Đặt lại"
+    },
+    "detailSingleMovie": {
+      "cls": 0.0477,
+      "serverButtons": [
+        "Server VIP (4K CDN)",
+        "Server 2 (Dự Phòng)",
+        "Server 3 (Direct CDN)"
+      ],
+      "hasMultipleServers": true,
+      "hasRedundantSingleEpList": false,
+      "synopsisWidthPx": 796
+    },
+    "spidermanWatchPage": {
+      "cls": 0.0023,
+      "serverButtonsOnWatchPage": [
+        "Server VIP (4K CDN)",
+        "Server 2 (Dự Phòng)",
+        "Server 3 (Direct CDN)"
+      ]
+    },
+    "spidermanPlayback": {
+      "passed": true,
+      "elapsedWallMs": 5111,
+      "video": {
+        "readyState": 4,
+        "networkState": 2,
+        "paused": false,
+        "muted": false,
+        "currentTime": 2.37715,
+        "duration": 8700.270000000095,
+        "videoWidth": 1920,
+        "videoHeight": 800,
+        "error": null
+      },
+      "streamEventsCount": 3,
+      "streamEventsSample": [
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/spider-man-brand-new-day/master.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/spider-man-brand-new-day/v800.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/spider-man-brand-new-day/a3.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        }
+      ]
+    },
+    "jurassicParkServers": [
+      "Server 1",
+      "Server 2 (Dự Phòng)"
+    ],
+    "playerUxAndA11yDesktop": {
+      "cls": 0.0032,
+      "timestamp": {
+        "found": true,
+        "display": "block",
+        "text": "00:02/41:01",
+        "width": 79
+      },
+      "seekbar": {
+        "role": "slider",
+        "tabIndex": 0,
+        "ariaLabel": "Thanh tua thời gian",
+        "ariaValueMin": "0",
+        "ariaValueMax": "2462",
+        "ariaValueNow": "3",
+        "ariaValueText": "00:02 trên 41:01"
+      },
+      "totalVisiblePlayerButtons": 18,
+      "unlabeledPlayerButtonsCount": 0,
+      "unlabeledSamples": []
+    },
+    "seekbarKeyboardTest": {
+      "tBefore": 3.191986,
+      "tAfter": 8.191986,
+      "advanced": true
+    },
+    "settingsMenuTabs": [
+      "Chất lượng",
+      "Phụ đề/Âm",
+      "Tốc độ",
+      "Nâng cao"
+    ],
+    "serviceWorkerMediaBypass": {
+      "cacheNames": [
+        "bofilm-shell-v5"
+      ],
+      "totalCachedStaticEntries": 18,
+      "cachedMediaEntriesCount": 0,
+      "leakedMedia": []
+    },
+    "seriesEp2Playback": {
+      "passed": true,
+      "elapsedWallMs": 11134,
+      "video": {
+        "readyState": 4,
+        "networkState": 2,
+        "paused": false,
+        "muted": false,
+        "currentTime": 2.602388,
+        "duration": 2461.64,
+        "videoWidth": 1920,
+        "videoHeight": 1080,
+        "error": null
+      },
+      "streamEventsCount": 3,
+      "streamEventsSample": [
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/master.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/v.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/a0.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        }
+      ]
+    },
+    "reducedMotion": {
+      "heroH1After6500ms": "Phim Street Fighter",
+      "runningAnimationsUnderReducedMotion": 0
+    },
+    "tabletHome": {
+      "cls": 0.0015,
+      "scrollWidth": 768,
+      "vw": 768
+    },
+    "mobileHome": {
+      "cls": 0,
+      "scrollWidth": 390,
+      "vw": 390,
+      "visibleHeaderInputs": []
+    },
+    "mobileWatchErgonomics": {
+      "cls": 0,
+      "scrollWidth": 390,
+      "videoRect": {
+        "left": 8,
+        "right": 382,
+        "w": 374,
+        "h": 210
+      },
+      "timestampVisible": true,
+      "timestampText": "00:02/41:01",
+      "bottomControlButtons": [
+        {
+          "ariaLabel": "Phát",
+          "text": "",
+          "left": 18,
+          "right": 62,
+          "w": 44,
+          "h": 44,
+          "unclippedInsideVideo": true
+        },
+        {
+          "ariaLabel": "Tắt tiếng",
+          "text": "",
+          "left": 64,
+          "right": 108,
+          "w": 44,
+          "h": 44,
+          "unclippedInsideVideo": true
+        },
+        {
+          "ariaLabel": "Danh sách tập phim",
+          "text": "",
+          "left": 232,
+          "right": 276,
+          "w": 44,
+          "h": 44,
+          "unclippedInsideVideo": true
+        },
+        {
+          "ariaLabel": "Cài đặt chất lượng và trình phát",
+          "text": "",
+          "left": 280,
+          "right": 324,
+          "w": 44,
+          "h": 44,
+          "unclippedInsideVideo": true
+        },
+        {
+          "ariaLabel": "Toàn màn hình",
+          "text": "",
+          "left": 328,
+          "right": 372,
+          "w": 44,
+          "h": 44,
+          "unclippedInsideVideo": true
+        }
+      ],
+      "allButtonsUnclipped": true,
+      "allButtonsAtLeast44x44": true
+    },
+    "mobilePlayback": {
+      "passed": true,
+      "elapsedWallMs": 9733,
+      "video": {
+        "readyState": 4,
+        "networkState": 2,
+        "paused": false,
+        "muted": false,
+        "currentTime": 2.46821,
+        "duration": 2461.64,
+        "videoWidth": 1920,
+        "videoHeight": 1080,
+        "error": null
+      },
+      "streamEventsCount": 3,
+      "streamEventsSample": [
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/master.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/v.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        },
+        {
+          "status": 200,
+          "url": "http://127.0.0.1:18091/api/stream/light-to-the-night/ep/2/a0.m3u8",
+          "ct": "application/vnd.apple.mpegurl; charset=utf-8"
+        }
+      ]
+    },
+    "mobileSettingsPopover": {
+      "opened": true,
+      "popoverRect": {
+        "top": 507,
+        "bottom": 764,
+        "left": 12,
+        "right": 378,
+        "w": 366,
+        "h": 257
+      },
+      "tablistRect": {
+        "top": 508,
+        "bottom": 555
+      },
+      "unclippedInViewport": true
+    }
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "dbShaAfter": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76",
+  "realDbUntouched": true,
+  "backendTailLogs": "[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Cached all playlists for slug 'kung-fu-soccer' (ep: None, season: None, server: None) to \"/tmp/verify_after_playlists_18091/kung-fu-soccer\"\n\u001b[2m2026-11-18T07:32:57.701857Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Cached all playlists for slug 'spider-man-brand-new-day' (ep: None, season: None, server: None) to \"/tmp/verify_after_playlists_18091/spider-man-brand-new-day\"\n\u001b[2m2026-11-18T07:32:57.701919Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m ✅ [Prewarm] Completed zero-delay HLS prewarming.\n\u001b[2m2026-11-18T07:33:09.752345Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Crawling upstream playlists for slug 'jurassic-park' (ep: None, season: None, server: None)...\n\u001b[2m2026-11-18T07:33:11.541133Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Cached all playlists for slug 'jurassic-park' (ep: None, season: None, server: None) to \"/tmp/verify_after_playlists_18091/jurassic-park\"\n\u001b[2m2026-11-18T07:33:33.721691Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Crawling upstream playlists for slug 'light-to-the-night' (ep: Some(2), season: None, server: None)...\n\u001b[2m2026-11-18T07:33:35.567716Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Cached all playlists for slug 'light-to-the-night' (ep: Some(2), season: None, server: None) to \"/tmp/verify_after_playlists_18091/light-to-the-night_ep2\"\n"
+}

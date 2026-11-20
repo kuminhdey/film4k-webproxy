@@ -1,0 +1,2459 @@
+{
+  "startedAt": "2026-11-18T04:54:20.938Z",
+  "ports": {
+    "backend": 18082,
+    "frontend": 15174
+  },
+  "dbIntegrityBefore": {
+    "moviesDb": {
+      "exists": true,
+      "size": 475136,
+      "mtimeMs": 1793161156612.8342,
+      "sha256": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76"
+    },
+    "film4kDb": {
+      "exists": true,
+      "size": 0,
+      "mtimeMs": 1792900304734.5708,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "initialSlugs": [
+    "visionquest",
+    "street-fighter",
+    "spider-man-brand-new-day"
+  ],
+  "consoleMessages": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/logs?limit=100",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/stats",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/logs?limit=100",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/stats",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/logs",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/stream/audit-test-phim-22/master.m3u8",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/cache/clear/visionquest",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/movies?page=1&limit=25",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/logs",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 429 (Too Many Requests)",
+      "location": {
+        "url": "http://127.0.0.1:15174/api/admin/login",
+        "line": 0,
+        "column": 0,
+        "lineNumber": 0,
+        "columnNumber": 0
+      }
+    }
+  ],
+  "pageErrors": [],
+  "networkFailures": [
+    {
+      "url": "http://127.0.0.1:15174/api/admin/logs?limit=100",
+      "status": 401,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/stats",
+      "status": 401,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/logs?limit=100",
+      "status": 401,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/stats",
+      "status": 401,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/logs",
+      "status": 401,
+      "method": "POST"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/stream/audit-test-phim-22/master.m3u8",
+      "status": 404,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/cache/clear/visionquest",
+      "status": 500,
+      "method": "POST"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/movies?page=1&limit=25",
+      "status": 500,
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:15174/api/admin/logs",
+      "status": 401,
+      "method": "POST"
+    }
+  ],
+  "resourceWeights": [
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    },
+    {
+      "url": "http://127.0.0.1:15174/logo.png",
+      "bytes": 1983061,
+      "contentType": "image/png"
+    }
+  ],
+  "apiSecurityChecks": {
+    "unauthStatsStatus": 401,
+    "unauthMoviesStatus": 401,
+    "unauthLogsStatus": 401,
+    "unauthCrawlStatus": 401,
+    "unauthCacheStatus": 401,
+    "spoofedRawPasswordBearerStatus": 401
+  },
+  "authChecks": {
+    "pwInputAttrs": {
+      "id": "admin-password",
+      "name": null,
+      "type": "password",
+      "autocomplete": null,
+      "placeholder": "Nhập mật khẩu quản trị...",
+      "ariaInvalid": null,
+      "ariaDescribedBy": null,
+      "hasAssociatedLabel": true,
+      "hasUsernameFieldInForm": false,
+      "width": 374,
+      "height": 46
+    },
+    "toggleBtnInfo": {
+      "ariaLabel": "Hiển thị mật khẩu",
+      "ariaPressed": "false",
+      "width": 26,
+      "height": 26
+    },
+    "emptyErrorDisplayed": true,
+    "typeAfterReveal": "text",
+    "navigatedHomePath": "/",
+    "storageStateAfterLogin": {
+      "sessionTokenPresent": true,
+      "sessionTokenPrefix": "adm_9c59",
+      "localStorageTokenPresent": false
+    },
+    "persistedAfterReload": true,
+    "expiredBannerVisible": true,
+    "reuseLoggedOutTokenStatus": 401,
+    "validTokenInvalidatedcheck": true
+  },
+  "dashboardChecks": {
+    "rawStatsSummary": {
+      "total_movies": 17,
+      "total_single": 9,
+      "total_series": 8,
+      "detail_rows": 8,
+      "cached_playlists_count": 3,
+      "cached_m3u8_count": 3,
+      "disk_usage": {
+        "playlists_bytes": 279,
+        "database_bytes": 0,
+        "total_bytes": 279,
+        "human_readable": "279 B"
+      },
+      "crawler_last_status": "Initialized"
+    },
+    "statCardsMetrics": [
+      {
+        "index": 1,
+        "top": 179,
+        "left": 84,
+        "width": 242,
+        "height": 252,
+        "childOverflowRightPx": 26,
+        "text": "Tổng Số PhimNguồn ngoài chưa đồng bộCatalog nội bộ: 17 phimCó ít nhất một tập: 8 phimPhim lẻ: 9 • Phim bộ: 8Chưa có dữ liệu đối chiếu với kh"
+      },
+      {
+        "index": 2,
+        "top": 179,
+        "left": 342,
+        "width": 242,
+        "height": 252,
+        "childOverflowRightPx": 0,
+        "text": "Playlist cache trong SQLite3Số mục bắt đầu bằng #EXTM3U; chưa xác minh phát lại hoặc chất lượng 4K."
+      },
+      {
+        "index": 3,
+        "top": 179,
+        "left": 599,
+        "width": 242,
+        "height": 252,
+        "childOverflowRightPx": 0,
+        "text": "Dung Lượng Đĩa279 BCache: 279 B • DB: 0 B"
+      },
+      {
+        "index": 4,
+        "top": 179,
+        "left": 857,
+        "width": 242,
+        "height": 252,
+        "childOverflowRightPx": 0,
+        "text": "Trạng Thái CrawlerChế độ tự động đã tắtKích hoạt cào dữ liệu"
+      },
+      {
+        "index": 5,
+        "top": 179,
+        "left": 1114,
+        "width": 242,
+        "height": 252,
+        "childOverflowRightPx": 0,
+        "text": "Lần Chạy Gần NhấtChưa chạyChu kỳ đồng bộ tự động mỗi 6 giờ"
+      }
+    ],
+    "posterHealth": {
+      "totalImgs": 17,
+      "hiddenOrBrokenCount": 0,
+      "sampleSrcs": [
+        {
+          "src": "https://image.tmdb.org/t/p/w500/xK27l5uwaVyZSlENWnmLlWwDQNS.jpg",
+          "complete": true,
+          "naturalWidth": 500,
+          "display": "block"
+        },
+        {
+          "src": "https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg",
+          "complete": true,
+          "naturalWidth": 500,
+          "display": "block"
+        },
+        {
+          "src": "https://image.tmdb.org/t/p/w500/wqGZVSCUSXE92WH2zyol2REaqT4.jpg",
+          "complete": true,
+          "naturalWidth": 500,
+          "display": "block"
+        },
+        {
+          "src": "https://image.tmdb.org/t/p/w500/7876PK6gosE13Uq1B6nRxf7AJLT.jpg",
+          "complete": true,
+          "naturalWidth": 500,
+          "display": "block"
+        },
+        {
+          "src": "https://image.tmdb.org/t/p/w500/2nVdUaSsD4cV2GwwZpuXbiHIXM.jpg",
+          "complete": true,
+          "naturalWidth": 500,
+          "display": "block"
+        }
+      ]
+    }
+  },
+  "crudAndTableChecks": {
+    "backendCrudEndpoints": {
+      "postCreateStatus": 405,
+      "putUpdateStatus": 405,
+      "deleteMovieStatus": 405
+    },
+    "tableUiInspection": {
+      "hasCreateMovieBtn": false,
+      "hasEditMovieBtn": false,
+      "hasDeleteMovieBtn": false,
+      "hasClearAllCacheBtn": false,
+      "hasCachedFilterTab": false,
+      "ths": [
+        {
+          "text": "Phim",
+          "ariaSort": null,
+          "hasButtonOrClickable": false
+        },
+        {
+          "text": "Loại & Thể loại",
+          "ariaSort": null,
+          "hasButtonOrClickable": false
+        },
+        {
+          "text": "Năm",
+          "ariaSort": null,
+          "hasButtonOrClickable": false
+        },
+        {
+          "text": "Trạng Thái Cache M3U8",
+          "ariaSort": null,
+          "hasButtonOrClickable": false
+        },
+        {
+          "text": "Hành Động",
+          "ariaSort": null,
+          "hasButtonOrClickable": false
+        }
+      ],
+      "totalRenderedRows": 17,
+      "anyRowShowsCachedBadge": false,
+      "preseededSlugRowsStillSayUncached": []
+    },
+    "singleFilterCount": 9,
+    "seriesFilterCount": 8,
+    "matchedSlugRowCount": 1,
+    "emptySearchVisible": true,
+    "pagination": {
+      "page2Indicator": "Hiển thị trang 2 / 3 (Tổng cộng 62 phim)",
+      "lastPageIndicator": "Hiển thị trang 3 / 3 (Tổng cộng 62 phim)",
+      "jumpInvalidInputRemaining": "999",
+      "afterInvalidJumpIndicator": "Hiển thị trang 3 / 3 (Tổng cộng 62 phim)",
+      "afterValidJumpIndicator": "Hiển thị trang 2 / 3 (Tổng cộng 62 phim)",
+      "rowsAtPageSize50": 50,
+      "watchNavPath": "/watch/audit-test-phim-22",
+      "pageIndicatorAfterBack": "Hiển thị trang 1 / 3 (Tổng cộng 62 phim)"
+    }
+  },
+  "crawlerAndCacheChecks": {
+    "modalFocusCheck": {
+      "activeInsideDialog": true,
+      "activeTag": "button",
+      "activeText": "Hủy bỏ"
+    },
+    "tabSequenceInModal": [
+      {
+        "insideDialog": true,
+        "text": "Bắt đầu ngay"
+      },
+      {
+        "insideDialog": false,
+        "text": "@media (max-width: 640px) {\n          .admin-dashboard-header { height: auto !important; min-height: 64px; flex-wrap: wrap; gap: 10px; padding: 10px 16px !important; }\n          .admin-dashboard-header-left, .admin-dashboard-header-right { min-width: 0; flex-wrap: wrap; }\n          .admin-dashboard-header-right { width: 100%; justify-content: space-between; gap: 8px !important; }\n          .admin-dashboard-header-live, .admin-dashboard-header-clock { display: none !important; }\n          .admin-dashboard-main { padding: 0 16px !important; }\n          .admin-dashboard-title, .admin-dashboard-progress-head { flex-wrap: wrap; gap: 12px; }\n          .admin-dashboard-terminal-bar { height: auto !important; min-height: 40px; flex-wrap: wrap; gap: 6px; padding: 8px 12px !important; }\n          .admin-dashboard-terminal-bar > div:first-child { min-width: 0; max-width: 100%; }\n          .admin-dashboard-terminal-label { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n        }\n      BơFilmAdminPRO CONTROLHệ Thống Trực Tuyến11:54:38Xem Web CinemaĐăng xuấtBảng Điều Khiển Quản TrịGiám sát tiến trình nạp dữ liệu phim, tự động tạo cache playlist M3U8 và quản lý máy chủ streamingLàm Mới Số LiệuTổng Số PhimNguồn ngoài chưa đồng bộCatalog nội bộ: 62 phimCó ít nhất một tập: 8 phimPhim lẻ: 32 • Phim bộ: 30Chưa có dữ liệu đối chiếu với kho nguồnPlaylist cache trong SQLite3Số mục bắt đầu bằng #EXTM3U; chưa xác minh phát lại hoặc chất lượng 4K.Dung Lượng Đĩa279 BCache: 279 B • DB: 0 BTrạng Thái CrawlerChế độ tự động đã tắtKích hoạt cào dữ liệuLần Chạy Gần NhấtChưa chạyChu kỳ đồng bộ tự động mỗi 6 giờTiến Trình Job CrawlerInitialized0 / 62 phim (0%)Trung Tâm Điều Khiển Crawler & CacheCào phim còn thiếu theo sitemap (chưa đối chiếu số lượng)Stage 1: Đồng bộ CatalogStage 2: Cào Chi Tiết Đồng ThờiStage 3: Quét Cache M3U8Quét Cập Nhật Phim MớiNạp Trước Dữ Liệu Phim HotDừng CrawlerBơ Film admin task logs — server historyAuto-scroll ONCopy 0 đã tảiXuất tất cả● Logs đã kết nốiKhông có log ghi nhận...Quản Lý Danh Sách Phim & Cache M3U8Tổng cộng 62 dòng phim trong cơ sở dữ liệu (gồm phim chỉ có thông tin tóm tắt)Tất cảPhim lẻPhim bộPhimLoại & Thể loạiNămTrạng Thái Cache M3U8Hành ĐộngVisionQuestVisionQuestPhim bộSci-Fi & Fantasy, Phim Chính Kịch2026Chưa có cacheXemXóa CacheVõ Sĩ Đường PhốStreet FighterPhim lẻPhim Hành Động, Phim Phiêu Lưu2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 45Admin Audit Test Film 45Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 44Admin Audit Test Film 44Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 43Admin Audit Test Film 43Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 42Admin Audit Test Film 42Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 41Admin Audit Test Film 41Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 40Admin Audit Test Film 40Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 39Admin Audit Test Film 39Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 38Admin Audit Test Film 38Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 37Admin Audit Test Film 37Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 36Admin Audit Test Film 36Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 35Admin Audit Test Film 35Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 34Admin Audit Test Film 34Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 33Admin Audit Test Film 33Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 32Admin Audit Test Film 32Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 31Admin Audit Test Film 31Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 30Admin Audit Test Film 30Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 29Admin Audit Test Film 29Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 28Admin Audit Test Film 28Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 27Admin Audit Test Film 27Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 26Admin Audit Test Film 26Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 25Admin Audit Test Film 25Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 24Admin Audit Test Film 24Phim bộHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CachePhim Kiểm Thử Quản Trị Số 23Admin Audit Test Film 23Phim lẻHành Động, Viễn Tưởng2026Chưa có cacheXemXóa CacheHiển thị trang 1 / 3 (Tổng cộng 62 phim)Hiển thị:25 phim50 phim100 phimTrang đầuTrang trước123Trang sauTrang cuốiĐến:ChuyểnXác Nhận Cào Tự Động Phim Còn LạiTổng kho nguồn: chưa đồng bộ • Còn lại: chưa đối chiếuHệ thống sẽ tiếp tục cào theo từng đợt, lưu vị trí trang để tiếp tục sau khi khởi động lại và bỏ qua phim đã có tập. Tiến trình chạy ngầm cho đến khi bạn bấm dừng. Bạn có chắc chắn muốn bắt đầu ngay?Hủy bỏBắt đầu ngay"
+      },
+      {
+        "insideDialog": true,
+        "text": "Hủy bỏ"
+      },
+      {
+        "insideDialog": true,
+        "text": "Bắt đầu ngay"
+      }
+    ],
+    "closedAfterEscape": true,
+    "closedAfterCancelBtn": true,
+    "crawlerRequestsCaptured": [
+      {
+        "url": "/api/admin/crawler/start",
+        "method": "POST",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "message": "Đã kích hoạt quét toàn bộ danh sách phim",
+          "mode": "full",
+          "success": true
+        }
+      },
+      {
+        "url": "/api/admin/crawler/trigger",
+        "method": "POST",
+        "status": 200,
+        "reqBody": {
+          "mode": "stage3_m3u8"
+        },
+        "resBody": {
+          "message": "Crawler started in 'latest' mode",
+          "mode": "latest",
+          "success": true
+        }
+      },
+      {
+        "url": "/api/admin/crawler/update",
+        "method": "POST",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "message": "Đang quét cập nhật các phim mới",
+          "mode": "latest",
+          "success": true
+        }
+      },
+      {
+        "url": "/api/admin/cache/clear/visionquest",
+        "method": "POST",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "cleared_slug": "visionquest",
+          "message": "Đã xóa cache M3U8 cho phim: visionquest",
+          "success": true
+        }
+      },
+      {
+        "url": "/api/admin/crawler/update",
+        "method": "POST",
+        "status": 200,
+        "reqBody": null,
+        "resBody": {
+          "success": true,
+          "mode": "latest",
+          "message": "Delayed update ok"
+        }
+      },
+      {
+        "url": "/api/admin/cache/clear/visionquest",
+        "method": "POST",
+        "status": 500,
+        "reqBody": null,
+        "resBody": {
+          "success": false,
+          "error": "Simulated disk permission error EACCES"
+        }
+      }
+    ],
+    "updateBtnHoverMutation": {
+      "bgBeforeHover": "rgba(255, 255, 255, 0.08)",
+      "bgDuringHover": "rgba(255, 255, 255, 0.08)",
+      "bgAfterMouseLeave": "rgba(255, 255, 255, 0.08)"
+    },
+    "cacheClearRealEffect": {
+      "slug": "visionquest",
+      "cacheDirExistedBefore": true,
+      "cacheDirExistsAfter": false
+    },
+    "terminalControls": {
+      "autoScrollBefore": "Auto-scroll ON",
+      "autoScrollAfter": "Auto-scroll OFF",
+      "exportedLogLines": 8
+    }
+  },
+  "faultInjectionChecks": {
+    "disabledButtonVisualAudit": [
+      {
+        "label": "Stage 1: Đồng bộ Catalog",
+        "disabled": true,
+        "cursor": "not-allowed",
+        "color": "rgb(100, 116, 139)",
+        "backgroundColor": "rgba(255, 255, 255, 0.04)",
+        "opacity": "1"
+      },
+      {
+        "label": "Stage 2: Cào Chi Tiết Đồng Thời",
+        "disabled": true,
+        "cursor": "not-allowed",
+        "color": "rgb(100, 116, 139)",
+        "backgroundColor": "rgba(255, 255, 255, 0.04)",
+        "opacity": "1"
+      },
+      {
+        "label": "Stage 3: Quét Cache M3U8",
+        "disabled": true,
+        "cursor": "pointer",
+        "color": "rgb(163, 230, 53)",
+        "backgroundColor": "rgba(132, 204, 22, 0.15)",
+        "opacity": "1"
+      },
+      {
+        "label": "Nạp Trước Dữ Liệu Phim Hot",
+        "disabled": true,
+        "cursor": "pointer",
+        "color": "rgb(163, 230, 53)",
+        "backgroundColor": "rgba(132, 204, 22, 0.12)",
+        "opacity": "1"
+      },
+      {
+        "label": "Dừng Crawler",
+        "disabled": false,
+        "cursor": "pointer",
+        "color": "rgb(248, 113, 113)",
+        "backgroundColor": "rgba(239, 68, 68, 0.15)",
+        "opacity": "1"
+      }
+    ],
+    "doubleClickProtection": {
+      "disabledWhileInFlight": true,
+      "requestsSentDuringRapidDoubleClick": 1
+    },
+    "falsePositiveSuccessToastOnHttp500": null,
+    "movies500ErrorStateRecovered": true
+  },
+  "responsiveAndA11y": {
+    "loginDesktop1440": {
+      "viewportLabel": "login_1440x900",
+      "innerWidth": 1440,
+      "innerHeight": 900,
+      "scrollWidth": 1440,
+      "scrollHeight": 900,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "BơFilmAdmin"
+        }
+      ],
+      "landmarks": {
+        "header": 0,
+        "main": 0,
+        "nav": 0,
+        "footer": 0,
+        "dialog": 0
+      },
+      "interactiveCount": 4,
+      "undersizedTargetCount": 2,
+      "undersizedTargetsSample": [
+        {
+          "tag": "button",
+          "label": "Hiển thị mật khẩu",
+          "width": 26,
+          "height": 26
+        },
+        {
+          "tag": "button",
+          "label": "Quay lại Trang Chủ Cinema",
+          "width": 187.2,
+          "height": 19.5
+        }
+      ],
+      "unlabeledControls": [],
+      "inlineStyleCount": 19,
+      "sub12PxCount": 0,
+      "sub12PxSample": [],
+      "violetCount": 0,
+      "violetSample": [],
+      "contrastFailureCount": 0,
+      "contrastFailuresSample": [],
+      "bodyFontFamily": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+      "adminRootFontFamily": "Inter, system-ui, sans-serif"
+    },
+    "dashboardDesktop1440": {
+      "viewportLabel": "dashboard_1440x900",
+      "innerWidth": 1440,
+      "innerHeight": 900,
+      "scrollWidth": 1440,
+      "scrollHeight": 2745,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h2",
+          "text": "Bảng Điều Khiển Quản Trị"
+        }
+      ],
+      "landmarks": {
+        "header": 1,
+        "main": 1,
+        "nav": 0,
+        "footer": 0,
+        "dialog": 0
+      },
+      "interactiveCount": 60,
+      "undersizedTargetCount": 60,
+      "undersizedTargetsSample": [
+        {
+          "tag": "button",
+          "label": "Xem Web Cinema",
+          "width": 160.1,
+          "height": 35.5
+        },
+        {
+          "tag": "button",
+          "label": "Đăng xuất",
+          "width": 113.3,
+          "height": 35.5
+        },
+        {
+          "tag": "button",
+          "label": "Làm Mới Số Liệu",
+          "width": 159,
+          "height": 37.5
+        },
+        {
+          "tag": "button",
+          "label": "Kích hoạt cào dữ liệu",
+          "width": 195.6,
+          "height": 30.5
+        },
+        {
+          "tag": "button",
+          "label": "Cào phim còn thiếu theo sitemap (chưa đối chiếu số lượng)",
+          "width": 435,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 1: Đồng bộ Catalog",
+          "width": 219.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 2: Cào Chi Tiết Đồng Thời",
+          "width": 262,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 3: Quét Cache M3U8",
+          "width": 232.6,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Quét Cập Nhật Phim Mới",
+          "width": 215.1,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Nạp Trước Dữ Liệu Phim Hot",
+          "width": 238.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Dừng Crawler",
+          "width": 148.4,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Auto-scroll ON",
+          "width": 93,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Copy 0 đã tải",
+          "width": 94.9,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Xuất tất cả",
+          "width": 77.8,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Tất cả",
+          "width": 66,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim lẻ",
+          "width": 72.3,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim bộ",
+          "width": 76.9,
+          "height": 32
+        },
+        {
+          "tag": "input",
+          "label": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "width": 1222,
+          "height": 42
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xóa Cache",
+          "width": 99.7,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xóa Cache",
+          "width": 99.7,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xóa Cache",
+          "width": 99.7,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "placeholder": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "title": ""
+        },
+        {
+          "tag": "input",
+          "type": "number",
+          "placeholder": "1",
+          "title": ""
+        }
+      ],
+      "inlineStyleCount": 405,
+      "sub12PxCount": 80,
+      "sub12PxSample": [
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "PRO CONTROL"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Nguồn ngoài chưa đồng bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Kích hoạt cào dữ liệu"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Initialized"
+        },
+        {
+          "tag": "button",
+          "fontSize": 11,
+          "text": "Auto-scroll ON"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Copy 0 đã tải"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Xuất tất cả"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Phim"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Loại & Thể loại"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Năm"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Trạng Thái Cache M3U8"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Hành Động"
+        },
+        {
+          "tag": "div",
+          "fontSize": 11,
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Phim bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Sci-Fi & Fantasy, Phim Chính Kịch"
+        }
+      ],
+      "violetCount": 10,
+      "violetSample": [
+        {
+          "tag": "div",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.12)",
+          "text": ""
+        },
+        {
+          "tag": "button",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.15)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "borderColor",
+          "value": "rgba(168, 85, 247, 0.4)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "svg",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "span",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        }
+      ],
+      "contrastFailureCount": 24,
+      "contrastFailuresSample": [
+        {
+          "tag": "span",
+          "text": "Đăng xuất",
+          "fontSize": 13,
+          "color": "rgb(255, 255, 255)",
+          "bgResolved": "rgb(239, 68, 68)",
+          "ratio": 3.76,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "Dừng Crawler",
+          "fontSize": 13,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(26, 29, 40)",
+          "ratio": 3.51,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Không có log ghi nhận...",
+          "fontSize": 12,
+          "color": "rgb(71, 85, 105)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 2.6,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "VisionQuest",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Street Fighter",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Spider-Man: Brand New Day",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "The Odyssey",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Heart of the Beast",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Light to the Night",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Resident Evil",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Hope",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Love's Ambition",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Whispers of Fate",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Reborn",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "The Sign",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Arsenal Military Academy",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Jurassic World",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Empresses in the Palace",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Desire",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Jurassic Park",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        }
+      ],
+      "bodyFontFamily": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+      "adminRootFontFamily": "Inter, system-ui, -apple-system, sans-serif"
+    },
+    "dashboardTablet768": {
+      "viewportLabel": "dashboard_768x1024",
+      "innerWidth": 768,
+      "innerHeight": 1024,
+      "scrollWidth": 768,
+      "scrollHeight": 4745,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h2",
+          "text": "Bảng Điều Khiển Quản Trị"
+        }
+      ],
+      "landmarks": {
+        "header": 1,
+        "main": 1,
+        "nav": 0,
+        "footer": 0,
+        "dialog": 0
+      },
+      "interactiveCount": 78,
+      "undersizedTargetCount": 50,
+      "undersizedTargetsSample": [
+        {
+          "tag": "button",
+          "label": "Kích hoạt cào dữ liệu",
+          "width": 183.3,
+          "height": 30.5
+        },
+        {
+          "tag": "button",
+          "label": "Cào phim còn thiếu theo sitemap (chưa đối chiếu số lượng)",
+          "width": 435,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 1: Đồng bộ Catalog",
+          "width": 219.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 2: Cào Chi Tiết Đồng Thời",
+          "width": 262,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 3: Quét Cache M3U8",
+          "width": 232.6,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Quét Cập Nhật Phim Mới",
+          "width": 215.1,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Nạp Trước Dữ Liệu Phim Hot",
+          "width": 238.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Dừng Crawler",
+          "width": 148.4,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Auto-scroll OFF",
+          "width": 97.7,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Copy 13 đã tải",
+          "width": 99.3,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Xuất tất cả",
+          "width": 77.8,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Tất cả",
+          "width": 66,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim lẻ",
+          "width": 72.3,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim bộ",
+          "width": 76.9,
+          "height": 32
+        },
+        {
+          "tag": "input",
+          "label": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "width": 670,
+          "height": 42
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "placeholder": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "title": ""
+        },
+        {
+          "tag": "input",
+          "type": "number",
+          "placeholder": "1",
+          "title": ""
+        }
+      ],
+      "inlineStyleCount": 573,
+      "sub12PxCount": 112,
+      "sub12PxSample": [
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "PRO CONTROL"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Nguồn ngoài chưa đồng bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Kích hoạt cào dữ liệu"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Completed fallback json import in 0.0s"
+        },
+        {
+          "tag": "button",
+          "fontSize": 11,
+          "text": "Auto-scroll OFF"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Copy 13 đã tải"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Xuất tất cả"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Phim"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Loại & Thể loại"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Năm"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Trạng Thái Cache M3U8"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Hành Động"
+        },
+        {
+          "tag": "div",
+          "fontSize": 11,
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Phim bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Sci-Fi & Fantasy, Phim Chính Kịch"
+        }
+      ],
+      "violetCount": 10,
+      "violetSample": [
+        {
+          "tag": "div",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.12)",
+          "text": ""
+        },
+        {
+          "tag": "button",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.15)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "borderColor",
+          "value": "rgba(168, 85, 247, 0.4)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "svg",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "span",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        }
+      ],
+      "contrastFailureCount": 41,
+      "contrastFailuresSample": [
+        {
+          "tag": "span",
+          "text": "Dừng Crawler",
+          "fontSize": 13,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(26, 29, 40)",
+          "ratio": 3.51,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:40 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:40 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:42 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:42 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:45 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:45 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:46 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:46 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:48 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:50 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "VisionQuest",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Street Fighter",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 45",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 44",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 43",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 42",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        }
+      ],
+      "bodyFontFamily": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+      "adminRootFontFamily": "Inter, system-ui, -apple-system, sans-serif"
+    },
+    "dashboardMobile390": {
+      "viewportLabel": "dashboard_390x844",
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "scrollWidth": 390,
+      "scrollHeight": 7971,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h2",
+          "text": "Bảng Điều Khiển Quản Trị"
+        }
+      ],
+      "landmarks": {
+        "header": 1,
+        "main": 1,
+        "nav": 0,
+        "footer": 0,
+        "dialog": 0
+      },
+      "interactiveCount": 78,
+      "undersizedTargetCount": 52,
+      "undersizedTargetsSample": [
+        {
+          "tag": "button",
+          "label": "Xem Web Cinema",
+          "width": 160.1,
+          "height": 35.5
+        },
+        {
+          "tag": "button",
+          "label": "Đăng xuất",
+          "width": 113.3,
+          "height": 35.5
+        },
+        {
+          "tag": "button",
+          "label": "Làm Mới Số Liệu",
+          "width": 159,
+          "height": 37.5
+        },
+        {
+          "tag": "button",
+          "label": "Kích hoạt cào dữ liệu",
+          "width": 312,
+          "height": 30.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 1: Đồng bộ Catalog",
+          "width": 219.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 2: Cào Chi Tiết Đồng Thời",
+          "width": 262,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Stage 3: Quét Cache M3U8",
+          "width": 232.6,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Quét Cập Nhật Phim Mới",
+          "width": 215.1,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Nạp Trước Dữ Liệu Phim Hot",
+          "width": 238.5,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Dừng Crawler",
+          "width": 148.4,
+          "height": 43.5
+        },
+        {
+          "tag": "button",
+          "label": "Auto-scroll OFF",
+          "width": 97.7,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Copy 13 đã tải",
+          "width": 99.3,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Xuất tất cả",
+          "width": 77.8,
+          "height": 24.5
+        },
+        {
+          "tag": "button",
+          "label": "Tất cả",
+          "width": 66,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim lẻ",
+          "width": 72.3,
+          "height": 32
+        },
+        {
+          "tag": "button",
+          "label": "Phim bộ",
+          "width": 76.9,
+          "height": 32
+        },
+        {
+          "tag": "input",
+          "label": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "width": 308,
+          "height": 42
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        },
+        {
+          "tag": "button",
+          "label": "Xem",
+          "width": 61.4,
+          "height": 30
+        }
+      ],
+      "unlabeledControls": [
+        {
+          "tag": "input",
+          "type": "text",
+          "placeholder": "Tìm kiếm phim theo tên tiếng Việt, tên gốc hoặc slug...",
+          "title": ""
+        },
+        {
+          "tag": "input",
+          "type": "number",
+          "placeholder": "1",
+          "title": ""
+        }
+      ],
+      "inlineStyleCount": 573,
+      "sub12PxCount": 112,
+      "sub12PxSample": [
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "PRO CONTROL"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Nguồn ngoài chưa đồng bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Kích hoạt cào dữ liệu"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Completed fallback json import in 0.0s"
+        },
+        {
+          "tag": "button",
+          "fontSize": 11,
+          "text": "Auto-scroll OFF"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Copy 13 đã tải"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Xuất tất cả"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Phim"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Loại & Thể loại"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Năm"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Trạng Thái Cache M3U8"
+        },
+        {
+          "tag": "th",
+          "fontSize": 11,
+          "text": "Hành Động"
+        },
+        {
+          "tag": "div",
+          "fontSize": 11,
+          "text": "VisionQuest"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Phim bộ"
+        },
+        {
+          "tag": "span",
+          "fontSize": 11,
+          "text": "Sci-Fi & Fantasy, Phim Chính Kịch"
+        }
+      ],
+      "violetCount": 10,
+      "violetSample": [
+        {
+          "tag": "div",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.12)",
+          "text": ""
+        },
+        {
+          "tag": "button",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "backgroundColor",
+          "value": "rgba(168, 85, 247, 0.15)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "button",
+          "prop": "borderColor",
+          "value": "rgba(168, 85, 247, 0.4)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        },
+        {
+          "tag": "svg",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "line",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": ""
+        },
+        {
+          "tag": "span",
+          "prop": "color",
+          "value": "rgb(192, 132, 252)",
+          "text": "Stage 1: Đồng bộ Catalog"
+        }
+      ],
+      "contrastFailureCount": 41,
+      "contrastFailuresSample": [
+        {
+          "tag": "span",
+          "text": "Dừng Crawler",
+          "fontSize": 13,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(26, 29, 40)",
+          "ratio": 3.51,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:40 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:40 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:42 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:42 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:45 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:45 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:46 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:46 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:48 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:49 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "span",
+          "text": "[04:54:50 18/11/2026]",
+          "fontSize": 12,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(8, 11, 17)",
+          "ratio": 4.14,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "VisionQuest",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Street Fighter",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 45",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 44",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 43",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        },
+        {
+          "tag": "div",
+          "text": "Admin Audit Test Film 42",
+          "fontSize": 11,
+          "color": "rgb(100, 116, 139)",
+          "bgResolved": "rgb(17, 20, 31)",
+          "ratio": 3.86,
+          "required": 4.5
+        }
+      ],
+      "bodyFontFamily": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+      "adminRootFontFamily": "Inter, system-ui, -apple-system, sans-serif"
+    },
+    "mobileTableMetrics": {
+      "wrapperClientWidth": 308,
+      "wrapperScrollWidth": 530,
+      "tableScrollOverflowPx": 222,
+      "theadPosition": "static",
+      "firstThPosition": "static"
+    },
+    "reducedMotionCheck": {
+      "hasReducedMotionRule": false
+    },
+    "loginMobile390": {
+      "viewportLabel": "login_390x844",
+      "innerWidth": 390,
+      "innerHeight": 844,
+      "scrollWidth": 390,
+      "scrollHeight": 844,
+      "horizontalOverflowPx": 0,
+      "headings": [
+        {
+          "tag": "h1",
+          "text": "BơFilmAdmin"
+        }
+      ],
+      "landmarks": {
+        "header": 0,
+        "main": 0,
+        "nav": 0,
+        "footer": 0,
+        "dialog": 0
+      },
+      "interactiveCount": 4,
+      "undersizedTargetCount": 2,
+      "undersizedTargetsSample": [
+        {
+          "tag": "button",
+          "label": "Hiển thị mật khẩu",
+          "width": 26,
+          "height": 26
+        },
+        {
+          "tag": "button",
+          "label": "Quay lại Trang Chủ Cinema",
+          "width": 187.2,
+          "height": 19.5
+        }
+      ],
+      "unlabeledControls": [],
+      "inlineStyleCount": 21,
+      "sub12PxCount": 0,
+      "sub12PxSample": [],
+      "violetCount": 0,
+      "violetSample": [],
+      "contrastFailureCount": 0,
+      "contrastFailuresSample": [],
+      "bodyFontFamily": "\"Plus Jakarta Sans\", -apple-system, \"system-ui\", \"Segoe UI\", Roboto, sans-serif",
+      "adminRootFontFamily": "Inter, system-ui, sans-serif"
+    }
+  },
+  "rateLimitCheck": {
+    "loginStatuses": [
+      {
+        "attempt": 1,
+        "status": 401,
+        "retryAfter": null,
+        "body": {
+          "success": false,
+          "message": "Invalid admin password"
+        }
+      },
+      {
+        "attempt": 2,
+        "status": 401,
+        "retryAfter": null,
+        "body": {
+          "success": false,
+          "message": "Invalid admin password"
+        }
+      },
+      {
+        "attempt": 3,
+        "status": 401,
+        "retryAfter": null,
+        "body": {
+          "success": false,
+          "message": "Invalid admin password"
+        }
+      },
+      {
+        "attempt": 4,
+        "status": 401,
+        "retryAfter": null,
+        "body": {
+          "success": false,
+          "message": "Invalid admin password"
+        }
+      },
+      {
+        "attempt": 5,
+        "status": 401,
+        "retryAfter": null,
+        "body": {
+          "success": false,
+          "message": "Invalid admin password"
+        }
+      },
+      {
+        "attempt": 6,
+        "status": 429,
+        "retryAfter": "900",
+        "body": {
+          "success": false,
+          "message": "Quá nhiều lần thử đăng nhập thất bại. Vui lòng thử lại sau 15 phút."
+        }
+      }
+    ]
+  },
+  "dbIntegrityAfter": {
+    "moviesDb": {
+      "exists": true,
+      "size": 475136,
+      "mtimeMs": 1793161156612.8342,
+      "sha256": "23eae89d2d9e8719a9ef5737e5017e50f5226d6fb7d121a33a070dc480e9ad76"
+    },
+    "film4kDb": {
+      "exists": true,
+      "size": 0,
+      "mtimeMs": 1792900304734.5708,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "zeroMutationVerified": true,
+  "backendLogTail": [
+    "\u001b[2m2026-11-18T04:54:20.976045Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::db\u001b[0m\u001b[2m:\u001b[0m Applied schema migration 5: admin_task_logs",
+    "\u001b[2m2026-11-18T04:54:20.976431Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend\u001b[0m\u001b[2m:\u001b[0m 📦 Connected to SQLite database at /tmp/audit_admin_test.db",
+    "\u001b[2m2026-11-18T04:54:20.977106Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::db\u001b[0m\u001b[2m:\u001b[0m Database already has 17 movies, skipping initial seed",
+    "\u001b[2m2026-11-18T04:54:20.977127Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend\u001b[0m\u001b[2m:\u001b[0m 🌱 Seeded 17 movies from /Users/kuminhdey/Downloads/webproxy/film4k_master_database.json",
+    "\u001b[2m2026-11-18T04:54:20.977680Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend\u001b[0m\u001b[2m:\u001b[0m 🔒 Admin service initialized with required secret.",
+    "\u001b[2m2026-11-18T04:54:20.981577Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🔄 Cache is empty or stale (>1h). Triggering initial home crawl...",
+    "\u001b[2m2026-11-18T04:54:20.981603Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🔄 Initial home sync triggered on startup",
+    "\u001b[2m2026-11-18T04:54:20.983059Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m Initial home crawl failed: Primary home URL rejected: Access to host is not permitted by proxy policy",
+    "\u001b[2m2026-11-18T04:54:20.983074Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m ⚠️ Initial home crawl failed: Primary home URL rejected: Access to host is not permitted by proxy policy",
+    "\u001b[2m2026-11-18T04:54:20.993420Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend\u001b[0m\u001b[2m:\u001b[0m 🚀 Server listening on http://0.0.0.0:18082",
+    "\u001b[2m2026-11-18T04:54:25.036355Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (1/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:26.305179Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🔑 Admin login successful. Token created.",
+    "\u001b[2m2026-11-18T04:54:29.306059Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🔑 Admin login successful. Token created.",
+    "\u001b[2m2026-11-18T04:54:29.463896Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🔑 Admin login successful. Token created.",
+    "\u001b[2m2026-11-18T04:54:38.479284Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Crawling upstream playlists for slug 'audit-test-phim-22' (ep: None, season: None, server: None)...",
+    "\u001b[2m2026-11-18T04:54:38.479877Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::playlist_cache\u001b[0m\u001b[2m:\u001b[0m Crawling upstream playlists for slug 'audit-test-phim-22' (ep: None, season: None, server: None)...",
+    "\u001b[2m2026-11-18T04:54:38.480262Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::proxy\u001b[0m\u001b[2m:\u001b[0m SSRF validation rejected upstream title API URL: https://invalid.example.invalid/api/title/audit-test-phim-22 (Access to host is not permitted by proxy policy)",
+    "\u001b[2m2026-11-18T04:54:38.480288Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::proxy\u001b[0m\u001b[2m:\u001b[0m SSRF validation rejected upstream title API URL: https://invalid.example.invalid/api/title/audit-test-phim-22 (Access to host is not permitted by proxy policy)",
+    "\u001b[2m2026-11-18T04:54:40.260754Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🚀 Crawler triggered in mode: 'full'",
+    "\u001b[2m2026-11-18T04:54:40.273202Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🔒 Acquired crawler lease 'crawler_main' with fence token 1",
+    "\u001b[2m2026-11-18T04:54:40.273232Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📑 Fetching sitemap for mode 'full'...",
+    "\u001b[2m2026-11-18T04:54:40.273284Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m ⚠️ Failed to fetch sitemap: Sitemap URL rejected: Access to host is not permitted by proxy policy. Checking local database files...",
+    "\u001b[2m2026-11-18T04:54:40.355343Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📦 Seeded/Imported 17 movies from local JSON",
+    "\u001b[2m2026-11-18T04:54:42.606627Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🚀 Crawler triggered in mode: 'latest'",
+    "\u001b[2m2026-11-18T04:54:42.606864Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🔒 Acquired crawler lease 'crawler_main' with fence token 2",
+    "\u001b[2m2026-11-18T04:54:42.606873Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📑 Fetching sitemap for mode 'latest'...",
+    "\u001b[2m2026-11-18T04:54:42.606922Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m ⚠️ Failed to fetch sitemap: Sitemap URL rejected: Access to host is not permitted by proxy policy. Checking local database files...",
+    "\u001b[2m2026-11-18T04:54:42.656780Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📦 Seeded/Imported 17 movies from local JSON",
+    "\u001b[2m2026-11-18T04:54:45.320870Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🚀 Crawler triggered in mode: 'latest'",
+    "\u001b[2m2026-11-18T04:54:45.321186Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 🔒 Acquired crawler lease 'crawler_main' with fence token 3",
+    "\u001b[2m2026-11-18T04:54:45.321194Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📑 Fetching sitemap for mode 'latest'...",
+    "\u001b[2m2026-11-18T04:54:45.321237Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m ⚠️ Failed to fetch sitemap: Sitemap URL rejected: Access to host is not permitted by proxy policy. Checking local database files...",
+    "\u001b[2m2026-11-18T04:54:45.345877Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mwebproxy_backend::crawler\u001b[0m\u001b[2m:\u001b[0m 📦 Seeded/Imported 17 movies from local JSON",
+    "\u001b[2m2026-11-18T04:54:52.930798Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (1/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:52.945351Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (2/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:52.961572Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (3/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:52.978540Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (4/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:52.997305Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login failed: invalid password attempt (5/5 attempts) from client 127.0.0.1",
+    "\u001b[2m2026-11-18T04:54:53.012009Z\u001b[0m \u001b[33m WARN\u001b[0m \u001b[2mwebproxy_backend::admin\u001b[0m\u001b[2m:\u001b[0m 🚫 Admin login throttled: too many failed attempts for client 127.0.0.1",
+    ""
+  ],
+  "completedAt": "2026-11-18T04:54:54.277Z"
+}
